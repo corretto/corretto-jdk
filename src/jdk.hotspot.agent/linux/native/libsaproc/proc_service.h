@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2003, 2017, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2003, 2018, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -30,6 +30,7 @@
 #ifdef INCLUDE_SA_ATTACH
 #include <thread_db.h>
 #endif
+#include "jni.h"
 
 // Linux does not have the proc service library, though it does provide the
 // thread_db library which can be used to manipulate threads without having
@@ -45,4 +46,5 @@ typedef enum {
         PS_NOSYM,       /* p_lookup() could not find given symbol */
         PS_NOFREGS      /* FPU register set not available for given lwp */
 } ps_err_e;
+
 #endif /* _PROC_SERVICE_H_ */
