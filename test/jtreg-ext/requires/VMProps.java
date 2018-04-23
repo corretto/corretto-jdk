@@ -22,6 +22,8 @@
  */
 package requires;
 
+import java.io.BufferedReader;
+import java.io.InputStreamReader;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -79,6 +81,7 @@ public class VMProps implements Callable<Map<String, String>> {
         // vm.graal.enabled is true if Graal is used as JIT
         map.put("vm.graal.enabled", isGraalEnabled());
         map.put("docker.support", dockerSupport());
+        map.put("vm.musl", isMusl());
         vmGC(map); // vm.gc.X = true/false
 
         VMProps.dump(map);
@@ -406,7 +409,25 @@ public class VMProps implements Callable<Map<String, String>> {
         return (p.exitValue() == 0);
     }
 
-
+    /**
+     * Check if we run with musl libc.
+     *
+     * @return true if we run with musl libc.
+     */
+    protected String isMusl() {
+        try {
+            ProcessBuilder pb = new ProcessBuilder("ldd", "--version");
+            pb.redirectErrorStream(true);
+            final Process p = pb.start();
+            BufferedReader br = new BufferedReader(new InputStreamReader(p.getInputStream()));
+            String line = br.readLine();
+            if (line != null && line.contains("musl")) {
+                return "true";
+            }
+        } catch (Exception e) {
+        }
+        return "false";
+    }
 
     /**
      * Dumps the map to the file if the file name is given as the property.

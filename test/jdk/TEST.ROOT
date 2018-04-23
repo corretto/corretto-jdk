@@ -36,7 +36,8 @@ requires.properties= \
     sun.arch.data.model \
     java.runtime.name \
     vm.graal.enabled \
-    vm.cds
+    vm.cds \
+    vm.musl
 
 # Minimum jtreg version
 requiredVersion=4.2 b12
