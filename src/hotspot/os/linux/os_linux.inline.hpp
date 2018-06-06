@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1999, 2016, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 1999, 2018, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -34,9 +34,9 @@
 #include <poll.h>
 #include <netdb.h>
 
-// File names are case-sensitive on windows only
-inline int os::file_name_strcmp(const char* s1, const char* s2) {
-  return strcmp(s1, s2);
+// File names are case-insensitive on windows only
+inline int os::file_name_strncmp(const char* s1, const char* s2, size_t num) {
+  return strncmp(s1, s2, num);
 }
 
 inline bool os::obsolete_option(const JavaVMOption *option) {
@@ -98,26 +98,8 @@ inline int os::ftruncate(int fd, jlong length) {
 
 inline struct dirent* os::readdir(DIR* dirp, dirent *dbuf)
 {
-// readdir_r has been deprecated since glibc 2.24.
-// See https://sourceware.org/bugzilla/show_bug.cgi?id=19056 for more details.
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
-
-  dirent* p;
-  int status;
   assert(dirp != NULL, "just checking");
-
-  // NOTE: Linux readdir_r (on RH 6.2 and 7.2 at least) is NOT like the POSIX
-  // version. Here is the doc for this function:
-  // http://www.gnu.org/manual/glibc-2.2.3/html_node/libc_262.html
-
-  if((status = ::readdir_r(dirp, dbuf, &p)) != 0) {
-    errno = status;
-    return NULL;
-  } else
-    return p;
-
-#pragma GCC diagnostic pop
+  return ::readdir(dirp);
 }
 
 inline int os::closedir(DIR *dirp) {

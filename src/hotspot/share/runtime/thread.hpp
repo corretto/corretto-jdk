@@ -32,6 +32,7 @@
 #include "oops/oop.hpp"
 #include "prims/jvmtiExport.hpp"
 #include "runtime/frame.hpp"
+#include "runtime/globals.hpp"
 #include "runtime/handshake.hpp"
 #include "runtime/javaFrameAnchor.hpp"
 #include "runtime/jniHandles.hpp"
@@ -43,19 +44,21 @@
 #include "runtime/stubRoutines.hpp"
 #include "runtime/threadLocalStorage.hpp"
 #include "runtime/unhandledOops.hpp"
-#include "trace/traceBackend.hpp"
-#include "trace/traceMacros.hpp"
 #include "utilities/align.hpp"
 #include "utilities/exceptions.hpp"
 #include "utilities/macros.hpp"
 #ifdef ZERO
 # include "stack_zero.hpp"
 #endif
+#if INCLUDE_JFR
+#include "jfr/support/jfrThreadExtension.hpp"
+#endif
 
+
+class SafeThreadsListPtr;
 class ThreadSafepointState;
 class ThreadsList;
 class ThreadsSMRSupport;
-class NestedThreadsList;
 
 class JvmtiThreadState;
 class JvmtiGetLoadedClassesClosure;
@@ -135,13 +138,14 @@ class Thread: public ThreadShadow {
   void*       _real_malloc_address;
 
   // JavaThread lifecycle support:
+  friend class SafeThreadsListPtr;  // for _threads_list_ptr, cmpxchg_threads_hazard_ptr(), {dec_,inc_,}nested_threads_hazard_ptr_cnt(), {g,s}et_threads_hazard_ptr(), inc_nested_handle_cnt(), tag_hazard_ptr() access
   friend class ScanHazardPtrGatherProtectedThreadsClosure;  // for cmpxchg_threads_hazard_ptr(), get_threads_hazard_ptr(), is_hazard_ptr_tagged() access
-  friend class ScanHazardPtrGatherThreadsListClosure;  // for get_nested_threads_hazard_ptr(), get_threads_hazard_ptr(), untag_hazard_ptr() access
+  friend class ScanHazardPtrGatherThreadsListClosure;  // for get_threads_hazard_ptr(), untag_hazard_ptr() access
   friend class ScanHazardPtrPrintMatchingThreadsClosure;  // for get_threads_hazard_ptr(), is_hazard_ptr_tagged() access
-  friend class ThreadsListSetter;  // for get_threads_hazard_ptr() access
-  friend class ThreadsSMRSupport;  // for get_threads_hazard_ptr() access
+  friend class ThreadsSMRSupport;  // for _nested_threads_hazard_ptr_cnt, _threads_hazard_ptr, _threads_list_ptr access
 
   ThreadsList* volatile _threads_hazard_ptr;
+  SafeThreadsListPtr*   _threads_list_ptr;
   ThreadsList*          cmpxchg_threads_hazard_ptr(ThreadsList* exchange_value, ThreadsList* compare_value);
   ThreadsList*          get_threads_hazard_ptr();
   void                  set_threads_hazard_ptr(ThreadsList* new_list);
@@ -153,15 +157,6 @@ class Thread: public ThreadShadow {
   }
   static ThreadsList*   untag_hazard_ptr(ThreadsList* list) {
     return (ThreadsList*)(intptr_t(list) & ~intptr_t(1));
-  }
-  NestedThreadsList* _nested_threads_hazard_ptr;
-  NestedThreadsList* get_nested_threads_hazard_ptr() {
-    return _nested_threads_hazard_ptr;
-  }
-  void set_nested_threads_hazard_ptr(NestedThreadsList* value) {
-    assert(Threads_lock->owned_by_self(),
-           "must own Threads_lock for _nested_threads_hazard_ptr to be valid.");
-    _nested_threads_hazard_ptr = value;
   }
   // This field is enabled via -XX:+EnableThreadSMRStatistics:
   uint _nested_threads_hazard_ptr_cnt;
@@ -344,7 +339,7 @@ class Thread: public ThreadShadow {
   jlong _allocated_bytes;                       // Cumulative number of bytes allocated on
                                                 // the Java heap
 
-  mutable TRACE_DATA _trace_data;               // Thread-local data for tracing
+  JFR_ONLY(DEFINE_THREAD_LOCAL_FIELD_JFR;)      // Thread-local data for jfr
 
   int   _vm_operation_started_count;            // VM_Operation support
   int   _vm_operation_completed_count;          // VM_Operation support
@@ -522,8 +517,8 @@ class Thread: public ThreadShadow {
   void incr_allocated_bytes(jlong size) { _allocated_bytes += size; }
   inline jlong cooked_allocated_bytes();
 
-  TRACE_DEFINE_THREAD_TRACE_DATA_OFFSET;
-  TRACE_DATA* trace_data() const        { return &_trace_data; }
+  JFR_ONLY(DEFINE_THREAD_LOCAL_ACCESSOR_JFR;)
+
   bool is_trace_suspend()               { return (_suspend_flags & _trace_flag) != 0; }
 
   // VM operation support
@@ -640,7 +635,6 @@ protected:
 
   // Printing
   virtual void print_on(outputStream* st) const;
-  virtual void print_nested_threads_hazard_ptrs_on(outputStream* st) const;
   void print() const { print_on(tty); }
   virtual void print_on_error(outputStream* st, char* buf, int buflen) const;
   void print_value_on(outputStream* st) const;
@@ -705,6 +699,8 @@ protected:
 #undef TLAB_FIELD_OFFSET
 
   static ByteSize allocated_bytes_offset()       { return byte_offset_of(Thread, _allocated_bytes); }
+
+  JFR_ONLY(DEFINE_THREAD_LOCAL_OFFSET_JFR;)
 
  public:
   volatile intptr_t _Stalled;
@@ -2112,6 +2108,8 @@ class Threads: AllStatic {
   static void add(JavaThread* p, bool force_daemon = false);
   static void remove(JavaThread* p);
   static void non_java_threads_do(ThreadClosure* tc);
+  static void java_threads_do(ThreadClosure* tc);
+  static void java_threads_and_vm_thread_do(ThreadClosure* tc);
   static void threads_do(ThreadClosure* tc);
   static void possibly_parallel_threads_do(bool is_par, ThreadClosure* tc);
 
@@ -2150,10 +2148,6 @@ class Threads: AllStatic {
   static void oops_do(OopClosure* f, CodeBlobClosure* cf);
   // This version may be called by sequential or parallel code.
   static void possibly_parallel_oops_do(bool is_par, OopClosure* f, CodeBlobClosure* cf);
-  // This creates a list of GCTasks, one per thread.
-  static void create_thread_roots_tasks(GCTaskQueue* q);
-  // This creates a list of GCTasks, one per thread, for marking objects.
-  static void create_thread_roots_marking_tasks(GCTaskQueue* q);
 
   // Apply "f->do_oop" to roots in all threads that
   // are part of compiled frames

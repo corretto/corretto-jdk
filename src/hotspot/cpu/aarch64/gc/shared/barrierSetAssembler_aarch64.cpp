@@ -24,18 +24,32 @@
 
 #include "precompiled.hpp"
 #include "gc/shared/barrierSetAssembler.hpp"
+#include "runtime/jniHandles.hpp"
 
 #define __ masm->
 
 void BarrierSetAssembler::load_at(MacroAssembler* masm, DecoratorSet decorators, BasicType type,
                                   Register dst, Address src, Register tmp1, Register tmp_thread) {
+
+  // LR is live.  It must be saved around calls.
+
   bool on_heap = (decorators & IN_HEAP) != 0;
   bool on_root = (decorators & IN_ROOT) != 0;
+  bool oop_not_null = (decorators & OOP_NOT_NULL) != 0;
   switch (type) {
   case T_OBJECT:
   case T_ARRAY: {
     if (on_heap) {
-      __ load_heap_oop(dst, src);
+      if (UseCompressedOops) {
+        __ ldrw(dst, src);
+        if (oop_not_null) {
+          __ decode_heap_oop_not_null(dst);
+        } else {
+          __ decode_heap_oop(dst);
+        }
+      } else {
+        __ ldr(dst, src);
+      }
     } else {
       assert(on_root, "why else?");
       __ ldr(dst, src);
@@ -53,8 +67,17 @@ void BarrierSetAssembler::store_at(MacroAssembler* masm, DecoratorSet decorators
   switch (type) {
   case T_OBJECT:
   case T_ARRAY: {
+    val = val == noreg ? zr : val;
     if (on_heap) {
-      __ store_heap_oop(dst, val);
+      if (UseCompressedOops) {
+        assert(!dst.uses(val), "not enough registers");
+        if (val != zr) {
+          __ encode_heap_oop(val);
+        }
+        __ strw(val, dst);
+      } else {
+        __ str(val, dst);
+      }
     } else {
       assert(on_root, "why else?");
       __ str(val, dst);
@@ -63,4 +86,12 @@ void BarrierSetAssembler::store_at(MacroAssembler* masm, DecoratorSet decorators
   }
   default: Unimplemented();
   }
+}
+
+void BarrierSetAssembler::try_resolve_jobject_in_native(MacroAssembler* masm, Register jni_env,
+                                                        Register obj, Register tmp, Label& slowpath) {
+  // If mask changes we need to ensure that the inverse is still encodable as an immediate
+  STATIC_ASSERT(JNIHandles::weak_tag_mask == 1);
+  __ andr(obj, obj, ~JNIHandles::weak_tag_mask);
+  __ ldr(obj, Address(obj, 0));             // *obj
 }

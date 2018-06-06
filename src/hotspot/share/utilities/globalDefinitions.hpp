@@ -39,6 +39,10 @@
 #define ALWAYSINLINE inline
 #endif
 
+#ifndef ATTRIBUTE_ALIGNED
+#define ATTRIBUTE_ALIGNED(x)
+#endif
+
 // This file holds all globally used constants & types, class (forward)
 // declarations and a few frequently used utility functions.
 
@@ -1258,5 +1262,12 @@ JAVA_INTEGER_OP(*, java_multiply, jlong, julong)
 static inline void* dereference_vptr(const void* addr) {
   return *(void**)addr;
 }
+
+//----------------------------------------------------------------------------------------------------
+// String type aliases used by command line flag declarations and
+// processing utilities.
+
+typedef const char* ccstr;
+typedef const char* ccstrlist;   // represents string arguments which accumulate
 
 #endif // SHARE_VM_UTILITIES_GLOBALDEFINITIONS_HPP

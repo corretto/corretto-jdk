@@ -151,4 +151,46 @@ void G1ParScanThreadState::steal_and_trim_queue(RefToScanQueueSet *task_queues) 
   }
 }
 
+inline bool G1ParScanThreadState::needs_partial_trimming() const {
+  return !_refs->overflow_empty() || _refs->size() > _stack_trim_upper_threshold;
+}
+
+inline bool G1ParScanThreadState::is_partially_trimmed() const {
+  return _refs->overflow_empty() && _refs->size() <= _stack_trim_lower_threshold;
+}
+
+inline void G1ParScanThreadState::trim_queue_to_threshold(uint threshold) {
+  StarTask ref;
+  // Drain the overflow stack first, so other threads can potentially steal.
+  while (_refs->pop_overflow(ref)) {
+    if (!_refs->try_push_to_taskqueue(ref)) {
+      dispatch_reference(ref);
+    }
+  }
+
+  while (_refs->pop_local(ref, threshold)) {
+    dispatch_reference(ref);
+  }
+}
+
+inline void G1ParScanThreadState::trim_queue_partially() {
+  if (!needs_partial_trimming()) {
+    return;
+  }
+
+  const Ticks start = Ticks::now();
+  do {
+    trim_queue_to_threshold(_stack_trim_lower_threshold);
+  } while (!is_partially_trimmed());
+  _trim_ticks += Ticks::now() - start;
+}
+
+inline Tickspan G1ParScanThreadState::trim_ticks() const {
+  return _trim_ticks;
+}
+
+inline void G1ParScanThreadState::reset_trim_ticks() {
+  _trim_ticks = Tickspan();
+}
+
 #endif // SHARE_VM_GC_G1_G1PARSCANTHREADSTATE_INLINE_HPP

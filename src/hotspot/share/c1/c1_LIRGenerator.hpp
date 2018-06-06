@@ -25,11 +25,16 @@
 #ifndef SHARE_VM_C1_C1_LIRGENERATOR_HPP
 #define SHARE_VM_C1_C1_LIRGENERATOR_HPP
 
+#include "c1/c1_Decorators.hpp"
 #include "c1/c1_Instruction.hpp"
 #include "c1/c1_LIR.hpp"
 #include "ci/ciMethodData.hpp"
+#include "gc/shared/barrierSet.hpp"
+#include "jfr/support/jfrIntrinsics.hpp"
 #include "utilities/macros.hpp"
 #include "utilities/sizes.hpp"
+
+class BarrierSetC1;
 
 // The classes responsible for code emission and register allocation
 
@@ -165,7 +170,6 @@ class LIRGenerator: public InstructionVisitor, public BlockClosure {
   Values        _instruction_for_operand;
   BitMap2D      _vreg_flags; // flags which can be set on a per-vreg basis
   LIR_List*     _lir;
-  BarrierSet*   _bs;
 
   LIRGenerator* gen() {
     return this;
@@ -173,6 +177,7 @@ class LIRGenerator: public InstructionVisitor, public BlockClosure {
 
   void print_if_not_loaded(const NewInstance* new_instance) PRODUCT_RETURN;
 
+ public:
 #ifdef ASSERT
   LIR_List* lir(const char * file, int line) const {
     _lir->set_file_and_line(file, line);
@@ -183,6 +188,7 @@ class LIRGenerator: public InstructionVisitor, public BlockClosure {
     return _lir;
   }
 
+ private:
   // a simple cache of constants used within a block
   GrowableArray<LIR_Const*>       _constants;
   LIR_OprList                     _reg_for_constants;
@@ -190,6 +196,7 @@ class LIRGenerator: public InstructionVisitor, public BlockClosure {
 
   friend class PhiResolver;
 
+ public:
   // unified bailout support
   void bailout(const char* msg) const            { compilation()->bailout(msg); }
   bool bailed_out() const                        { return compilation()->bailed_out(); }
@@ -233,13 +240,14 @@ class LIRGenerator: public InstructionVisitor, public BlockClosure {
   void  move_to_phi(PhiResolver* resolver, Value cur_val, Value sux_val);
   void  move_to_phi(ValueStack* cur_state);
 
-  // code emission
-  void do_ArithmeticOp_Long   (ArithmeticOp*    x);
-  void do_ArithmeticOp_Int    (ArithmeticOp*    x);
-  void do_ArithmeticOp_FPU    (ArithmeticOp*    x);
-
   // platform dependent
   LIR_Opr getThreadPointer();
+
+ private:
+  // code emission
+  void do_ArithmeticOp_Long(ArithmeticOp* x);
+  void do_ArithmeticOp_Int (ArithmeticOp* x);
+  void do_ArithmeticOp_FPU (ArithmeticOp* x);
 
   void do_RegisterFinalizer(Intrinsic* x);
   void do_isInstance(Intrinsic* x);
@@ -258,6 +266,7 @@ class LIRGenerator: public InstructionVisitor, public BlockClosure {
   void do_update_CRC32C(Intrinsic* x);
   void do_vectorizedMismatch(Intrinsic* x);
 
+ public:
   LIR_Opr call_runtime(BasicTypeArray* signature, LIRItemList* args, address entry, ValueType* result_type, CodeEmitInfo* info);
   LIR_Opr call_runtime(BasicTypeArray* signature, LIR_OprList* args, address entry, ValueType* result_type, CodeEmitInfo* info);
 
@@ -265,27 +274,41 @@ class LIRGenerator: public InstructionVisitor, public BlockClosure {
   LIR_Opr call_runtime(Value arg1, address entry, ValueType* result_type, CodeEmitInfo* info);
   LIR_Opr call_runtime(Value arg1, Value arg2, address entry, ValueType* result_type, CodeEmitInfo* info);
 
-  // GC Barriers
+  // Access API
 
-  // generic interface
+ private:
+  BarrierSetC1 *_barrier_set;
 
-  void pre_barrier(LIR_Opr addr_opr, LIR_Opr pre_val, bool do_load, bool patch, CodeEmitInfo* info);
-  void post_barrier(LIR_OprDesc* addr, LIR_OprDesc* new_val);
+ public:
+  void access_store_at(DecoratorSet decorators, BasicType type,
+                       LIRItem& base, LIR_Opr offset, LIR_Opr value,
+                       CodeEmitInfo* patch_info = NULL, CodeEmitInfo* store_emit_info = NULL);
 
-  // specific implementations
-  // pre barriers
+  void access_load_at(DecoratorSet decorators, BasicType type,
+                      LIRItem& base, LIR_Opr offset, LIR_Opr result,
+                      CodeEmitInfo* patch_info = NULL, CodeEmitInfo* load_emit_info = NULL);
 
-  void G1BarrierSet_pre_barrier(LIR_Opr addr_opr, LIR_Opr pre_val,
-                                bool do_load, bool patch, CodeEmitInfo* info);
+  LIR_Opr access_atomic_cmpxchg_at(DecoratorSet decorators, BasicType type,
+                                   LIRItem& base, LIRItem& offset, LIRItem& cmp_value, LIRItem& new_value);
 
-  // post barriers
+  LIR_Opr access_atomic_xchg_at(DecoratorSet decorators, BasicType type,
+                                LIRItem& base, LIRItem& offset, LIRItem& value);
 
-  void G1BarrierSet_post_barrier(LIR_OprDesc* addr, LIR_OprDesc* new_val);
-  void CardTableBarrierSet_post_barrier(LIR_OprDesc* addr, LIR_OprDesc* new_val);
+  LIR_Opr access_atomic_add_at(DecoratorSet decorators, BasicType type,
+                               LIRItem& base, LIRItem& offset, LIRItem& value);
+
+  // These need to guarantee JMM volatile semantics are preserved on each platform
+  // and requires one implementation per architecture.
+  LIR_Opr atomic_cmpxchg(BasicType type, LIR_Opr addr, LIRItem& cmp_value, LIRItem& new_value);
+  LIR_Opr atomic_xchg(BasicType type, LIR_Opr addr, LIRItem& new_value);
+  LIR_Opr atomic_add(BasicType type, LIR_Opr addr, LIRItem& new_value);
+
 #ifdef CARDTABLEBARRIERSET_POST_BARRIER_HELPER
-  void CardTableBarrierSet_post_barrier_helper(LIR_OprDesc* addr, LIR_Const* card_table_base);
+  virtual void CardTableBarrierSet_post_barrier_helper(LIR_OprDesc* addr, LIR_Const* card_table_base);
 #endif
 
+  // specific implementations
+  void array_store_check(LIR_Opr value, LIR_Opr array, CodeEmitInfo* store_check_info, ciMethod* profiled_method, int profiled_bci);
 
   static LIR_Opr result_register_for(ValueType* type, bool callee = false);
 
@@ -354,7 +377,7 @@ class LIRGenerator: public InstructionVisitor, public BlockClosure {
   LIR_Address* generate_address(LIR_Opr base, int disp, BasicType type) {
     return generate_address(base, LIR_OprFact::illegalOpr, 0, disp, type);
   }
-  LIR_Address* emit_array_address(LIR_Opr array_opr, LIR_Opr index_opr, BasicType type, bool needs_card_mark);
+  LIR_Address* emit_array_address(LIR_Opr array_opr, LIR_Opr index_opr, BasicType type);
 
   // the helper for generate_address
   void add_large_constant(LIR_Opr src, int c, LIR_Opr dest);
@@ -368,17 +391,23 @@ class LIRGenerator: public InstructionVisitor, public BlockClosure {
 
   void profile_branch(If* if_instr, If::Condition cond);
   void increment_event_counter_impl(CodeEmitInfo* info,
-                                    ciMethod *method, int frequency,
+                                    ciMethod *method, LIR_Opr step, int frequency,
                                     int bci, bool backedge, bool notify);
-  void increment_event_counter(CodeEmitInfo* info, int bci, bool backedge);
+  void increment_event_counter(CodeEmitInfo* info, LIR_Opr step, int bci, bool backedge);
   void increment_invocation_counter(CodeEmitInfo *info) {
     if (compilation()->count_invocations()) {
-      increment_event_counter(info, InvocationEntryBci, false);
+      increment_event_counter(info, LIR_OprFact::intConst(InvocationCounter::count_increment), InvocationEntryBci, false);
     }
   }
   void increment_backedge_counter(CodeEmitInfo* info, int bci) {
     if (compilation()->count_backedges()) {
-      increment_event_counter(info, bci, true);
+      increment_event_counter(info, LIR_OprFact::intConst(InvocationCounter::count_increment), bci, true);
+    }
+  }
+  void increment_backedge_counter_conditionally(LIR_Condition cond, LIR_Opr left, LIR_Opr right, CodeEmitInfo* info, int left_bci, int right_bci, int bci);
+  void increment_backedge_counter(CodeEmitInfo* info, LIR_Opr step, int bci) {
+    if (compilation()->count_backedges()) {
+      increment_event_counter(info, step, bci, true);
     }
   }
   void decrement_age(CodeEmitInfo* info);
@@ -433,15 +462,13 @@ class LIRGenerator: public InstructionVisitor, public BlockClosure {
   void do_soft_float_compare(If *x);
 #endif // __SOFTFP__
 
-  void init();
-
   SwitchRangeArray* create_lookup_ranges(TableSwitch* x);
   SwitchRangeArray* create_lookup_ranges(LookupSwitch* x);
   void do_SwitchRanges(SwitchRangeArray* x, LIR_Opr value, BlockBegin* default_sux);
 
-#ifdef TRACE_HAVE_INTRINSICS
+#ifdef JFR_HAVE_INTRINSICS
   void do_ClassIDIntrinsic(Intrinsic* x);
-  void do_getBufferWriter(Intrinsic* x);
+  void do_getEventWriter(Intrinsic* x);
 #endif
 
   void do_RuntimeCall(address routine, Intrinsic* x);
@@ -452,6 +479,7 @@ class LIRGenerator: public InstructionVisitor, public BlockClosure {
   void profile_arguments(ProfileCall* x);
   void profile_parameters(Base* x);
   void profile_parameters_at_call(ProfileCall* x);
+  LIR_Opr mask_boolean(LIR_Opr array, LIR_Opr value, CodeEmitInfo*& null_check_info);
   LIR_Opr maybe_mask_boolean(StoreIndexed* x, LIR_Opr array, LIR_Opr value, CodeEmitInfo*& null_check_info);
 
  public:
@@ -478,8 +506,8 @@ class LIRGenerator: public InstructionVisitor, public BlockClosure {
     : _compilation(compilation)
     , _method(method)
     , _virtual_register_number(LIR_OprDesc::vreg_base)
-    , _vreg_flags(num_vreg_flags) {
-    init();
+    , _vreg_flags(num_vreg_flags)
+    , _barrier_set(BarrierSet::barrier_set()->barrier_set_c1()) {
   }
 
   // for virtual registers, maps them back to Phi's or Local's

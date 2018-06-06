@@ -122,6 +122,9 @@ void ThreadService::add_thread(JavaThread* thread, bool daemon) {
 
 void ThreadService::remove_thread(JavaThread* thread, bool daemon) {
   Atomic::dec(&_exiting_threads_count);
+  if (daemon) {
+    Atomic::dec(&_exiting_daemon_threads_count);
+  }
 
   if (thread->is_hidden_from_external_view() ||
       thread->is_jvmti_agent_thread()) {
@@ -129,10 +132,8 @@ void ThreadService::remove_thread(JavaThread* thread, bool daemon) {
   }
 
   _live_threads_count->set_value(_live_threads_count->get_value() - 1);
-
   if (daemon) {
     _daemon_threads_count->set_value(_daemon_threads_count->get_value() - 1);
-    Atomic::dec(&_exiting_daemon_threads_count);
   }
 }
 
@@ -674,15 +675,15 @@ void ConcurrentLocksDump::dump_at_safepoint() {
   // dump all locked concurrent locks
   assert(SafepointSynchronize::is_at_safepoint(), "all threads are stopped");
 
-  ResourceMark rm;
-
-  GrowableArray<oop>* aos_objects = new GrowableArray<oop>(INITIAL_ARRAY_SIZE);
+  GrowableArray<oop>* aos_objects = new (ResourceObj::C_HEAP, mtInternal) GrowableArray<oop>(INITIAL_ARRAY_SIZE, true /* C_heap */);
 
   // Find all instances of AbstractOwnableSynchronizer
   HeapInspection::find_instances_at_safepoint(SystemDictionary::abstract_ownable_synchronizer_klass(),
                                                 aos_objects);
   // Build a map of thread to its owned AQS locks
   build_map(aos_objects);
+
+  delete aos_objects;
 }
 
 

@@ -56,7 +56,7 @@ void CardTableBarrierSetAssembler::store_check(MacroAssembler* masm, Register ob
     __ strb(zr, Address(obj, rscratch1));
     __ bind(L_already_dirty);
   } else {
-    if (UseConcMarkSweepGC && CMSPrecleaningEnabled) {
+    if (ct->scanned_concurrently()) {
       __ membar(Assembler::StoreStore);
     }
     __ strb(zr, Address(obj, rscratch1));
@@ -79,7 +79,7 @@ void CardTableBarrierSetAssembler::gen_write_ref_array_post_barrier(MacroAssembl
   const Register count = end; // 'end' register contains bytes count now
   __ load_byte_map_base(scratch);
   __ add(start, start, scratch);
-  if (UseConcMarkSweepGC) {
+  if (ct->scanned_concurrently()) {
     __ membar(__ StoreStore);
   }
   __ bind(L_loop);
@@ -90,13 +90,14 @@ void CardTableBarrierSetAssembler::gen_write_ref_array_post_barrier(MacroAssembl
 
 void CardTableBarrierSetAssembler::oop_store_at(MacroAssembler* masm, DecoratorSet decorators, BasicType type,
                                                 Address dst, Register val, Register tmp1, Register tmp2) {
+  bool in_heap = (decorators & IN_HEAP) != 0;
   bool on_array = (decorators & IN_HEAP_ARRAY) != 0;
   bool on_anonymous = (decorators & ON_UNKNOWN_OOP_REF) != 0;
   bool precise = on_array || on_anonymous;
-  if (val == noreg) {
-    __ store_heap_oop_null(dst);
-  } else {
-    __ store_heap_oop(dst, val);
+
+  bool needs_post_barrier = val != noreg && in_heap;
+  BarrierSetAssembler::store_at(masm, decorators, type, dst, val, noreg, noreg);
+  if (needs_post_barrier) {
     // flatten object address if needed
     if (!precise || (dst.index() == noreg && dst.offset() == 0)) {
       store_check(masm, dst.base(), dst);

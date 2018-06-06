@@ -31,6 +31,7 @@ import java.io.File;
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.nio.file.*;
+import java.text.MessageFormat;
 import java.time.*;
 import java.util.*;
 import java.util.ResourceBundle.Control;
@@ -82,13 +83,15 @@ public class CLDRConverter {
     static final String CALENDAR_FIRSTDAY_PREFIX = "firstDay.";
     static final String CALENDAR_MINDAYS_PREFIX = "minDays.";
     static final String TIMEZONE_ID_PREFIX = "timezone.id.";
+    static final String EXEMPLAR_CITY_PREFIX = "timezone.excity.";
     static final String ZONE_NAME_PREFIX = "timezone.displayname.";
     static final String METAZONE_ID_PREFIX = "metazone.id.";
     static final String PARENT_LOCALE_PREFIX = "parentLocale.";
+    static final String[] EMPTY_ZONE = {"", "", "", "", "", ""};
 
     private static SupplementDataParseHandler handlerSuppl;
-    private static SupplementalMetadataParseHandler handlerSupplMeta;
     private static LikelySubtagsParseHandler handlerLikelySubtags;
+    static SupplementalMetadataParseHandler handlerSupplMeta;
     static NumberingSystemsParseHandler handlerNumbering;
     static MetaZonesParseHandler handlerMetaZones;
     static TimeZoneParseHandler handlerTimeZone;
@@ -106,6 +109,7 @@ public class CLDRConverter {
     private static final String[] AVAILABLE_TZIDS = TimeZone.getAvailableIDs();
     private static String zoneNameTempFile;
     private static String tzDataDir;
+    private static final Map<String, String> canonicalTZMap = new HashMap<>();
 
     static enum DraftType {
         UNCONFIRMED,
@@ -425,7 +429,7 @@ public class CLDRConverter {
         parseLDMLFile(new File(LIKELYSUBTAGS_SOURCE_FILE), handlerLikelySubtags);
 
         // Parse supplementalMetadata
-        // Currently only interested in deprecated time zone ids.
+        // Currently interested in deprecated time zone ids and language aliases.
         handlerSupplMeta = new SupplementalMetadataParseHandler();
         parseLDMLFile(new File(SPPL_META_SOURCE_FILE), handlerSupplMeta);
     }
@@ -436,6 +440,15 @@ public class CLDRConverter {
         // Parse timezone
         handlerTimeZone = new TimeZoneParseHandler();
         parseLDMLFile(new File(TIMEZONE_SOURCE_FILE), handlerTimeZone);
+
+        // canonical tz name map
+        // alias -> primary
+        handlerTimeZone.getData().forEach((k, v) -> {
+            String[] ids = ((String)v).split("\\s");
+            for (int i = 1; i < ids.length; i++) {
+                canonicalTZMap.put(ids[i], ids[0]);
+            }
+        });
     }
 
     private static void parseLDMLFile(File srcfile, AbstractLDMLHandler handler) throws Exception {
@@ -655,30 +668,45 @@ public class CLDRConverter {
                     handlerMetaZones.get(tzid) == null ||
                     handlerMetaZones.get(tzid) != null &&
                     map.get(METAZONE_ID_PREFIX + handlerMetaZones.get(tzid)) == null) {
-                    // First, check the CLDR meta key
+
+                    // First, check the alias
+                    String canonID = canonicalTZMap.get(tzid);
+                    if (canonID != null && !tzid.equals(canonID)) {
+                        Object value = map.get(TIMEZONE_ID_PREFIX + canonID);
+                        if (value != null) {
+                            names.put(tzid, value);
+                            return;
+                        } else {
+                            String meta = handlerMetaZones.get(canonID);
+                            if (meta != null) {
+                                value = map.get(METAZONE_ID_PREFIX + meta);
+                                if (value != null) {
+                                    names.put(tzid, meta);
+                                    return;
+                                }
+                            }
+                        }
+                    }
+
+                    // Check the CLDR meta key
                     Optional<Map.Entry<String, String>> cldrMeta =
                         handlerMetaZones.getData().entrySet().stream()
                             .filter(me ->
                                 Arrays.deepEquals(data,
                                     (String[])map.get(METAZONE_ID_PREFIX + me.getValue())))
                             .findAny();
-                    if (cldrMeta.isPresent()) {
-                        names.put(tzid, cldrMeta.get().getValue());
-                    } else {
-                        // check the JRE meta key, add if there is not.
+                    cldrMeta.ifPresentOrElse(meta -> names.put(tzid, meta.getValue()), () -> {
+                        // Check the JRE meta key, add if there is not.
                         Optional<Map.Entry<String[], String>> jreMeta =
                             jreMetaMap.entrySet().stream()
                                 .filter(jm -> Arrays.deepEquals(data, jm.getKey()))
                                 .findAny();
-                        if (jreMeta.isPresent()) {
-                            names.put(tzid, jreMeta.get().getValue());
-                        } else {
-                            String metaName = "JRE_" + tzid.replaceAll("[/-]", "_");
-                            names.put(METAZONE_ID_PREFIX + metaName, data);
-                            names.put(tzid, metaName);
-                            jreMetaMap.put(data, metaName);
-                        }
-                    }
+                        jreMeta.ifPresentOrElse(meta -> names.put(tzid, meta.getValue()), () -> {
+                                String metaName = "JRE_" + tzid.replaceAll("[/-]", "_");
+                                names.put(METAZONE_ID_PREFIX + metaName, data);
+                                names.put(tzid, metaName);
+                        });
+                    });
                 }
             });
         }
@@ -704,6 +732,26 @@ public class CLDRConverter {
                 }
             }
         });
+
+        // exemplar cities.
+        Map<String, Object> exCities = map.entrySet().stream()
+                .filter(e -> e.getKey().startsWith(CLDRConverter.EXEMPLAR_CITY_PREFIX))
+                .collect(Collectors
+                        .toMap(Map.Entry::getKey, Map.Entry::getValue));
+        names.putAll(exCities);
+
+        if (!id.equals("en") &&
+            !names.isEmpty()) {
+            // CLDR does not have UTC entry, so add it here.
+            names.put("UTC", EMPTY_ZONE);
+
+            // no metazone zones
+            Arrays.asList(handlerMetaZones.get(MetaZonesParseHandler.NO_METAZONE_KEY)
+                .split("\\s")).stream()
+                .forEach(tz -> {
+                    names.put(tz, EMPTY_ZONE);
+                });
+        }
 
         return names;
     }
@@ -769,6 +817,10 @@ public class CLDRConverter {
         "field.hour",
         "timezone.hourFormat",
         "timezone.gmtFormat",
+        "timezone.gmtZeroFormat",
+        "timezone.regionFormat",
+        "timezone.regionFormat.daylight",
+        "timezone.regionFormat.standard",
         "field.minute",
         "field.second",
         "field.zone",
@@ -1002,16 +1054,9 @@ public class CLDRConverter {
     }
 
     private static Stream<String> zidMapEntry() {
-        Map<String, String> canonMap = new HashMap<>();
-        handlerTimeZone.getData().entrySet().stream()
-            .forEach(e -> {
-                String[] ids = ((String)e.getValue()).split("\\s");
-                for (int i = 1; i < ids.length; i++) {
-                    canonMap.put(ids[i], ids[0]);
-                }});
         return ZoneId.getAvailableZoneIds().stream()
                 .map(id -> {
-                    String canonId = canonMap.getOrDefault(id, id);
+                    String canonId = canonicalTZMap.getOrDefault(id, id);
                     String meta = handlerMetaZones.get(canonId);
                     String zone001 = handlerMetaZones.zidMap().get(meta);
                     return zone001 == null ? "" :

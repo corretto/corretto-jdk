@@ -42,7 +42,6 @@
 #include "runtime/threadSMR.inline.hpp"
 #include "runtime/vm_operations.hpp"
 #include "services/threadService.hpp"
-#include "trace/tracing.hpp"
 
 #define VM_OP_NAME_INITIALIZE(name) #name,
 
@@ -235,7 +234,7 @@ void VM_PrintJNI::doit() {
 }
 
 void VM_PrintMetadata::doit() {
-  MetaspaceUtils::print_metadata_for_nmt(_out, _scale);
+  MetaspaceUtils::print_report(_out, _scale, _flags);
 }
 
 VM_FindDeadlocks::~VM_FindDeadlocks() {

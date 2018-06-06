@@ -28,16 +28,17 @@
 #include "classfile/stringTable.hpp"
 #include "classfile/systemDictionary.hpp"
 #include "code/codeCache.hpp"
-#include "gc/g1/bufferingOopClosure.hpp"
 #include "gc/g1/g1BarrierSet.hpp"
 #include "gc/g1/g1CodeBlobClosure.hpp"
 #include "gc/g1/g1CollectedHeap.inline.hpp"
 #include "gc/g1/g1CollectorState.hpp"
 #include "gc/g1/g1GCPhaseTimes.hpp"
+#include "gc/g1/g1ParScanThreadState.inline.hpp"
 #include "gc/g1/g1Policy.hpp"
 #include "gc/g1/g1RootClosures.hpp"
 #include "gc/g1/g1RootProcessor.hpp"
 #include "gc/g1/heapRegion.inline.hpp"
+#include "gc/shared/referenceProcessor.hpp"
 #include "gc/shared/weakProcessor.hpp"
 #include "memory/allocation.inline.hpp"
 #include "runtime/mutex.hpp"
@@ -73,10 +74,12 @@ G1RootProcessor::G1RootProcessor(G1CollectedHeap* g1h, uint n_workers) :
     _lock(Mutex::leaf, "G1 Root Scanning barrier lock", false, Monitor::_safepoint_check_never),
     _n_workers_discovered_strong_classes(0) {}
 
-void G1RootProcessor::evacuate_roots(G1EvacuationRootClosures* closures, uint worker_i) {
-  double ext_roots_start = os::elapsedTime();
+void G1RootProcessor::evacuate_roots(G1ParScanThreadState* pss, uint worker_i) {
   G1GCPhaseTimes* phase_times = _g1h->g1_policy()->phase_times();
 
+  G1EvacPhaseTimesTracker timer(phase_times, pss, G1GCPhaseTimes::ExtRootScan, worker_i);
+
+  G1EvacuationRootClosures* closures = pss->closures();
   process_java_roots(closures, phase_times, worker_i);
 
   // This is the point where this worker thread will not find more strong CLDs/nmethods.
@@ -117,17 +120,6 @@ void G1RootProcessor::evacuate_roots(G1EvacuationRootClosures* closures, uint wo
     phase_times->record_time_secs(G1GCPhaseTimes::WeakCLDRoots, worker_i, 0.0);
     assert(closures->second_pass_weak_clds() == NULL, "Should be null if not tracing metadata.");
   }
-
-  // Finish up any enqueued closure apps (attributed as object copy time).
-  closures->flush();
-
-  double obj_copy_time_sec = closures->closure_app_seconds();
-
-  phase_times->record_time_secs(G1GCPhaseTimes::ObjCopy, worker_i, obj_copy_time_sec);
-
-  double ext_root_time_sec = os::elapsedTime() - ext_roots_start - obj_copy_time_sec;
-
-  phase_times->record_time_secs(G1GCPhaseTimes::ExtRootScan, worker_i, ext_root_time_sec);
 
   // During conc marking we have to filter the per-thread SATB buffers
   // to make sure we remove any oops into the CSet (which will show up
@@ -249,7 +241,6 @@ void G1RootProcessor::process_vm_roots(G1RootClosures* closures,
                                        G1GCPhaseTimes* phase_times,
                                        uint worker_i) {
   OopClosure* strong_roots = closures->strong_oops();
-  OopClosure* weak_roots = closures->weak_oops();
 
   {
     G1GCParPhaseTimesTracker x(phase_times, G1GCPhaseTimes::UniverseRoots, worker_i);
@@ -298,7 +289,7 @@ void G1RootProcessor::process_vm_roots(G1RootClosures* closures,
   {
     G1GCParPhaseTimesTracker x(phase_times, G1GCPhaseTimes::SystemDictionaryRoots, worker_i);
     if (!_process_strong_tasks.is_task_claimed(G1RP_PS_SystemDictionary_oops_do)) {
-      SystemDictionary::roots_oops_do(strong_roots, weak_roots);
+      SystemDictionary::oops_do(strong_roots);
     }
   }
 }

@@ -91,7 +91,7 @@ ArrayKlass::ArrayKlass(Symbol* name) :
     set_super(Universe::is_bootstrapping() ? (Klass*)NULL : SystemDictionary::Object_klass());
     set_layout_helper(Klass::_lh_neutral_value);
     set_is_cloneable(); // All arrays are considered to be cloneable (See JLS 20.1.5)
-    TRACE_INIT_ID(this);
+    JFR_ONLY(INIT_ID(this);)
 }
 
 
@@ -99,7 +99,7 @@ ArrayKlass::ArrayKlass(Symbol* name) :
 // since a GC can happen. At this point all instance variables of the ArrayKlass must be setup.
 void ArrayKlass::complete_create_array_klass(ArrayKlass* k, Klass* super_klass, ModuleEntry* module_entry, TRAPS) {
   ResourceMark rm(THREAD);
-  k->initialize_supers(super_klass, CHECK);
+  k->initialize_supers(super_klass, NULL, CHECK);
   k->vtable().initialize_vtable(false, CHECK);
 
   // During bootstrapping, before java.base is defined, the module_entry may not be present yet.
@@ -111,9 +111,11 @@ void ArrayKlass::complete_create_array_klass(ArrayKlass* k, Klass* super_klass, 
   java_lang_Class::create_mirror(k, Handle(THREAD, k->class_loader()), Handle(THREAD, module), Handle(), CHECK);
 }
 
-GrowableArray<Klass*>* ArrayKlass::compute_secondary_supers(int num_extra_slots) {
+GrowableArray<Klass*>* ArrayKlass::compute_secondary_supers(int num_extra_slots,
+                                                            Array<Klass*>* transitive_interfaces) {
   // interfaces = { cloneable_klass, serializable_klass };
   assert(num_extra_slots == 0, "sanity of primitive array type");
+  assert(transitive_interfaces == NULL, "sanity");
   // Must share this for correct bootstrapping!
   set_secondary_supers(Universe::the_array_interfaces_array());
   return NULL;
@@ -128,7 +130,7 @@ bool ArrayKlass::compute_is_subtype_of(Klass* k) {
 
 objArrayOop ArrayKlass::allocate_arrayArray(int n, int length, TRAPS) {
   if (length < 0) {
-    THROW_0(vmSymbols::java_lang_NegativeArraySizeException());
+    THROW_MSG_0(vmSymbols::java_lang_NegativeArraySizeException(), err_msg("%d", length));
   }
   if (length > arrayOopDesc::max_array_length(T_ARRAY)) {
     report_java_out_of_memory("Requested array size exceeds VM limit");

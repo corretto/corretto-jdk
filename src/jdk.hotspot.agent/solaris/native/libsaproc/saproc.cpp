@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2002, 2016, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2002, 2018, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -496,29 +496,54 @@ wrapper_fill_cframe_list(void *cd, const prgregset_t regs, uint_t argc,
 // mapped.  This structure gets written to a file.  It is not a class, so
 // that the compilers don't add any compiler-private data to it.
 
-const int NUM_SHARED_MAPS = 4;
+const int NUM_SHARED_MAPS = 9;
 
 // Refer to FileMapInfo::_current_version in filemap.hpp
-const int CURRENT_ARCHIVE_VERSION = 1;
+const int CURRENT_ARCHIVE_VERSION = 3;
+
+typedef unsigned char* address;
+typedef uintptr_t      uintx;
+typedef intptr_t       intx;
 
 struct FileMapHeader {
- int   _magic;              // identify file type.
- int   _version;            // (from enum, above.)
- size_t _alignment;         // how shared archive should be aligned
+  int     _magic;                   // identify file type.
+  int     _crc;                     // header crc checksum.
+  int     _version;                 // (from enum, above.)
+  size_t  _alignment;               // how shared archive should be aligned
+  int     _obj_alignment;           // value of ObjectAlignmentInBytes
+  address _narrow_oop_base;         // compressed oop encoding base
+  int     _narrow_oop_shift;        // compressed oop encoding shift
+  bool    _compact_strings;         // value of CompactStrings
+  uintx   _max_heap_size;           // java max heap size during dumping
+  int     _narrow_oop_mode;         // compressed oop encoding mode
+  int     _narrow_klass_shift;      // save narrow klass base and shift
+  address _narrow_klass_base;
+  char*   _misc_data_patching_start;
+  char*   _read_only_tables_start;
+  address _cds_i2i_entry_code_buffers;
+  size_t  _cds_i2i_entry_code_buffers_size;
+  size_t  _core_spaces_size;        // number of bytes allocated by the core spaces
+                                    // (mc, md, ro, rw and od).
 
 
- struct space_info {
-   int    _file_offset;     // sizeof(this) rounded to vm page size
-   char*  _base;            // copy-on-write base address
-   size_t _capacity;        // for validity checking
-   size_t _used;            // for setting space top on read
+  struct space_info {
+    int     _crc;          // crc checksum of the current space
+    size_t  _file_offset;  // sizeof(this) rounded to vm page size
+    union {
+      char*  _base;        // copy-on-write base address
+      intx   _offset;      // offset from the compressed oop encoding base, only used
+                           // by archive heap space
+    } _addr;
+    size_t _used;          // for setting space top on read
+    // 4991491 NOTICE These are C++ bool's in filemap.hpp and must match up with
+    // the C type matching the C++ bool type on any given platform.
+    // We assume the corresponding C type is char but licensees
+    // may need to adjust the type of these fields.
+    char   _read_only;     // read only space?
+    char   _allow_exec;    // executable code in space?
+  } _space[NUM_SHARED_MAPS];
 
-   bool   _read_only;       // read only space?
-   bool   _allow_exec;      // executable code in space?
-
- } _space[NUM_SHARED_MAPS];
-
- // Ignore the rest of the FileMapHeader. We don't need those fields here.
+// Ignore the rest of the FileMapHeader. We don't need those fields here.
 };
 
 static bool
@@ -677,7 +702,7 @@ init_classsharing_workaround(void *cd, const prmap_t* pmap, const char* obj_name
   if (_libsaproc_debug) {
     for (int m = 0; m < NUM_SHARED_MAPS; m++) {
        print_debug("shared file offset %d mapped at 0x%lx, size = %ld, read only? = %d\n",
-          pheader->_space[m]._file_offset, pheader->_space[m]._base,
+          pheader->_space[m]._file_offset, pheader->_space[m]._addr._base,
           pheader->_space[m]._used, pheader->_space[m]._read_only);
     }
   }
@@ -717,6 +742,8 @@ static void attach_internal(JNIEnv* env, jobject this_obj, jstring cmdLine, jboo
   jboolean isCopy;
   int gcode;
   const char* cmdLine_cstr = env->GetStringUTFChars(cmdLine, &isCopy);
+  char errMsg[ERR_MSG_SIZE];
+  td_err_e te;
   CHECK_EXCEPTION;
 
   // some older versions of libproc.so crash when trying to attach 32 bit
@@ -746,8 +773,7 @@ static void attach_internal(JNIEnv* env, jobject this_obj, jstring cmdLine, jboo
   env->ReleaseStringUTFChars(cmdLine, cmdLine_cstr);
   if (! ph) {
      if (gcode > 0 && gcode < sizeof(proc_arg_grab_errmsgs)/sizeof(const char*)) {
-        char errMsg[ERR_MSG_SIZE];
-        sprintf(errMsg, "Attach failed : %s", proc_arg_grab_errmsgs[gcode]);
+        snprintf(errMsg, ERR_MSG_SIZE, "Attach failed : %s", proc_arg_grab_errmsgs[gcode]);
         THROW_NEW_DEBUGGER_EXCEPTION(errMsg);
     } else {
         if (_libsaproc_debug && gcode == G_STRANGE) {
@@ -822,21 +848,25 @@ static void attach_internal(JNIEnv* env, jobject this_obj, jstring cmdLine, jboo
     HANDLE_THREADDB_FAILURE("Did not find libthread in target process/core!");
   }
 
-  if (p_td_init() != TD_OK) {
+  te = p_td_init();
+  if (te != TD_OK) {
     if (!sa_ignore_threaddb) {
       detach_internal(env, this_obj);
     }
-    HANDLE_THREADDB_FAILURE("Can't initialize thread_db!");
+    snprintf(errMsg, ERR_MSG_SIZE, "Can't initialize thread_db! td_init failed: %d", te);
+    HANDLE_THREADDB_FAILURE(errMsg);
   }
 
   p_td_ta_new_t p_td_ta_new = (p_td_ta_new_t) env->GetLongField(this_obj, p_td_ta_new_ID);
 
   td_thragent_t *p_td_thragent_t = 0;
-  if (p_td_ta_new(ph, &p_td_thragent_t) != TD_OK) {
+  te = p_td_ta_new(ph, &p_td_thragent_t);
+  if (te != TD_OK) {
     if (!sa_ignore_threaddb) {
       detach_internal(env, this_obj);
     }
-    HANDLE_THREADDB_FAILURE("Can't create thread_db agent!");
+    snprintf(errMsg, ERR_MSG_SIZE, "Can't create thread_db agent! td_ta_new failed: %d", te);
+    HANDLE_THREADDB_FAILURE(errMsg);
   }
   env->SetLongField(this_obj, p_td_thragent_t_ID, (jlong)(uintptr_t) p_td_thragent_t);
 
@@ -928,6 +958,8 @@ JNIEXPORT jint JNICALL Java_sun_jvm_hotspot_debugger_proc_ProcDebuggerLocal_getP
  */
 JNIEXPORT jlongArray JNICALL Java_sun_jvm_hotspot_debugger_proc_ProcDebuggerLocal_getThreadIntegerRegisterSet0
   (JNIEnv *env, jobject this_obj, jlong tid) {
+  char errMsg[ERR_MSG_SIZE];
+  td_err_e te;
   // map the thread id to thread handle
   p_td_ta_map_id2thr_t p_td_ta_map_id2thr = (p_td_ta_map_id2thr_t) env->GetLongField(this_obj, p_td_ta_map_id2thr_ID);
 
@@ -937,8 +969,10 @@ JNIEXPORT jlongArray JNICALL Java_sun_jvm_hotspot_debugger_proc_ProcDebuggerLoca
   }
 
   td_thrhandle_t thr_handle;
-  if (p_td_ta_map_id2thr(p_td_thragent_t, (thread_t) tid, &thr_handle) != TD_OK) {
-     THROW_NEW_DEBUGGER_EXCEPTION_("can't map thread id to thread handle!", 0);
+  te = p_td_ta_map_id2thr(p_td_thragent_t, (thread_t) tid, &thr_handle);
+  if (te != TD_OK) {
+     snprintf(errMsg, ERR_MSG_SIZE, "can't map thread id to thread handle! td_ta_map_id2thr failed: %d", te);
+     THROW_NEW_DEBUGGER_EXCEPTION_(errMsg, 0);
   }
 
   p_td_thr_getgregs_t p_td_thr_getgregs = (p_td_thr_getgregs_t) env->GetLongField(this_obj, p_td_thr_getgregs_ID);
@@ -1058,7 +1092,7 @@ JNIEXPORT jbyteArray JNICALL Java_sun_jvm_hotspot_debugger_proc_ProcDebuggerLoca
       print_debug("read failed at 0x%lx, attempting shared heap area\n", (long) address);
 
       struct FileMapHeader* pheader = (struct FileMapHeader*) env->GetLongField(this_obj, p_file_map_header_ID);
-      // walk through the shared mappings -- we just have 4 of them.
+      // walk through the shared mappings -- we just have 9 of them.
       // so, linear walking is okay.
       for (int m = 0; m < NUM_SHARED_MAPS; m++) {
 
@@ -1066,7 +1100,7 @@ JNIEXPORT jbyteArray JNICALL Java_sun_jvm_hotspot_debugger_proc_ProcDebuggerLoca
         // and hence will be read by libproc. Besides, the file copy may be
         // stale because the process might have modified those pages.
         if (pheader->_space[m]._read_only) {
-          jlong baseAddress = (jlong) (uintptr_t) pheader->_space[m]._base;
+          jlong baseAddress = (jlong) (uintptr_t) pheader->_space[m]._addr._base;
           size_t usedSize = pheader->_space[m]._used;
           if (address >= baseAddress && address < (baseAddress + usedSize)) {
             // the given address falls in this shared heap area
@@ -1112,14 +1146,18 @@ JNIEXPORT jbyteArray JNICALL Java_sun_jvm_hotspot_debugger_proc_ProcDebuggerLoca
  */
 JNIEXPORT void JNICALL Java_sun_jvm_hotspot_debugger_proc_ProcDebuggerLocal_writeBytesToProcess0
   (JNIEnv *env, jobject this_obj, jlong address, jlong numBytes, jbyteArray data) {
+  char errMsg[ERR_MSG_SIZE];
+  ps_err_e pe;
   jlong p_ps_prochandle = env->GetLongField(this_obj, p_ps_prochandle_ID);
   jboolean isCopy;
   jbyte* ptr = env->GetByteArrayElements(data, &isCopy);
   CHECK_EXCEPTION;
 
-  if (ps_pwrite((struct ps_prochandle*) p_ps_prochandle, address, ptr, numBytes) != PS_OK) {
+  pe = ps_pwrite((struct ps_prochandle*) p_ps_prochandle, address, ptr, numBytes);
+  if (pe != PS_OK) {
+     snprintf(errMsg, ERR_MSG_SIZE, "Process write failed! ps_pwrite failed: %d", pe);
      env->ReleaseByteArrayElements(data, ptr, JNI_ABORT);
-     THROW_NEW_DEBUGGER_EXCEPTION("Process write failed!");
+     THROW_NEW_DEBUGGER_EXCEPTION(errMsg);
   }
 
   env->ReleaseByteArrayElements(data, ptr, JNI_ABORT);

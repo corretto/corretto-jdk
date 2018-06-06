@@ -44,7 +44,6 @@
 #include "runtime/atomic.hpp"
 #include "runtime/handles.inline.hpp"
 #include "runtime/orderAccess.inline.hpp"
-#include "trace/traceMacros.hpp"
 #include "utilities/macros.hpp"
 #include "utilities/stack.inline.hpp"
 
@@ -224,7 +223,7 @@ bool Klass::can_be_primary_super_slow() const {
     return true;
 }
 
-void Klass::initialize_supers(Klass* k, TRAPS) {
+void Klass::initialize_supers(Klass* k, Array<Klass*>* transitive_interfaces, TRAPS) {
   if (FastSuperclassLimit == 0) {
     // None of the other machinery matters.
     set_super(k);
@@ -292,7 +291,7 @@ void Klass::initialize_supers(Klass* k, TRAPS) {
     ResourceMark rm(THREAD);  // need to reclaim GrowableArrays allocated below
 
     // Compute the "real" non-extra secondaries.
-    GrowableArray<Klass*>* secondaries = compute_secondary_supers(extras);
+    GrowableArray<Klass*>* secondaries = compute_secondary_supers(extras, transitive_interfaces);
     if (secondaries == NULL) {
       // secondary_supers set by compute_secondary_supers
       return;
@@ -342,8 +341,10 @@ void Klass::initialize_supers(Klass* k, TRAPS) {
   }
 }
 
-GrowableArray<Klass*>* Klass::compute_secondary_supers(int num_extra_slots) {
+GrowableArray<Klass*>* Klass::compute_secondary_supers(int num_extra_slots,
+                                                       Array<Klass*>* transitive_interfaces) {
   assert(num_extra_slots == 0, "override for complex klasses");
+  assert(transitive_interfaces == NULL, "sanity");
   set_secondary_supers(Universe::the_empty_klass_array());
   return NULL;
 }
@@ -382,8 +383,8 @@ void Klass::append_to_sibling_list() {
   debug_only(verify();)
 }
 
-void Klass::clean_weak_klass_links(bool clean_alive_klasses) {
-  if (!ClassUnloading) {
+void Klass::clean_weak_klass_links(bool unloading_occurred, bool clean_alive_klasses) {
+  if (!ClassUnloading || !unloading_occurred) {
     return;
   }
 
@@ -465,7 +466,7 @@ void Klass::metaspace_pointers_do(MetaspaceClosure* it) {
 
 void Klass::remove_unshareable_info() {
   assert (DumpSharedSpaces, "only called for DumpSharedSpaces");
-  TRACE_REMOVE_ID(this);
+  JFR_ONLY(REMOVE_ID(this);)
   if (log_is_enabled(Trace, cds, unshareable)) {
     ResourceMark rm;
     log_trace(cds, unshareable)("remove: %s", external_name());
@@ -493,7 +494,7 @@ void Klass::remove_java_mirror() {
 void Klass::restore_unshareable_info(ClassLoaderData* loader_data, Handle protection_domain, TRAPS) {
   assert(is_klass(), "ensure C++ vtable is restored");
   assert(is_shared(), "must be set");
-  TRACE_RESTORE_ID(this);
+  JFR_ONLY(RESTORE_ID(this);)
   if (log_is_enabled(Trace, cds, unshareable)) {
     ResourceMark rm;
     log_trace(cds, unshareable)("restore: %s", external_name());
@@ -534,7 +535,7 @@ void Klass::restore_unshareable_info(ClassLoaderData* loader_data, Handle protec
       log_debug(cds, mirror)("Archived mirror is: " PTR_FORMAT, p2i(m));
       if (m != NULL) {
         // mirror is archived, restore
-        assert(oopDesc::is_archive_object(m), "must be archived mirror object");
+        assert(MetaspaceShared::is_archive_object(m), "must be archived mirror object");
         Handle m_h(THREAD, m);
         java_lang_Class::restore_archived_mirror(this, m_h, loader, module_handle, protection_domain, CHECK);
         return;

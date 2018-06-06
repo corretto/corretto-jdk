@@ -39,7 +39,6 @@ import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.lang.reflect.Constructor;
 import java.lang.reflect.Modifier;
-import java.security.Permission;
 import java.security.PrivilegedAction;
 import java.util.Objects;
 import java.util.Properties;
@@ -47,6 +46,7 @@ import java.util.Properties;
 import jdk.internal.misc.VM;
 import sun.reflect.misc.ReflectUtil;
 import sun.security.action.GetPropertyAction;
+import sun.security.util.SecurityConstants;
 
 /** <P> The master factory for all reflective objects, both those in
     java.lang.reflect (Fields, Methods, Constructors) as well as their
@@ -63,8 +63,6 @@ import sun.security.action.GetPropertyAction;
 public class ReflectionFactory {
 
     private static boolean initted = false;
-    private static final Permission reflectionFactoryAccessPerm
-        = new RuntimePermission("reflectionFactoryAccess");
     private static final ReflectionFactory soleInstance = new ReflectionFactory();
     // Provides access to package-private mechanisms in java.lang.reflect
     private static volatile LangReflectAccess langReflectAccess;
@@ -129,8 +127,8 @@ public class ReflectionFactory {
     public static ReflectionFactory getReflectionFactory() {
         SecurityManager security = System.getSecurityManager();
         if (security != null) {
-            // TO DO: security.checkReflectionFactoryAccess();
-            security.checkPermission(reflectionFactoryAccessPerm);
+            security.checkPermission(
+                SecurityConstants.REFLECTION_FACTORY_ACCESS_PERMISSION);
         }
         return soleInstance;
     }
@@ -173,6 +171,15 @@ public class ReflectionFactory {
      */
     public FieldAccessor newFieldAccessor(Field field, boolean override) {
         checkInitted();
+
+        Field root = langReflectAccess.getRoot(field);
+        if (root != null) {
+            // FieldAccessor will use the root unless the modifiers have
+            // been overrridden
+            if (root.getModifiers() == field.getModifiers() || !override) {
+                field = root;
+            }
+        }
         return UnsafeFieldAccessorFactory.newFieldAccessor(field, override);
     }
 
@@ -184,6 +191,12 @@ public class ReflectionFactory {
             if (altMethod != null) {
                 method = altMethod;
             }
+        }
+
+        // use the root Method that will not cache caller class
+        Method root = langReflectAccess.getRoot(method);
+        if (root != null) {
+            method = root;
         }
 
         if (noInflation && !ReflectUtil.isVMAnonymousClass(method.getDeclaringClass())) {
@@ -215,6 +228,13 @@ public class ReflectionFactory {
             return new InstantiationExceptionConstructorAccessorImpl
                 ("Can not instantiate java.lang.Class");
         }
+
+        // use the root Constructor that will not cache caller class
+        Constructor<?> root = langReflectAccess.getRoot(c);
+        if (root != null) {
+            c = root;
+        }
+
         // Bootstrapping issue: since we use Class.newInstance() in
         // the ConstructorAccessor generation process, we have to
         // break the cycle here.

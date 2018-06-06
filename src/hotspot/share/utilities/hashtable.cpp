@@ -31,6 +31,7 @@
 #include "classfile/placeholders.hpp"
 #include "classfile/protectionDomainCache.hpp"
 #include "classfile/stringTable.hpp"
+#include "logging/log.hpp"
 #include "memory/allocation.inline.hpp"
 #include "memory/metaspaceShared.hpp"
 #include "memory/resourceArea.hpp"
@@ -242,9 +243,7 @@ template <MEMFLAGS F> void BasicHashtable<F>::copy_table(char* top, char* end) {
 // For oops and Strings the size of the literal is interesting. For other types, nobody cares.
 static int literal_size(ConstantPool*) { return 0; }
 static int literal_size(Klass*)        { return 0; }
-#if INCLUDE_ALL_GCS
 static int literal_size(nmethod*)      { return 0; }
-#endif
 
 static int literal_size(Symbol *symbol) {
   return symbol->size() * HeapWordSize;
@@ -321,7 +320,8 @@ template <MEMFLAGS F> bool BasicHashtable<F>::resize(int new_size) {
 // literals.
 
 template <class T, MEMFLAGS F> void Hashtable<T, F>::print_table_statistics(outputStream* st,
-                                                                            const char *table_name) {
+                                                                            const char *table_name,
+                                                                            T (*literal_load_barrier)(HashtableEntry<T, F>*)) {
   NumberSeq summary;
   int literal_bytes = 0;
   for (int i = 0; i < this->table_size(); ++i) {
@@ -329,7 +329,8 @@ template <class T, MEMFLAGS F> void Hashtable<T, F>::print_table_statistics(outp
     for (HashtableEntry<T, F>* e = this->bucket(i);
          e != NULL; e = e->next()) {
       count++;
-      literal_bytes += literal_size(e->literal());
+      T l = (literal_load_barrier != NULL) ? literal_load_barrier(e) : e->literal();
+      literal_bytes += literal_size(l);
     }
     summary.add((double)count);
   }
@@ -447,11 +448,9 @@ template <class T> void BasicHashtable<F>::verify_table(const char* table_name) 
 #endif // PRODUCT
 
 // Explicitly instantiate these types
-#if INCLUDE_ALL_GCS
 template class Hashtable<nmethod*, mtGC>;
 template class HashtableEntry<nmethod*, mtGC>;
 template class BasicHashtable<mtGC>;
-#endif
 template class Hashtable<ConstantPool*, mtClass>;
 template class RehashableHashtable<Symbol*, mtSymbol>;
 template class RehashableHashtable<oop, mtSymbol>;
@@ -476,11 +475,6 @@ template class BasicHashtable<mtSymbol>;
 template class BasicHashtable<mtCode>;
 template class BasicHashtable<mtInternal>;
 template class BasicHashtable<mtModule>;
-#if INCLUDE_TRACE
-template class Hashtable<Symbol*, mtTracing>;
-template class HashtableEntry<Symbol*, mtTracing>;
-template class BasicHashtable<mtTracing>;
-#endif
 template class BasicHashtable<mtCompiler>;
 
 template void BasicHashtable<mtClass>::verify_table<DictionaryEntry>(char const*);

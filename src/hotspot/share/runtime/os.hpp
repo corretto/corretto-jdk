@@ -167,7 +167,7 @@ class os: AllStatic {
 
   // File names are case-insensitive on windows only
   // Override me as needed
-  static int    file_name_strcmp(const char* s1, const char* s2);
+  static int    file_name_strncmp(const char* s1, const char* s2, size_t num);
 
   // unset environment variable
   static bool unsetenv(const char* name);
@@ -233,6 +233,10 @@ class os: AllStatic {
   static bool has_allocatable_memory_limit(julong* limit);
   static bool is_server_class_machine();
 
+  // Returns the id of the processor on which the calling thread is currently executing.
+  // The returned value is guaranteed to be between 0 and (os::processor_count() - 1).
+  static uint processor_id();
+
   // number of CPUs
   static int processor_count() {
     return _processor_count;
@@ -272,6 +276,10 @@ class os: AllStatic {
   static bool must_commit_stack_guard_pages();
   static void map_stack_shadow_pages(address sp);
   static bool stack_shadow_pages_available(Thread *thread, const methodHandle& method, address sp);
+
+  // Find committed memory region within specified range (start, start + size),
+  // return true if found any
+  static bool committed_in_range(address start, size_t size, address& committed_start, size_t& committed_size);
 
   // OS interface to Virtual Memory
 
@@ -547,6 +555,7 @@ class os: AllStatic {
   static const int default_file_open_flags();
   static int open(const char *path, int oflag, int mode);
   static FILE* open(int fd, const char* mode);
+  static FILE* fopen(const char* path, const char* mode);
   static int close(int fd);
   static jlong lseek(int fd, jlong offset, int whence);
   static char* native_path(char *path);
@@ -775,8 +784,7 @@ class os: AllStatic {
   static struct hostent* get_host_by_name(char* name);
 
   // Support for signals (see JVM_RaiseSignal, JVM_RegisterSignal)
-  static void  signal_init(TRAPS);
-  static void  signal_init_pd();
+  static void  initialize_jdk_signal_support(TRAPS);
   static void  signal_notify(int signal_number);
   static void* signal(int signal_number, void* handler);
   static void  signal_raise(int signal_number);

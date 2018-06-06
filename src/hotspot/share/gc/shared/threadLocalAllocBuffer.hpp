@@ -58,6 +58,7 @@ private:
   unsigned  _slow_refill_waste;
   unsigned  _gc_waste;
   unsigned  _slow_allocations;
+  size_t    _allocated_size;
 
   AdaptiveWeightedAverage _allocation_fraction;  // fraction of eden allocated in tlabs
 
@@ -77,6 +78,8 @@ private:
   size_t initial_desired_size();
 
   size_t remaining() const                       { return end() == NULL ? 0 : pointer_delta(hard_end(), top()); }
+
+  bool is_last_allocation(HeapWord* obj, size_t size) { return pointer_delta(top(), obj) == size; }
 
   // Make parsable and release it.
   void reset();
@@ -128,6 +131,9 @@ public:
   // Allocate size HeapWords. The memory is NOT initialized to zero.
   inline HeapWord* allocate(size_t size);
 
+  // Undo last allocation.
+  inline bool undo_allocate(HeapWord* obj, size_t size);
+
   // Reserve space at the end of TLAB
   static size_t end_reserve() {
     int reserve_size = typeArrayOopDesc::header_size(T_INT);
@@ -140,6 +146,9 @@ public:
   // space is large enough to hold obj_size and necessary fill space.
   // Otherwise return 0;
   inline size_t compute_size(size_t obj_size);
+
+  // Compute the minimal needed tlab size for the given object size.
+  static inline size_t compute_min_size(size_t obj_size);
 
   // Record slow allocation
   inline void record_slow_allocation(size_t obj_size);

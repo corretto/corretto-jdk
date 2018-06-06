@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2012, 2016, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2012, 2018, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -35,8 +35,8 @@
 #include "runtime/os.hpp"
 #include "utilities/globalDefinitions.hpp"
 #include "utilities/macros.hpp"
-#include "utilities/ticks.inline.hpp"
-#if INCLUDE_ALL_GCS
+#include "utilities/ticks.hpp"
+#if INCLUDE_G1GC
 #include "gc/g1/evacuationInfo.hpp"
 #endif
 
@@ -184,7 +184,7 @@ void OldGCTracer::report_concurrent_mode_failure() {
   send_concurrent_mode_failure_event();
 }
 
-#if INCLUDE_ALL_GCS
+#if INCLUDE_G1GC
 void G1MMUTracer::report_mmu(double time_slice_sec, double gc_time_sec, double max_time_sec) {
   send_g1_mmu_event(time_slice_sec * MILLIUNITS,
                     gc_time_sec * MILLIUNITS,
@@ -252,4 +252,4 @@ void G1OldTracer::set_gc_cause(GCCause::Cause cause) {
   _shared_gc_info.set_cause(cause);
 }
 
-#endif
+#endif // INCLUDE_G1GC

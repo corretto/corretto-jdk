@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2013, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2013, 2018, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -21,10 +21,10 @@
  * questions.
  */
 
+// key: compiler.misc.not.a.functional.intf.1
 // key: compiler.err.prob.found.req
-// key: compiler.misc.bad.intersection.target.for.functional.expr
-// key: compiler.misc.not.an.intf.component
+// key: compiler.misc.incompatible.abstracts
 
 class NotAnInterfaceComponent {
-    Object o = (Object & Runnable) ()-> { };
+    Object o = (String & Runnable) ()-> { };
 }

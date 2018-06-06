@@ -918,9 +918,10 @@ bool InstanceKlass::can_be_primary_super_slow() const {
     return Klass::can_be_primary_super_slow();
 }
 
-GrowableArray<Klass*>* InstanceKlass::compute_secondary_supers(int num_extra_slots) {
+GrowableArray<Klass*>* InstanceKlass::compute_secondary_supers(int num_extra_slots,
+                                                               Array<Klass*>* transitive_interfaces) {
   // The secondaries are the implemented interfaces.
-  Array<Klass*>* interfaces = transitive_interfaces();
+  Array<Klass*>* interfaces = transitive_interfaces;
   int num_secondaries = num_extra_slots + interfaces->length();
   if (num_secondaries == 0) {
     // Must share this for correct bootstrapping!
@@ -974,7 +975,9 @@ bool InstanceKlass::is_same_or_direct_interface(Klass *k) const {
 }
 
 objArrayOop InstanceKlass::allocate_objArray(int n, int length, TRAPS) {
-  if (length < 0) THROW_0(vmSymbols::java_lang_NegativeArraySizeException());
+  if (length < 0)  {
+    THROW_MSG_0(vmSymbols::java_lang_NegativeArraySizeException(), err_msg("%d", length));
+  }
   if (length > arrayOopDesc::max_array_length(T_OBJECT)) {
     report_java_out_of_memory("Requested array size exceeds VM limit");
     JvmtiExport::post_array_size_exhausted();

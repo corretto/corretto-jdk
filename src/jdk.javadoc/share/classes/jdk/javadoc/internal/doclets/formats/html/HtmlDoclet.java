@@ -31,6 +31,7 @@ import javax.lang.model.element.ModuleElement;
 import javax.lang.model.element.PackageElement;
 import javax.lang.model.element.TypeElement;
 
+import jdk.javadoc.doclet.Doclet;
 import jdk.javadoc.doclet.DocletEnvironment;
 import jdk.javadoc.doclet.Reporter;
 import jdk.javadoc.internal.doclets.toolkit.AbstractDoclet;
@@ -59,8 +60,8 @@ import jdk.javadoc.internal.doclets.toolkit.util.IndexBuilder;
  */
 public class HtmlDoclet extends AbstractDoclet {
 
-    public HtmlDoclet() {
-        configuration = new HtmlConfiguration(this);
+    public HtmlDoclet(Doclet parent) {
+        configuration = new HtmlConfiguration(parent);
     }
 
     @Override // defined by Doclet
@@ -145,6 +146,11 @@ public class HtmlDoclet extends AbstractDoclet {
             } else {
                 SingleIndexWriter.generate(configuration, indexbuilder);
             }
+            AllClassesIndexWriter.generate(configuration,
+                    new IndexBuilder(configuration, nodeprecated, true));
+            if (!configuration.packages.isEmpty()) {
+                AllPackagesIndexWriter.generate(configuration);
+            }
         }
 
         if (!(configuration.nodeprecatedlist || nodeprecated)) {
@@ -178,7 +184,7 @@ public class HtmlDoclet extends AbstractDoclet {
         DocFile f;
         if (configuration.stylesheetfile.length() == 0) {
             f = DocFile.createFileForOutput(configuration, DocPaths.STYLESHEET);
-            f.copyResource(DocPaths.RESOURCES.resolve(DocPaths.STYLESHEET), false, true);
+            f.copyResource(DocPaths.RESOURCES.resolve(DocPaths.STYLESHEET), true, true);
         }
         f = DocFile.createFileForOutput(configuration, DocPaths.JAVASCRIPT);
         f.copyResource(DocPaths.RESOURCES.resolve(DocPaths.JAVASCRIPT), true, true);

@@ -170,41 +170,26 @@ public:
   // classes. C++03 introduced access for nested classes with DR45, but xlC
   // version 12 rejects it.
 NOT_AIX( private: )
-  class Block;                  // Forward decl; defined in .inline.hpp file.
-  class BlockList;              // Forward decl for BlockEntry friend decl.
+  class Block;                  // Fixed-size array of oops, plus bookkeeping.
+  class ActiveArray;            // Array of Blocks, plus bookkeeping.
+  class AllocateEntry;          // Provides AllocateList links in a Block.
 
-  class BlockEntry {
-    friend class BlockList;
-
-    // Members are mutable, and we deal exclusively with pointers to
-    // const, to make const blocks easier to use; a block being const
-    // doesn't prevent modifying its list state.
-    mutable const Block* _prev;
-    mutable const Block* _next;
-
-    // Noncopyable.
-    BlockEntry(const BlockEntry&);
-    BlockEntry& operator=(const BlockEntry&);
-
-  public:
-    BlockEntry();
-    ~BlockEntry();
-  };
-
-  class BlockList {
+  // Doubly-linked list of Blocks.
+  class AllocateList {
     const Block* _head;
     const Block* _tail;
-    const BlockEntry& (*_get_entry)(const Block& block);
+    const AllocateEntry& (*_get_entry)(const Block& block);
 
     // Noncopyable.
-    BlockList(const BlockList&);
-    BlockList& operator=(const BlockList&);
+    AllocateList(const AllocateList&);
+    AllocateList& operator=(const AllocateList&);
 
   public:
-    BlockList(const BlockEntry& (*get_entry)(const Block& block));
-    ~BlockList();
+    AllocateList(const AllocateEntry& (*get_entry)(const Block& block));
+    ~AllocateList();
 
     Block* head();
+    Block* tail();
     const Block* chead() const;
     const Block* ctail() const;
 
@@ -221,23 +206,29 @@ NOT_AIX( private: )
 
 private:
   const char* _name;
-  BlockList _active_list;
-  BlockList _allocate_list;
-  Block* volatile _active_head;
+  ActiveArray* _active_array;
+  AllocateList _allocate_list;
   Block* volatile _deferred_updates;
 
   Mutex* _allocate_mutex;
   Mutex* _active_mutex;
 
-  // Counts are volatile for racy unlocked accesses.
+  // Volatile for racy unlocked accesses.
   volatile size_t _allocation_count;
-  volatile size_t _block_count;
+
   // mutable because this gets set even for const iteration.
   mutable bool _concurrent_iteration_active;
 
   Block* find_block_or_null(const oop* ptr) const;
   void delete_empty_block(const Block& block);
   bool reduce_deferred_updates();
+
+  // Managing _active_array.
+  bool expand_active_array();
+  void replace_active_array(ActiveArray* new_array);
+  ActiveArray* obtain_active_array() const;
+  void relinquish_block_array(ActiveArray* array) const;
+  class WithActiveArray;        // RAII helper for active array access.
 
   template<typename F, typename Storage>
   static bool iterate_impl(F f, Storage* storage);

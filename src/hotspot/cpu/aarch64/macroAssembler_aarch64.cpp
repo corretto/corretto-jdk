@@ -49,11 +49,6 @@
 #include "runtime/jniHandles.inline.hpp"
 #include "runtime/sharedRuntime.hpp"
 #include "runtime/thread.hpp"
-#if INCLUDE_ALL_GCS
-#include "gc/g1/g1BarrierSet.hpp"
-#include "gc/g1/g1CardTable.hpp"
-#include "gc/g1/heapRegion.hpp"
-#endif
 
 #ifdef PRODUCT
 #define BLOCK_COMMENT(str) /* nothing */
@@ -1229,7 +1224,6 @@ void MacroAssembler::check_klass_subtype_slow_path(Register sub_klass,
   assert(sub_klass != r0, "killed reg"); // killed by mov(r0, super)
   assert(sub_klass != r2, "killed reg"); // killed by lea(r2, &pst_counter)
 
-  // Get super_klass value into r0 (even if it was in r5 or r2).
   RegSet pushed_registers;
   if (!IS_A_TEMP(r2))    pushed_registers += r2;
   if (!IS_A_TEMP(r5))    pushed_registers += r5;
@@ -1239,6 +1233,11 @@ void MacroAssembler::check_klass_subtype_slow_path(Register sub_klass,
   }
 
   push(pushed_registers, sp);
+
+  // Get super_klass value into r0 (even if it was in r5 or r2).
+  if (super_klass != r0) {
+    mov(r0, super_klass);
+  }
 
 #ifndef PRODUCT
   mov(rscratch2, (address)&SharedRuntime::_partial_subtype_ctr);
@@ -1951,6 +1950,11 @@ void MacroAssembler::decrement(Register reg, int value)
 void MacroAssembler::decrementw(Address dst, int value)
 {
   assert(!dst.uses(rscratch1), "invalid dst for address decrement");
+  if (dst.getMode() == Address::literal) {
+    assert(abs(value) < (1 << 12), "invalid value and address mode combination");
+    lea(rscratch2, dst);
+    dst = Address(rscratch2);
+  }
   ldrw(rscratch1, dst);
   decrementw(rscratch1, value);
   strw(rscratch1, dst);
@@ -1959,6 +1963,11 @@ void MacroAssembler::decrementw(Address dst, int value)
 void MacroAssembler::decrement(Address dst, int value)
 {
   assert(!dst.uses(rscratch1), "invalid address for decrement");
+  if (dst.getMode() == Address::literal) {
+    assert(abs(value) < (1 << 12), "invalid value and address mode combination");
+    lea(rscratch2, dst);
+    dst = Address(rscratch2);
+  }
   ldr(rscratch1, dst);
   decrement(rscratch1, value);
   str(rscratch1, dst);
@@ -1991,6 +2000,11 @@ void MacroAssembler::increment(Register reg, int value)
 void MacroAssembler::incrementw(Address dst, int value)
 {
   assert(!dst.uses(rscratch1), "invalid dst for address increment");
+  if (dst.getMode() == Address::literal) {
+    assert(abs(value) < (1 << 12), "invalid value and address mode combination");
+    lea(rscratch2, dst);
+    dst = Address(rscratch2);
+  }
   ldrw(rscratch1, dst);
   incrementw(rscratch1, value);
   strw(rscratch1, dst);
@@ -1999,6 +2013,11 @@ void MacroAssembler::incrementw(Address dst, int value)
 void MacroAssembler::increment(Address dst, int value)
 {
   assert(!dst.uses(rscratch1), "invalid dst for address increment");
+  if (dst.getMode() == Address::literal) {
+    assert(abs(value) < (1 << 12), "invalid value and address mode combination");
+    lea(rscratch2, dst);
+    dst = Address(rscratch2);
+  }
   ldr(rscratch1, dst);
   increment(rscratch1, value);
   str(rscratch1, dst);
@@ -3960,41 +3979,48 @@ void  MacroAssembler::set_narrow_klass(Register dst, Klass* k) {
   movk(dst, nk & 0xffff);
 }
 
-void MacroAssembler::load_heap_oop(Register dst, Address src)
-{
-  if (UseCompressedOops) {
-    ldrw(dst, src);
-    decode_heap_oop(dst);
+void MacroAssembler::access_load_at(BasicType type, DecoratorSet decorators,
+                                    Register dst, Address src,
+                                    Register tmp1, Register thread_tmp) {
+  BarrierSetAssembler *bs = BarrierSet::barrier_set()->barrier_set_assembler();
+  bool as_raw = (decorators & AS_RAW) != 0;
+  if (as_raw) {
+    bs->BarrierSetAssembler::load_at(this, decorators, type, dst, src, tmp1, thread_tmp);
   } else {
-    ldr(dst, src);
+    bs->load_at(this, decorators, type, dst, src, tmp1, thread_tmp);
   }
 }
 
-void MacroAssembler::load_heap_oop_not_null(Register dst, Address src)
-{
-  if (UseCompressedOops) {
-    ldrw(dst, src);
-    decode_heap_oop_not_null(dst);
+void MacroAssembler::access_store_at(BasicType type, DecoratorSet decorators,
+                                     Address dst, Register src,
+                                     Register tmp1, Register thread_tmp) {
+  BarrierSetAssembler *bs = BarrierSet::barrier_set()->barrier_set_assembler();
+  bool as_raw = (decorators & AS_RAW) != 0;
+  if (as_raw) {
+    bs->BarrierSetAssembler::store_at(this, decorators, type, dst, src, tmp1, thread_tmp);
   } else {
-    ldr(dst, src);
+    bs->store_at(this, decorators, type, dst, src, tmp1, thread_tmp);
   }
 }
 
-void MacroAssembler::store_heap_oop(Address dst, Register src) {
-  if (UseCompressedOops) {
-    assert(!dst.uses(src), "not enough registers");
-    encode_heap_oop(src);
-    strw(src, dst);
-  } else
-    str(src, dst);
+void MacroAssembler::load_heap_oop(Register dst, Address src, Register tmp1,
+                                   Register thread_tmp, DecoratorSet decorators) {
+  access_load_at(T_OBJECT, IN_HEAP | decorators, dst, src, tmp1, thread_tmp);
+}
+
+void MacroAssembler::load_heap_oop_not_null(Register dst, Address src, Register tmp1,
+                                            Register thread_tmp, DecoratorSet decorators) {
+  access_load_at(T_OBJECT, IN_HEAP | OOP_NOT_NULL | decorators, dst, src, tmp1, thread_tmp);
+}
+
+void MacroAssembler::store_heap_oop(Address dst, Register src, Register tmp1,
+                                    Register thread_tmp, DecoratorSet decorators) {
+  access_store_at(T_OBJECT, IN_HEAP | decorators, dst, src, tmp1, thread_tmp);
 }
 
 // Used for storing NULLs.
 void MacroAssembler::store_heap_oop_null(Address dst) {
-  if (UseCompressedOops) {
-    strw(zr, dst);
-  } else
-    str(zr, dst);
+  access_store_at(T_OBJECT, IN_HEAP, dst, noreg, noreg, noreg);
 }
 
 Address MacroAssembler::allocate_metadata_address(Metadata* obj) {

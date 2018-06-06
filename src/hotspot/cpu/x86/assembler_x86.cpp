@@ -36,10 +36,6 @@
 #include "runtime/sharedRuntime.hpp"
 #include "runtime/stubRoutines.hpp"
 #include "utilities/macros.hpp"
-#if INCLUDE_ALL_GCS
-#include "gc/g1/g1BarrierSet.hpp"
-#include "gc/g1/heapRegion.hpp"
-#endif // INCLUDE_ALL_GCS
 
 #ifdef PRODUCT
 #define BLOCK_COMMENT(str) /* nothing */
@@ -8983,6 +8979,13 @@ void Assembler::testq(Register dst, int32_t imm32) {
 void Assembler::testq(Register dst, Register src) {
   (void) prefixq_and_encode(dst->encoding(), src->encoding());
   emit_arith(0x85, 0xC0, dst, src);
+}
+
+void Assembler::testq(Register dst, Address src) {
+  InstructionMark im(this);
+  prefixq(src, dst);
+  emit_int8((unsigned char)0x85);
+  emit_operand(dst, src);
 }
 
 void Assembler::xaddq(Address dst, Register src) {

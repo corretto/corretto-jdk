@@ -32,6 +32,8 @@
 #include "compiler/compileBroker.hpp"
 #include "compiler/compilerOracle.hpp"
 #include "interpreter/bytecodeHistogram.hpp"
+#include "jfr/jfrEvents.hpp"
+#include "jfr/support/jfrThreadId.hpp"
 #if INCLUDE_JVMCI
 #include "jvmci/jvmciCompiler.hpp"
 #include "jvmci/jvmciRuntime.hpp"
@@ -54,6 +56,7 @@
 #include "runtime/biasedLocking.hpp"
 #include "runtime/compilationPolicy.hpp"
 #include "runtime/deoptimization.hpp"
+#include "runtime/flags/flagSetting.hpp"
 #include "runtime/init.hpp"
 #include "runtime/interfaceSupport.inline.hpp"
 #include "runtime/java.hpp"
@@ -66,17 +69,11 @@
 #include "runtime/timer.hpp"
 #include "runtime/vm_operations.hpp"
 #include "services/memTracker.hpp"
-#include "trace/traceMacros.hpp"
-#include "trace/tracing.hpp"
 #include "utilities/dtrace.hpp"
 #include "utilities/globalDefinitions.hpp"
 #include "utilities/histogram.hpp"
 #include "utilities/macros.hpp"
 #include "utilities/vmError.hpp"
-#if INCLUDE_ALL_GCS
-#include "gc/cms/concurrentMarkSweepThread.hpp"
-#include "gc/parallel/psScavenge.hpp"
-#endif // INCLUDE_ALL_GCS
 #ifdef COMPILER1
 #include "c1/c1_Compiler.hpp"
 #include "c1/c1_Runtime1.hpp"
@@ -87,6 +84,9 @@
 #include "opto/compile.hpp"
 #include "opto/indexSet.hpp"
 #include "opto/runtime.hpp"
+#endif
+#if INCLUDE_JFR
+#include "jfr/jfr.hpp"
 #endif
 
 GrowableArray<Method*>* collected_profiled_methods;
@@ -266,17 +266,17 @@ void print_statistics() {
     IndexSet::print_statistics();
   }
 #endif // ASSERT
-#else
-#ifdef INCLUDE_JVMCI
+#else // COMPILER2
+#if INCLUDE_JVMCI
 #ifndef COMPILER1
   if ((TraceDeoptimization || LogVMOutput || LogCompilation) && UseCompiler) {
     FlagSetting fs(DisplayVMOutput, DisplayVMOutput && TraceDeoptimization);
     Deoptimization::print_statistics();
     SharedRuntime::print_statistics();
   }
-#endif
-#endif
-#endif
+#endif // COMPILER1
+#endif // INCLUDE_JVMCI
+#endif // COMPILER2
 
   if (PrintAOTStatistics) {
     AOTLoader::print_statistics();
@@ -467,11 +467,11 @@ void before_exit(JavaThread* thread) {
 
   EventThreadEnd event;
   if (event.should_commit()) {
-    event.set_thread(THREAD_TRACE_ID(thread));
+    event.set_thread(JFR_THREAD_ID(thread));
     event.commit();
   }
 
-  TRACE_VM_EXIT();
+  JFR_ONLY(Jfr::on_vm_shutdown();)
 
   // Stop the WatcherThread. We do this before disenrolling various
   // PeriodicTasks to reduce the likelihood of races.

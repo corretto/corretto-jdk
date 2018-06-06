@@ -43,24 +43,36 @@
 static const int JVM_IDENT_MAX = 256;
 
 class SharedClassPathEntry {
+  enum {
+    modules_image_entry,
+    jar_entry,
+    signed_jar_entry,
+    dir_entry,
+    unknown_entry
+  };
 protected:
-  bool   _is_dir;
-  time_t _timestamp;          // jar/jimage timestamp,  0 if is directory or other
+  u1     _type;
+  time_t _timestamp;          // jar timestamp,  0 if is directory, modules image or other
   long   _filesize;           // jar/jimage file size, -1 if is directory, -2 if other
   Array<char>* _name;
   Array<u1>*   _manifest;
 
 public:
-  void init(const char* name, TRAPS);
+  void init(const char* name, bool is_modules_image, TRAPS);
   void metaspace_pointers_do(MetaspaceClosure* it);
   bool validate(bool is_class_path = true);
 
-  // The _timestamp only gets set for jar files and "modules" jimage.
-  bool is_jar_or_bootimage() {
+  // The _timestamp only gets set for jar files.
+  bool has_timestamp() {
     return _timestamp != 0;
   }
-  bool is_dir() { return _is_dir; }
-  bool is_modules_image() { return ClassLoader::is_modules_image(name()); }
+  bool is_dir()            { return _type == dir_entry; }
+  bool is_modules_image()  { return _type == modules_image_entry; }
+  bool is_jar()            { return _type == jar_entry; }
+  bool is_signed()         { return _type == signed_jar_entry; }
+  void set_is_signed()     {
+    _type = signed_jar_entry;
+  }
   time_t timestamp() const { return _timestamp; }
   long   filesize()  const { return _filesize; }
   const char* name() const { return _name->data(); }
@@ -70,11 +82,15 @@ public:
   int manifest_size() const {
     return (_manifest == NULL) ? 0 : _manifest->length();
   }
+  void set_manifest(Array<u1>* manifest) {
+    _manifest = manifest;
+  }
 };
 
 class FileMapInfo : public CHeapObj<mtInternal> {
 private:
   friend class ManifestStream;
+  friend class VMStructs;
   enum {
     _invalid_version = -1,
     _current_version = 3
@@ -96,13 +112,16 @@ private:
 
 public:
   struct FileMapHeaderBase : public CHeapObj<mtClass> {
-    virtual bool validate() = 0;
-    virtual void populate(FileMapInfo* info, size_t alignment) = 0;
+    // Need to put something here. Otherwise, in product build, because CHeapObj has no virtual
+    // methods, we would get sizeof(FileMapHeaderBase) == 1 with gcc.
+    intx _dummy;
   };
   struct FileMapHeader : FileMapHeaderBase {
     // Use data() and data_size() to memcopy to/from the FileMapHeader. We need to
     // avoid read/writing the C++ vtable pointer.
-    static size_t data_size();
+    static size_t data_size() {
+      return sizeof(FileMapHeader) - sizeof(FileMapInfo::FileMapHeaderBase);
+    }
     char* data() {
       return ((char*)this) + sizeof(FileMapHeaderBase);
     }
@@ -114,7 +133,7 @@ public:
     int    _obj_alignment;            // value of ObjectAlignmentInBytes
     address _narrow_oop_base;         // compressed oop encoding base
     int    _narrow_oop_shift;         // compressed oop encoding shift
-    bool   _compact_strings;          // value of CompactStrings
+    bool    _compact_strings;         // value of CompactStrings
     uintx  _max_heap_size;            // java max heap size during dumping
     Universe::NARROW_OOP_MODE _narrow_oop_mode; // compressed oop encoding mode
     int     _narrow_klass_shift;      // save narrow klass base and shift
@@ -145,7 +164,7 @@ public:
 
     // The _paths_misc_info is a variable-size structure that records "miscellaneous"
     // information during dumping. It is generated and validated by the
-    // SharedPathsMiscInfo class. See SharedPathsMiscInfo.hpp and sharedClassUtil.hpp for
+    // SharedPathsMiscInfo class. See SharedPathsMiscInfo.hpp for
     // detailed description.
     //
     // The _paths_misc_info data is stored as a byte array in the archive file header,
@@ -171,10 +190,21 @@ public:
     size_t _shared_path_entry_size;
     Array<u8>* _shared_path_table;
 
+    jshort _app_class_paths_start_index;  // Index of first app classpath entry
+    jshort _app_module_paths_start_index; // Index of first module path entry
+    bool   _verify_local;                 // BytecodeVerificationLocal setting
+    bool   _verify_remote;                // BytecodeVerificationRemote setting
+    bool   _has_platform_or_app_classes;  // Archive contains app classes
+
+    void set_has_platform_or_app_classes(bool v) {
+      _has_platform_or_app_classes = v;
+    }
+    bool has_platform_or_app_classes() { return _has_platform_or_app_classes; }
+
     char* region_addr(int idx);
 
-    virtual bool validate();
-    virtual void populate(FileMapInfo* info, size_t alignment);
+    bool validate();
+    void populate(FileMapInfo* info, size_t alignment);
     int compute_crc();
   };
 
@@ -271,7 +301,9 @@ public:
   static void stop_sharing_and_unmap(const char* msg);
 
   static void allocate_shared_path_table();
+  static void check_nonempty_dir_in_shared_path_table();
   bool validate_shared_path_table();
+  static void update_shared_classpath(ClassPathEntry *cpe, SharedClassPathEntry* ent, TRAPS);
 
   static SharedClassPathEntry* shared_path(int index) {
     if (index < 0) {

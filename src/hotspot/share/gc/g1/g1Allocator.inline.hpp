@@ -41,8 +41,14 @@ inline OldGCAllocRegion* G1Allocator::old_gc_alloc_region() {
   return &_old_gc_alloc_region;
 }
 
-inline HeapWord* G1Allocator::attempt_allocation(size_t word_size) {
-  return mutator_alloc_region()->attempt_allocation(word_size);
+inline HeapWord* G1Allocator::attempt_allocation(size_t min_word_size,
+                                                 size_t desired_word_size,
+                                                 size_t* actual_word_size) {
+  HeapWord* result = mutator_alloc_region()->attempt_retained_allocation(min_word_size, desired_word_size, actual_word_size);
+  if (result != NULL) {
+    return result;
+  }
+  return mutator_alloc_region()->attempt_allocation(min_word_size, desired_word_size, actual_word_size);
 }
 
 inline HeapWord* G1Allocator::attempt_allocation_locked(size_t word_size) {
@@ -58,7 +64,7 @@ inline HeapWord* G1Allocator::attempt_allocation_force(size_t word_size) {
 
 inline PLAB* G1PLABAllocator::alloc_buffer(InCSetState dest) {
   assert(dest.is_valid(),
-         "Allocation buffer index out-of-bounds: " CSETSTATE_FORMAT, dest.value());
+         "Allocation buffer index out of bounds: " CSETSTATE_FORMAT, dest.value());
   assert(_alloc_buffers[dest.value()] != NULL,
          "Allocation buffer is NULL: " CSETSTATE_FORMAT, dest.value());
   return _alloc_buffers[dest.value()];

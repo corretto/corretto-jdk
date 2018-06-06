@@ -190,7 +190,8 @@ var getJibProfiles = function (input) {
 
     // Identifies the version of this format to the tool reading it.
     // 1.1 signifies that the publish, publish-src and get-src features are usable.
-    data.format_version = "1.1";
+    // 1.2 signifies that artifact uploads should fail on missing artifacts by default.
+    data.format_version = "1.2";
 
     // Organization, product and version are used when uploading/publishing build results
     data.organization = "";
@@ -396,7 +397,7 @@ var getJibProfilesCommon = function (input, data) {
         };
     };
 
-    common.boot_jdk_version = "9";
+    common.boot_jdk_version = "10";
     common.boot_jdk_home = input.get("boot_jdk", "home_path") + "/jdk-"
         + common.boot_jdk_version
         + (input.build_os == "macosx" ? ".jdk/Contents/Home" : "");
@@ -840,7 +841,7 @@ var getJibProfilesDependencies = function (input, common) {
         macosx_x64: "Xcode6.3-MacOSX10.9+1.0",
         solaris_x64: "SS12u4-Solaris11u1+1.0",
         solaris_sparcv9: "SS12u4-Solaris11u1+1.1",
-        windows_x64: "VS2013SP4+1.0",
+        windows_x64: "VS2017-15.5.5+1.0",
         linux_aarch64: (input.profile != null && input.profile.indexOf("arm64") >= 0
                     ? "gcc-linaro-aarch64-linux-gnu-4.8-2013.11_linux+1.0"
                     : "gcc7.3.0-Fedora27+1.0"),
@@ -857,14 +858,6 @@ var getJibProfilesDependencies = function (input, common) {
         + "-" + input.build_cpu +
         (input.build_libc ? "-" + input.build_libc : "");
 
-    var boot_jdk_version = common.boot_jdk_version;
-    var boot_jdk_build_number = "181";
-
-    if (input.build_libc == "musl") {
-        boot_jdk_version = "jdk9-alpine";
-        boot_jdk_build_number = "181_2017-08-07-2007_6744";
-    }
-
     var makeBinDir = (input.build_os == "windows"
         ? input.get("gnumake", "install_path") + "/cygwin/bin"
         : input.get("gnumake", "install_path") + "/bin");
@@ -873,9 +866,9 @@ var getJibProfilesDependencies = function (input, common) {
 
         boot_jdk: {
             server: "jpg",
-            product: "jdk",
-            version: boot_jdk_version,
-            build_number: boot_jdk_build_number,
+            product: input.build_libc == "musl" ? "jdk-portola" : "jdk",
+            version: common.boot_jdk_version,
+            build_number: "46",
             file: "bundles/" + boot_jdk_platform + "/jdk-" + common.boot_jdk_version + "_"
                 + boot_jdk_platform + "_bin.tar.gz",
             configure_args: "--with-boot-jdk=" + common.boot_jdk_home,

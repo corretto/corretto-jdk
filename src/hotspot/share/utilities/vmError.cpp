@@ -27,8 +27,9 @@
 #include "code/codeCache.hpp"
 #include "compiler/compileBroker.hpp"
 #include "compiler/disassembler.hpp"
-#include "gc/shared/collectedHeap.hpp"
+#include "gc/shared/gcConfig.hpp"
 #include "logging/logConfiguration.hpp"
+#include "jfr/jfrEvents.hpp"
 #include "memory/resourceArea.hpp"
 #include "prims/whitebox.hpp"
 #include "runtime/arguments.hpp"
@@ -41,14 +42,18 @@
 #include "runtime/vmThread.hpp"
 #include "runtime/vm_operations.hpp"
 #include "runtime/vm_version.hpp"
+#include "runtime/flags/jvmFlag.hpp"
 #include "services/memTracker.hpp"
-#include "trace/traceMacros.hpp"
 #include "utilities/debug.hpp"
 #include "utilities/decoder.hpp"
 #include "utilities/defaultStream.hpp"
 #include "utilities/errorReporter.hpp"
 #include "utilities/events.hpp"
 #include "utilities/vmError.hpp"
+#include "utilities/macros.hpp"
+#if INCLUDE_JFR
+#include "jfr/jfr.hpp"
+#endif
 
 #ifndef PRODUCT
 #include <signal.h>
@@ -304,14 +309,6 @@ static void print_oom_reasons(outputStream* st) {
   st->print_cr("# This output file may be truncated or incomplete.");
 }
 
-static const char* gc_mode() {
-  if (UseG1GC)            return "g1 gc";
-  if (UseParallelGC)      return "parallel gc";
-  if (UseConcMarkSweepGC) return "concurrent mark sweep gc";
-  if (UseSerialGC)        return "serial gc";
-  return "ERROR in GC mode";
-}
-
 static void report_vm_version(outputStream* st, char* buf, int buflen) {
    // VM version
    st->print_cr("#");
@@ -340,7 +337,7 @@ static void report_vm_version(outputStream* st, char* buf, int buflen) {
                  "", "",
 #endif
                  UseCompressedOops ? ", compressed oops" : "",
-                 gc_mode(),
+                 GCConfig::hs_err_name(),
                  Abstract_VM_Version::vm_platform_string()
                );
 }
@@ -870,6 +867,13 @@ void VMError::report(outputStream* st, bool _verbose) {
        st->cr();
      }
 
+  STEP("printing metaspace information")
+
+     if (_verbose && Universe::is_fully_initialized()) {
+       st->print_cr("Metaspace:");
+       MetaspaceUtils::print_basic_report(st, 0);
+     }
+
   STEP("printing code cache information")
 
      if (_verbose && Universe::is_fully_initialized()) {
@@ -907,6 +911,17 @@ void VMError::report(outputStream* st, bool _verbose) {
        Arguments::print_on(st);
        st->cr();
      }
+
+  STEP("printing flags")
+
+    if (_verbose) {
+      JVMFlag::printFlags(
+        st,
+        true, // with comments
+        false, // no ranges
+        true); // skip defaults
+      st->cr();
+    }
 
   STEP("printing warning if internal testing API used")
 
@@ -1052,6 +1067,13 @@ void VMError::print_vm_info(outputStream* st) {
     st->cr();
     st->print_cr("Polling page: " INTPTR_FORMAT, p2i(os::get_polling_page()));
     st->cr();
+  }
+
+  // STEP("printing metaspace information")
+
+  if (Universe::is_fully_initialized()) {
+    st->print_cr("Metaspace:");
+    MetaspaceUtils::print_basic_report(st, 0);
   }
 
   // STEP("printing code cache information")
@@ -1315,7 +1337,7 @@ void VMError::report_and_die(int id, const char* message, const char* detail_fmt
       e.commit();
     }
 
-    TRACE_VM_ERROR();
+    JFR_ONLY(Jfr::on_vm_shutdown(true);)
 
   } else {
     // If UseOsErrorReporting we call this for each level of the call stack
@@ -1614,6 +1636,9 @@ bool VMError::check_timeout() {
 }
 
 #ifndef PRODUCT
+#if defined(__SUNPRO_CC) && __SUNPRO_CC >= 0x5140
+#pragma error_messages(off, SEC_NULL_PTR_DEREF)
+#endif
 typedef void (*voidfun_t)();
 // Crash with an authentic sigfpe
 static void crash_with_sigfpe() {

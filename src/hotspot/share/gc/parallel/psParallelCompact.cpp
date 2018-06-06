@@ -34,8 +34,6 @@
 #include "gc/parallel/pcTasks.hpp"
 #include "gc/parallel/psAdaptiveSizePolicy.hpp"
 #include "gc/parallel/psCompactionManager.inline.hpp"
-#include "gc/parallel/psMarkSweep.hpp"
-#include "gc/parallel/psMarkSweepDecorator.hpp"
 #include "gc/parallel/psOldGen.hpp"
 #include "gc/parallel/psParallelCompact.inline.hpp"
 #include "gc/parallel/psPromotionManager.inline.hpp"
@@ -72,6 +70,7 @@
 #include "utilities/debug.hpp"
 #include "utilities/events.hpp"
 #include "utilities/formatBuffer.hpp"
+#include "utilities/macros.hpp"
 #include "utilities/stack.inline.hpp"
 
 #include <math.h>
@@ -117,6 +116,7 @@ ParallelCompactData::RegionData::dc_completed = 0xcU << dc_shift;
 
 SpaceInfo PSParallelCompact::_space_info[PSParallelCompact::last_space_id];
 
+SpanSubjectToDiscoveryClosure PSParallelCompact::_span_based_discoverer;
 ReferenceProcessor* PSParallelCompact::_ref_processor = NULL;
 
 double PSParallelCompact::_dwl_mean;
@@ -843,14 +843,14 @@ bool PSParallelCompact::IsAliveClosure::do_object_b(oop p) { return mark_bitmap(
 
 void PSParallelCompact::post_initialize() {
   ParallelScavengeHeap* heap = ParallelScavengeHeap::heap();
-  MemRegion mr = heap->reserved_region();
+  _span_based_discoverer.set_span(heap->reserved_region());
   _ref_processor =
-    new ReferenceProcessor(mr,            // span
+    new ReferenceProcessor(&_span_based_discoverer,
                            ParallelRefProcEnabled && (ParallelGCThreads > 1), // mt processing
-                           ParallelGCThreads, // mt processing degree
-                           true,              // mt discovery
-                           ParallelGCThreads, // mt discovery degree
-                           true,              // atomic_discovery
+                           ParallelGCThreads,   // mt processing degree
+                           true,                // mt discovery
+                           ParallelGCThreads,   // mt discovery degree
+                           true,                // atomic_discovery
                            &_is_alive_closure); // non-header is alive closure
   _counters = new CollectorCounters("PSParallelCompact", 1);
 
@@ -1037,12 +1037,6 @@ void PSParallelCompact::post_compact()
 #if COMPILER2_OR_JVMCI
   DerivedPointerTable::update_pointers();
 #endif
-
-  ReferenceProcessorPhaseTimes pt(&_gc_timer, ref_processor()->num_q());
-
-  ref_processor()->enqueue_discovered_references(NULL, &pt);
-
-  pt.print_enqueue_phase();
 
   if (ZapUnusedHeapArea) {
     heap->gen_mangle_unused_area();
@@ -2055,6 +2049,17 @@ GCTaskManager* const PSParallelCompact::gc_task_manager() {
   return ParallelScavengeHeap::gc_task_manager();
 }
 
+class PCAddThreadRootsMarkingTaskClosure : public ThreadClosure {
+private:
+  GCTaskQueue* _q;
+
+public:
+  PCAddThreadRootsMarkingTaskClosure(GCTaskQueue* q) : _q(q) { }
+  void do_thread(Thread* t) {
+    _q->enqueue(new ThreadRootsMarkingTask(t));
+  }
+};
+
 void PSParallelCompact::marking_phase(ParCompactionManager* cm,
                                       bool maximum_heap_compaction,
                                       ParallelOldTracer *gc_tracer) {
@@ -2083,7 +2088,8 @@ void PSParallelCompact::marking_phase(ParCompactionManager* cm,
     q->enqueue(new MarkFromRootsTask(MarkFromRootsTask::universe));
     q->enqueue(new MarkFromRootsTask(MarkFromRootsTask::jni_handles));
     // We scan the thread roots in parallel
-    Threads::create_thread_roots_marking_tasks(q);
+    PCAddThreadRootsMarkingTaskClosure cl(q);
+    Threads::java_threads_and_vm_thread_do(&cl);
     q->enqueue(new MarkFromRootsTask(MarkFromRootsTask::object_synchronizer));
     q->enqueue(new MarkFromRootsTask(MarkFromRootsTask::management));
     q->enqueue(new MarkFromRootsTask(MarkFromRootsTask::system_dictionary));
@@ -2105,7 +2111,7 @@ void PSParallelCompact::marking_phase(ParCompactionManager* cm,
     GCTraceTime(Debug, gc, phases) tm("Reference Processing", &_gc_timer);
 
     ReferenceProcessorStats stats;
-    ReferenceProcessorPhaseTimes pt(&_gc_timer, ref_processor()->num_q());
+    ReferenceProcessorPhaseTimes pt(&_gc_timer, ref_processor()->num_queues());
     if (ref_processor()->processing_is_mt()) {
       RefProcTaskExecutor task_executor;
       stats = ref_processor()->process_discovered_references(
@@ -2133,13 +2139,13 @@ void PSParallelCompact::marking_phase(ParCompactionManager* cm,
     GCTraceTime(Debug, gc, phases) tm_m("Class Unloading", &_gc_timer);
 
     // Follow system dictionary roots and unload classes.
-    bool purged_class = SystemDictionary::do_unloading(is_alive_closure(), &_gc_timer);
+    bool purged_class = SystemDictionary::do_unloading(&_gc_timer);
 
     // Unload nmethods.
     CodeCache::do_unloading(is_alive_closure(), purged_class);
 
     // Prune dead klasses from subklass/sibling/implementor lists.
-    Klass::clean_weak_klass_links();
+    Klass::clean_weak_klass_links(purged_class);
   }
 
   {
@@ -3075,13 +3081,10 @@ void InstanceClassLoaderKlass::oop_pc_update_pointers(oop obj, ParCompactionMana
 #ifdef ASSERT
 template <class T> static void trace_reference_gc(const char *s, oop obj,
                                                   T* referent_addr,
-                                                  T* next_addr,
                                                   T* discovered_addr) {
   log_develop_trace(gc, ref)("%s obj " PTR_FORMAT, s, p2i(obj));
   log_develop_trace(gc, ref)("     referent_addr/* " PTR_FORMAT " / " PTR_FORMAT,
                              p2i(referent_addr), referent_addr ? p2i((oop)RawAccess<>::oop_load(referent_addr)) : NULL);
-  log_develop_trace(gc, ref)("     next_addr/* " PTR_FORMAT " / " PTR_FORMAT,
-                             p2i(next_addr), next_addr ? p2i((oop)RawAccess<>::oop_load(next_addr)) : NULL);
   log_develop_trace(gc, ref)("     discovered_addr/* " PTR_FORMAT " / " PTR_FORMAT,
                              p2i(discovered_addr), discovered_addr ? p2i((oop)RawAccess<>::oop_load(discovered_addr)) : NULL);
 }
@@ -3091,12 +3094,10 @@ template <class T>
 static void oop_pc_update_pointers_specialized(oop obj, ParCompactionManager* cm) {
   T* referent_addr = (T*)java_lang_ref_Reference::referent_addr_raw(obj);
   PSParallelCompact::adjust_pointer(referent_addr, cm);
-  T* next_addr = (T*)java_lang_ref_Reference::next_addr_raw(obj);
-  PSParallelCompact::adjust_pointer(next_addr, cm);
   T* discovered_addr = (T*)java_lang_ref_Reference::discovered_addr_raw(obj);
   PSParallelCompact::adjust_pointer(discovered_addr, cm);
   debug_only(trace_reference_gc("InstanceRefKlass::oop_update_ptrs", obj,
-                                referent_addr, next_addr, discovered_addr);)
+                                referent_addr, discovered_addr);)
 }
 
 void InstanceRefKlass::oop_pc_update_pointers(oop obj, ParCompactionManager* cm) {

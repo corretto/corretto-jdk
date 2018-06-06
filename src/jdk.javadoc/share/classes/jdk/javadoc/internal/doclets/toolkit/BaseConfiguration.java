@@ -42,6 +42,9 @@ import com.sun.tools.javac.util.DefinedBy.Api;
 import jdk.javadoc.doclet.Doclet;
 import jdk.javadoc.doclet.DocletEnvironment;
 import jdk.javadoc.doclet.Reporter;
+import jdk.javadoc.doclet.StandardDoclet;
+import jdk.javadoc.doclet.Taglet;
+import jdk.javadoc.internal.doclets.formats.html.HtmlDoclet;
 import jdk.javadoc.internal.doclets.toolkit.builders.BuilderFactory;
 import jdk.javadoc.internal.doclets.toolkit.taglets.TagletManager;
 import jdk.javadoc.internal.doclets.toolkit.util.DocFile;
@@ -349,6 +352,11 @@ public abstract class BaseConfiguration {
      */
     public boolean disableJavaFxStrictChecks = false;
 
+    /**
+     * Show taglets (internal debug switch)
+     */
+    public boolean showTaglets = false;
+
     VisibleMemberCache visibleMemberCache = null;
 
     public PropertyUtils propertyUtils = null;
@@ -356,7 +364,15 @@ public abstract class BaseConfiguration {
     /**
      * Constructs the configurations needed by the doclet.
      *
-     * @param doclet the doclet that created this configuration
+     * @apiNote
+     * The {@code doclet} parameter is used when {@link Taglet#init(DocletEnvironment, Doclet)
+     * initializing tags}.
+     * Some doclets (such as the {@link StandardDoclet), may delegate to another
+     * (such as the {@link HtmlDoclet}).  In such cases, the primary doclet (i.e
+     * {@code StandardDoclet}) should be provided here, and not any internal
+     * class like {@code HtmlDoclet}.
+     *
+     * @param doclet the doclet for this run of javadoc
      */
     public BaseConfiguration(Doclet doclet) {
         this.doclet = doclet;
@@ -716,7 +732,14 @@ public abstract class BaseConfiguration {
                         disableJavaFxStrictChecks = true;
                         return true;
                     }
-                }
+                },
+                new Hidden(resources, "--show-taglets") {
+                    @Override
+                    public boolean process(String opt, List<String> args) {
+                        showTaglets = true;
+                        return true;
+                    }
+                },
         };
         Set<Doclet.Option> set = new TreeSet<>();
         set.addAll(Arrays.asList(options));
@@ -803,25 +826,32 @@ public abstract class BaseConfiguration {
                 continue;
             }
             List<String> tokens = tokenize(args.get(1), TagletManager.SIMPLE_TAGLET_OPT_SEPARATOR, 3);
-            if (tokens.size() == 1) {
-                String tagName = args.get(1);
-                if (tagletManager.isKnownCustomTag(tagName)) {
-                    //reorder a standard tag
-                    tagletManager.addNewSimpleCustomTag(tagName, null, "");
-                } else {
-                    //Create a simple tag with the heading that has the same name as the tag.
-                    StringBuilder heading = new StringBuilder(tagName + ":");
-                    heading.setCharAt(0, Character.toUpperCase(tagName.charAt(0)));
-                    tagletManager.addNewSimpleCustomTag(tagName, heading.toString(), "a");
-                }
-            } else if (tokens.size() == 2) {
-                //Add simple taglet without heading, probably to excluding it in the output.
-                tagletManager.addNewSimpleCustomTag(tokens.get(0), tokens.get(1), "");
-            } else if (tokens.size() >= 3) {
-                tagletManager.addNewSimpleCustomTag(tokens.get(0), tokens.get(2), tokens.get(1));
-            } else {
-                Messages messages = getMessages();
-                messages.error("doclet.Error_invalid_custom_tag_argument", args.get(1));
+            switch (tokens.size()) {
+                case 1:
+                    String tagName = args.get(1);
+                    if (tagletManager.isKnownCustomTag(tagName)) {
+                        //reorder a standard tag
+                        tagletManager.addNewSimpleCustomTag(tagName, null, "");
+                    } else {
+                        //Create a simple tag with the heading that has the same name as the tag.
+                        StringBuilder heading = new StringBuilder(tagName + ":");
+                        heading.setCharAt(0, Character.toUpperCase(tagName.charAt(0)));
+                        tagletManager.addNewSimpleCustomTag(tagName, heading.toString(), "a");
+                    }
+                    break;
+
+                case 2:
+                    //Add simple taglet without heading, probably to excluding it in the output.
+                    tagletManager.addNewSimpleCustomTag(tokens.get(0), tokens.get(1), "");
+                    break;
+
+                case 3:
+                    tagletManager.addNewSimpleCustomTag(tokens.get(0), tokens.get(2), tokens.get(1));
+                    break;
+
+                default:
+                    Messages messages = getMessages();
+                    messages.error("doclet.Error_invalid_custom_tag_argument", args.get(1));
             }
         }
     }

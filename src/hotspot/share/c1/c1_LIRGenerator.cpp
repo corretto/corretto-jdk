@@ -34,22 +34,14 @@
 #include "ci/ciInstance.hpp"
 #include "ci/ciObjArray.hpp"
 #include "ci/ciUtilities.hpp"
-#include "gc/shared/cardTable.hpp"
-#include "gc/shared/cardTableBarrierSet.hpp"
-#include "gc/shared/collectedHeap.hpp"
+#include "gc/shared/barrierSet.hpp"
+#include "gc/shared/c1/barrierSetC1.hpp"
 #include "runtime/arguments.hpp"
 #include "runtime/sharedRuntime.hpp"
 #include "runtime/stubRoutines.hpp"
 #include "runtime/vm_version.hpp"
 #include "utilities/bitMap.inline.hpp"
 #include "utilities/macros.hpp"
-#if INCLUDE_ALL_GCS
-#include "gc/g1/g1ThreadLocalData.hpp"
-#include "gc/g1/heapRegion.hpp"
-#endif // INCLUDE_ALL_GCS
-#ifdef TRACE_HAVE_INTRINSICS
-#include "trace/traceMacros.hpp"
-#endif
 
 #ifdef ASSERT
 #define __ gen()->lir(__FILE__, __LINE__)->
@@ -313,11 +305,6 @@ jlong LIRItem::get_jlong_constant() const {
 //--------------------------------------------------------------
 
 
-void LIRGenerator::init() {
-  _bs = BarrierSet::barrier_set();
-}
-
-
 void LIRGenerator::block_do_prolog(BlockBegin* block) {
 #ifndef PRODUCT
   if (PrintIRWithLIR) {
@@ -490,7 +477,7 @@ void LIRGenerator::klass2reg_with_patching(LIR_Opr r, ciMetadata* obj, CodeEmitI
 
 void LIRGenerator::array_range_check(LIR_Opr array, LIR_Opr index,
                                     CodeEmitInfo* null_check_info, CodeEmitInfo* range_check_info) {
-  CodeStub* stub = new RangeCheckStub(range_check_info, index);
+  CodeStub* stub = new RangeCheckStub(range_check_info, index, array);
   if (index->is_constant()) {
     cmp_mem_int(lir_cond_belowEqual, array, arrayOopDesc::length_offset_in_bytes(),
                 index->as_jint(), null_check_info);
@@ -504,7 +491,7 @@ void LIRGenerator::array_range_check(LIR_Opr array, LIR_Opr index,
 
 
 void LIRGenerator::nio_range_check(LIR_Opr buffer, LIR_Opr index, LIR_Opr result, CodeEmitInfo* info) {
-  CodeStub* stub = new RangeCheckStub(info, index, true);
+  CodeStub* stub = new RangeCheckStub(info, index);
   if (index->is_constant()) {
     cmp_mem_int(lir_cond_belowEqual, buffer, java_nio_Buffer::limit_offset(), index->as_jint(), info);
     __ branch(lir_cond_belowEqual, T_INT, stub); // forward branch
@@ -1245,19 +1232,9 @@ void LIRGenerator::do_Reference_get(Intrinsic* x) {
     info = state_for(x);
   }
 
-  LIR_Address* referent_field_adr =
-    new LIR_Address(reference.result(), referent_offset, T_OBJECT);
-
-  LIR_Opr result = rlock_result(x);
-
-  __ load(referent_field_adr, result, info);
-
-  // Register the value in the referent field with the pre-barrier
-  pre_barrier(LIR_OprFact::illegalOpr /* addr_opr */,
-              result /* pre_val */,
-              false  /* do_load */,
-              false  /* patch */,
-              NULL   /* info */);
+  LIR_Opr result = rlock_result(x, T_OBJECT);
+  access_load_at(IN_HEAP | ON_WEAK_OOP_REF, T_OBJECT,
+                 reference, LIR_OprFact::intConst(referent_offset), result);
 }
 
 // Example: clazz.isInstance(object)
@@ -1454,221 +1431,26 @@ LIR_Opr LIRGenerator::load_constant(LIR_Const* c) {
   return result;
 }
 
-// Various barriers
-
-void LIRGenerator::pre_barrier(LIR_Opr addr_opr, LIR_Opr pre_val,
-                               bool do_load, bool patch, CodeEmitInfo* info) {
-  // Do the pre-write barrier, if any.
-  switch (_bs->kind()) {
-#if INCLUDE_ALL_GCS
-    case BarrierSet::G1BarrierSet:
-      G1BarrierSet_pre_barrier(addr_opr, pre_val, do_load, patch, info);
-      break;
-#endif // INCLUDE_ALL_GCS
-    case BarrierSet::CardTableBarrierSet:
-      // No pre barriers
-      break;
-    default      :
-      ShouldNotReachHere();
-
-  }
-}
-
-void LIRGenerator::post_barrier(LIR_OprDesc* addr, LIR_OprDesc* new_val) {
-  switch (_bs->kind()) {
-#if INCLUDE_ALL_GCS
-    case BarrierSet::G1BarrierSet:
-      G1BarrierSet_post_barrier(addr,  new_val);
-      break;
-#endif // INCLUDE_ALL_GCS
-    case BarrierSet::CardTableBarrierSet:
-      CardTableBarrierSet_post_barrier(addr,  new_val);
-      break;
-    default      :
-      ShouldNotReachHere();
-    }
-}
-
-////////////////////////////////////////////////////////////////////////
-#if INCLUDE_ALL_GCS
-
-void LIRGenerator::G1BarrierSet_pre_barrier(LIR_Opr addr_opr, LIR_Opr pre_val,
-                                            bool do_load, bool patch, CodeEmitInfo* info) {
-  // First we test whether marking is in progress.
-  BasicType flag_type;
-  if (in_bytes(SATBMarkQueue::byte_width_of_active()) == 4) {
-    flag_type = T_INT;
-  } else {
-    guarantee(in_bytes(SATBMarkQueue::byte_width_of_active()) == 1,
-              "Assumption");
-    // Use unsigned type T_BOOLEAN here rather than signed T_BYTE since some platforms, eg. ARM,
-    // need to use unsigned instructions to use the large offset to load the satb_mark_queue.
-    flag_type = T_BOOLEAN;
-  }
-  LIR_Opr thrd = getThreadPointer();
-  LIR_Address* mark_active_flag_addr =
-    new LIR_Address(thrd, in_bytes(G1ThreadLocalData::satb_mark_queue_active_offset()), flag_type);
-  // Read the marking-in-progress flag.
-  LIR_Opr flag_val = new_register(T_INT);
-  __ load(mark_active_flag_addr, flag_val);
-  __ cmp(lir_cond_notEqual, flag_val, LIR_OprFact::intConst(0));
-
-  LIR_PatchCode pre_val_patch_code = lir_patch_none;
-
-  CodeStub* slow;
-
-  if (do_load) {
-    assert(pre_val == LIR_OprFact::illegalOpr, "sanity");
-    assert(addr_opr != LIR_OprFact::illegalOpr, "sanity");
-
-    if (patch)
-      pre_val_patch_code = lir_patch_normal;
-
-    pre_val = new_register(T_OBJECT);
-
-    if (!addr_opr->is_address()) {
-      assert(addr_opr->is_register(), "must be");
-      addr_opr = LIR_OprFact::address(new LIR_Address(addr_opr, T_OBJECT));
-    }
-    slow = new G1PreBarrierStub(addr_opr, pre_val, pre_val_patch_code, info);
-  } else {
-    assert(addr_opr == LIR_OprFact::illegalOpr, "sanity");
-    assert(pre_val->is_register(), "must be");
-    assert(pre_val->type() == T_OBJECT, "must be an object");
-    assert(info == NULL, "sanity");
-
-    slow = new G1PreBarrierStub(pre_val);
-  }
-
-  __ branch(lir_cond_notEqual, T_INT, slow);
-  __ branch_destination(slow->continuation());
-}
-
-void LIRGenerator::G1BarrierSet_post_barrier(LIR_OprDesc* addr, LIR_OprDesc* new_val) {
-  // If the "new_val" is a constant NULL, no barrier is necessary.
-  if (new_val->is_constant() &&
-      new_val->as_constant_ptr()->as_jobject() == NULL) return;
-
-  if (!new_val->is_register()) {
-    LIR_Opr new_val_reg = new_register(T_OBJECT);
-    if (new_val->is_constant()) {
-      __ move(new_val, new_val_reg);
-    } else {
-      __ leal(new_val, new_val_reg);
-    }
-    new_val = new_val_reg;
-  }
-  assert(new_val->is_register(), "must be a register at this point");
-
-  if (addr->is_address()) {
-    LIR_Address* address = addr->as_address_ptr();
-    LIR_Opr ptr = new_pointer_register();
-    if (!address->index()->is_valid() && address->disp() == 0) {
-      __ move(address->base(), ptr);
-    } else {
-      assert(address->disp() != max_jint, "lea doesn't support patched addresses!");
-      __ leal(addr, ptr);
-    }
-    addr = ptr;
-  }
-  assert(addr->is_register(), "must be a register at this point");
-
-  LIR_Opr xor_res = new_pointer_register();
-  LIR_Opr xor_shift_res = new_pointer_register();
-  if (TwoOperandLIRForm ) {
-    __ move(addr, xor_res);
-    __ logical_xor(xor_res, new_val, xor_res);
-    __ move(xor_res, xor_shift_res);
-    __ unsigned_shift_right(xor_shift_res,
-                            LIR_OprFact::intConst(HeapRegion::LogOfHRGrainBytes),
-                            xor_shift_res,
-                            LIR_OprDesc::illegalOpr());
-  } else {
-    __ logical_xor(addr, new_val, xor_res);
-    __ unsigned_shift_right(xor_res,
-                            LIR_OprFact::intConst(HeapRegion::LogOfHRGrainBytes),
-                            xor_shift_res,
-                            LIR_OprDesc::illegalOpr());
-  }
-
-  if (!new_val->is_register()) {
-    LIR_Opr new_val_reg = new_register(T_OBJECT);
-    __ leal(new_val, new_val_reg);
-    new_val = new_val_reg;
-  }
-  assert(new_val->is_register(), "must be a register at this point");
-
-  __ cmp(lir_cond_notEqual, xor_shift_res, LIR_OprFact::intptrConst(NULL_WORD));
-
-  CodeStub* slow = new G1PostBarrierStub(addr, new_val);
-  __ branch(lir_cond_notEqual, LP64_ONLY(T_LONG) NOT_LP64(T_INT), slow);
-  __ branch_destination(slow->continuation());
-}
-
-#endif // INCLUDE_ALL_GCS
-////////////////////////////////////////////////////////////////////////
-
-void LIRGenerator::CardTableBarrierSet_post_barrier(LIR_OprDesc* addr, LIR_OprDesc* new_val) {
-  LIR_Const* card_table_base = new LIR_Const(ci_card_table_address());
-  if (addr->is_address()) {
-    LIR_Address* address = addr->as_address_ptr();
-    // ptr cannot be an object because we use this barrier for array card marks
-    // and addr can point in the middle of an array.
-    LIR_Opr ptr = new_pointer_register();
-    if (!address->index()->is_valid() && address->disp() == 0) {
-      __ move(address->base(), ptr);
-    } else {
-      assert(address->disp() != max_jint, "lea doesn't support patched addresses!");
-      __ leal(addr, ptr);
-    }
-    addr = ptr;
-  }
-  assert(addr->is_register(), "must be a register at this point");
-
-#ifdef CARDTABLEBARRIERSET_POST_BARRIER_HELPER
-  CardTableBarrierSet_post_barrier_helper(addr, card_table_base);
-#else
-  LIR_Opr tmp = new_pointer_register();
-  if (TwoOperandLIRForm) {
-    __ move(addr, tmp);
-    __ unsigned_shift_right(tmp, CardTable::card_shift, tmp);
-  } else {
-    __ unsigned_shift_right(addr, CardTable::card_shift, tmp);
-  }
-
-  LIR_Address* card_addr;
-  if (can_inline_as_constant(card_table_base)) {
-    card_addr = new LIR_Address(tmp, card_table_base->as_jint(), T_BYTE);
-  } else {
-    card_addr = new LIR_Address(tmp, load_constant(card_table_base), T_BYTE);
-  }
-
-  LIR_Opr dirty = LIR_OprFact::intConst(CardTable::dirty_card_val());
-  if (UseCondCardMark) {
-    LIR_Opr cur_value = new_register(T_INT);
-    if (UseConcMarkSweepGC) {
-      __ membar_storeload();
-    }
-    __ move(card_addr, cur_value);
-
-    LabelObj* L_already_dirty = new LabelObj();
-    __ cmp(lir_cond_equal, cur_value, dirty);
-    __ branch(lir_cond_equal, T_BYTE, L_already_dirty->label());
-    __ move(dirty, card_addr);
-    __ branch_destination(L_already_dirty->label());
-  } else {
-#if INCLUDE_ALL_GCS
-    if (UseConcMarkSweepGC && CMSPrecleaningEnabled) {
-      __ membar_storestore();
-    }
-#endif
-    __ move(dirty, card_addr);
-  }
-#endif
-}
-
-
 //------------------------field access--------------------------------------
+
+void LIRGenerator::do_CompareAndSwap(Intrinsic* x, ValueType* type) {
+  assert(x->number_of_arguments() == 4, "wrong type");
+  LIRItem obj   (x->argument_at(0), this);  // object
+  LIRItem offset(x->argument_at(1), this);  // offset of field
+  LIRItem cmp   (x->argument_at(2), this);  // value to compare with field
+  LIRItem val   (x->argument_at(3), this);  // replace field with val if matches cmp
+  assert(obj.type()->tag() == objectTag, "invalid type");
+
+  // In 64bit the type can be long, sparc doesn't have this assert
+  // assert(offset.type()->tag() == intTag, "invalid type");
+
+  assert(cmp.type()->tag() == type->tag(), "invalid type");
+  assert(val.type()->tag() == type->tag(), "invalid type");
+
+  LIR_Opr result = access_atomic_cmpxchg_at(IN_HEAP, as_BasicType(type),
+                                            obj, offset, cmp, val);
+  set_result(x, result);
+}
 
 // Comment copied form templateTable_i486.cpp
 // ----------------------------------------------------------------------------
@@ -1702,7 +1484,6 @@ void LIRGenerator::do_StoreField(StoreField* x) {
   bool needs_patching = x->needs_patching();
   bool is_volatile = x->field()->is_volatile();
   BasicType field_type = x->field_type();
-  bool is_oop = (field_type == T_ARRAY || field_type == T_OBJECT);
 
   CodeEmitInfo* info = NULL;
   if (needs_patching) {
@@ -1716,7 +1497,6 @@ void LIRGenerator::do_StoreField(StoreField* x) {
       info = state_for(nc);
     }
   }
-
 
   LIRItem object(x->obj(), this);
   LIRItem value(x->value(),  this);
@@ -1755,48 +1535,147 @@ void LIRGenerator::do_StoreField(StoreField* x) {
     __ null_check(object.result(), new CodeEmitInfo(info), /* deoptimize */ needs_patching);
   }
 
-  LIR_Address* address;
+  DecoratorSet decorators = IN_HEAP;
+  if (is_volatile) {
+    decorators |= MO_SEQ_CST;
+  }
   if (needs_patching) {
-    // we need to patch the offset in the instruction so don't allow
-    // generate_address to try to be smart about emitting the -1.
-    // Otherwise the patching code won't know how to find the
-    // instruction to patch.
-    address = new LIR_Address(object.result(), PATCHED_ADDR, field_type);
+    decorators |= C1_NEEDS_PATCHING;
+  }
+
+  access_store_at(decorators, field_type, object, LIR_OprFact::intConst(x->offset()),
+                  value.result(), info != NULL ? new CodeEmitInfo(info) : NULL, info);
+}
+
+void LIRGenerator::do_StoreIndexed(StoreIndexed* x) {
+  assert(x->is_pinned(),"");
+  bool needs_range_check = x->compute_needs_range_check();
+  bool use_length = x->length() != NULL;
+  bool obj_store = x->elt_type() == T_ARRAY || x->elt_type() == T_OBJECT;
+  bool needs_store_check = obj_store && (x->value()->as_Constant() == NULL ||
+                                         !get_jobject_constant(x->value())->is_null_object() ||
+                                         x->should_profile());
+
+  LIRItem array(x->array(), this);
+  LIRItem index(x->index(), this);
+  LIRItem value(x->value(), this);
+  LIRItem length(this);
+
+  array.load_item();
+  index.load_nonconstant();
+
+  if (use_length && needs_range_check) {
+    length.set_instruction(x->length());
+    length.load_item();
+
+  }
+  if (needs_store_check || x->check_boolean()) {
+    value.load_item();
   } else {
-    address = generate_address(object.result(), x->offset(), field_type);
+    value.load_for_store(x->elt_type());
   }
 
-  if (is_volatile && os::is_MP()) {
-    __ membar_release();
+  set_no_result(x);
+
+  // the CodeEmitInfo must be duplicated for each different
+  // LIR-instruction because spilling can occur anywhere between two
+  // instructions and so the debug information must be different
+  CodeEmitInfo* range_check_info = state_for(x);
+  CodeEmitInfo* null_check_info = NULL;
+  if (x->needs_null_check()) {
+    null_check_info = new CodeEmitInfo(range_check_info);
   }
 
-  if (is_oop) {
-    // Do the pre-write barrier, if any.
-    pre_barrier(LIR_OprFact::address(address),
-                LIR_OprFact::illegalOpr /* pre_val */,
-                true /* do_load*/,
-                needs_patching,
-                (info ? new CodeEmitInfo(info) : NULL));
+  if (GenerateRangeChecks && needs_range_check) {
+    if (use_length) {
+      __ cmp(lir_cond_belowEqual, length.result(), index.result());
+      __ branch(lir_cond_belowEqual, T_INT, new RangeCheckStub(range_check_info, index.result(), array.result()));
+    } else {
+      array_range_check(array.result(), index.result(), null_check_info, range_check_info);
+      // range_check also does the null check
+      null_check_info = NULL;
+    }
   }
 
-  bool needs_atomic_access = is_volatile || AlwaysAtomicAccesses;
-  if (needs_atomic_access && !needs_patching) {
-    volatile_field_store(value.result(), address, info);
+  if (GenerateArrayStoreCheck && needs_store_check) {
+    CodeEmitInfo* store_check_info = new CodeEmitInfo(range_check_info);
+    array_store_check(value.result(), array.result(), store_check_info, x->profiled_method(), x->profiled_bci());
+  }
+
+  DecoratorSet decorators = IN_HEAP | IN_HEAP_ARRAY;
+  if (x->check_boolean()) {
+    decorators |= C1_MASK_BOOLEAN;
+  }
+
+  access_store_at(decorators, x->elt_type(), array, index.result(), value.result(),
+                  NULL, null_check_info);
+}
+
+void LIRGenerator::access_load_at(DecoratorSet decorators, BasicType type,
+                                  LIRItem& base, LIR_Opr offset, LIR_Opr result,
+                                  CodeEmitInfo* patch_info, CodeEmitInfo* load_emit_info) {
+  decorators |= C1_READ_ACCESS;
+  LIRAccess access(this, decorators, base, offset, type, patch_info, load_emit_info);
+  if (access.is_raw()) {
+    _barrier_set->BarrierSetC1::load_at(access, result);
   } else {
-    LIR_PatchCode patch_code = needs_patching ? lir_patch_normal : lir_patch_none;
-    __ store(value.result(), address, info, patch_code);
-  }
-
-  if (is_oop) {
-    // Store to object so mark the card of the header
-    post_barrier(object.result(), value.result());
-  }
-
-  if (!support_IRIW_for_not_multiple_copy_atomic_cpu && is_volatile && os::is_MP()) {
-    __ membar();
+    _barrier_set->load_at(access, result);
   }
 }
 
+void LIRGenerator::access_store_at(DecoratorSet decorators, BasicType type,
+                                   LIRItem& base, LIR_Opr offset, LIR_Opr value,
+                                   CodeEmitInfo* patch_info, CodeEmitInfo* store_emit_info) {
+  decorators |= C1_WRITE_ACCESS;
+  LIRAccess access(this, decorators, base, offset, type, patch_info, store_emit_info);
+  if (access.is_raw()) {
+    _barrier_set->BarrierSetC1::store_at(access, value);
+  } else {
+    _barrier_set->store_at(access, value);
+  }
+}
+
+LIR_Opr LIRGenerator::access_atomic_cmpxchg_at(DecoratorSet decorators, BasicType type,
+                                               LIRItem& base, LIRItem& offset, LIRItem& cmp_value, LIRItem& new_value) {
+  // Atomic operations are SEQ_CST by default
+  decorators |= C1_READ_ACCESS;
+  decorators |= C1_WRITE_ACCESS;
+  decorators |= ((decorators & MO_DECORATOR_MASK) != 0) ? MO_SEQ_CST : 0;
+  LIRAccess access(this, decorators, base, offset, type);
+  if (access.is_raw()) {
+    return _barrier_set->BarrierSetC1::atomic_cmpxchg_at(access, cmp_value, new_value);
+  } else {
+    return _barrier_set->atomic_cmpxchg_at(access, cmp_value, new_value);
+  }
+}
+
+LIR_Opr LIRGenerator::access_atomic_xchg_at(DecoratorSet decorators, BasicType type,
+                                            LIRItem& base, LIRItem& offset, LIRItem& value) {
+  // Atomic operations are SEQ_CST by default
+  decorators |= C1_READ_ACCESS;
+  decorators |= C1_WRITE_ACCESS;
+  decorators |= ((decorators & MO_DECORATOR_MASK) != 0) ? MO_SEQ_CST : 0;
+  LIRAccess access(this, decorators, base, offset, type);
+  if (access.is_raw()) {
+    return _barrier_set->BarrierSetC1::atomic_xchg_at(access, value);
+  } else {
+    return _barrier_set->atomic_xchg_at(access, value);
+  }
+}
+
+LIR_Opr LIRGenerator::access_atomic_add_at(DecoratorSet decorators, BasicType type,
+                                           LIRItem& base, LIRItem& offset, LIRItem& value) {
+  // Atomic operations are SEQ_CST by default
+  decorators |= C1_READ_ACCESS;
+  decorators |= C1_WRITE_ACCESS;
+  decorators |= ((decorators & MO_DECORATOR_MASK) != 0) ? MO_SEQ_CST : 0;
+  LIRAccess access(this, decorators, base, offset, type);
+  if (access.is_raw()) {
+    return _barrier_set->BarrierSetC1::atomic_add_at(access, value);
+  } else {
+    return _barrier_set->atomic_add_at(access, value);
+  }
+}
 
 void LIRGenerator::do_LoadField(LoadField* x) {
   bool needs_patching = x->needs_patching();
@@ -1843,33 +1722,18 @@ void LIRGenerator::do_LoadField(LoadField* x) {
     __ null_check(obj, new CodeEmitInfo(info), /* deoptimize */ needs_patching);
   }
 
-  LIR_Opr reg = rlock_result(x, field_type);
-  LIR_Address* address;
+  DecoratorSet decorators = IN_HEAP;
+  if (is_volatile) {
+    decorators |= MO_SEQ_CST;
+  }
   if (needs_patching) {
-    // we need to patch the offset in the instruction so don't allow
-    // generate_address to try to be smart about emitting the -1.
-    // Otherwise the patching code won't know how to find the
-    // instruction to patch.
-    address = new LIR_Address(object.result(), PATCHED_ADDR, field_type);
-  } else {
-    address = generate_address(object.result(), x->offset(), field_type);
+    decorators |= C1_NEEDS_PATCHING;
   }
 
-  if (support_IRIW_for_not_multiple_copy_atomic_cpu && is_volatile && os::is_MP()) {
-    __ membar();
-  }
-
-  bool needs_atomic_access = is_volatile || AlwaysAtomicAccesses;
-  if (needs_atomic_access && !needs_patching) {
-    volatile_field_load(address, reg, info);
-  } else {
-    LIR_PatchCode patch_code = needs_patching ? lir_patch_normal : lir_patch_none;
-    __ load(address, reg, info, patch_code);
-  }
-
-  if (is_volatile && os::is_MP()) {
-    __ membar_acquire();
-  }
+  LIR_Opr result = rlock_result(x, field_type);
+  access_load_at(decorators, field_type,
+                 object, LIR_OprFact::intConst(x->offset()), result,
+                 info ? new CodeEmitInfo(info) : NULL, info);
 }
 
 
@@ -1889,7 +1753,7 @@ void LIRGenerator::do_NIOCheckIndex(Intrinsic* x) {
   LIR_Opr result = rlock_result(x);
   if (GenerateRangeChecks) {
     CodeEmitInfo* info = state_for(x);
-    CodeStub* stub = new RangeCheckStub(info, index.result(), true);
+    CodeStub* stub = new RangeCheckStub(info, index.result());
     if (index.result()->is_constant()) {
       cmp_mem_int(lir_cond_belowEqual, buf.result(), java_nio_Buffer::limit_offset(), index.result()->as_jint(), info);
       __ branch(lir_cond_belowEqual, T_INT, stub);
@@ -1968,17 +1832,14 @@ void LIRGenerator::do_LoadIndexed(LoadIndexed* x) {
     }
   }
 
-  // emit array address setup early so it schedules better
-  LIR_Address* array_addr = emit_array_address(array.result(), index.result(), x->elt_type(), false);
-
   if (GenerateRangeChecks && needs_range_check) {
     if (StressLoopInvariantCodeMotion && range_check_info->deoptimize_on_exception()) {
-      __ branch(lir_cond_always, T_ILLEGAL, new RangeCheckStub(range_check_info, index.result()));
+      __ branch(lir_cond_always, T_ILLEGAL, new RangeCheckStub(range_check_info, index.result(), array.result()));
     } else if (use_length) {
       // TODO: use a (modified) version of array_range_check that does not require a
       //       constant length to be loaded to a register
       __ cmp(lir_cond_belowEqual, length.result(), index.result());
-      __ branch(lir_cond_belowEqual, T_INT, new RangeCheckStub(range_check_info, index.result()));
+      __ branch(lir_cond_belowEqual, T_INT, new RangeCheckStub(range_check_info, index.result(), array.result()));
     } else {
       array_range_check(array.result(), index.result(), null_check_info, range_check_info);
       // The range check performs the null check, so clear it out for the load
@@ -1986,7 +1847,12 @@ void LIRGenerator::do_LoadIndexed(LoadIndexed* x) {
     }
   }
 
-  __ move(array_addr, rlock_result(x, x->elt_type()), null_check_info);
+  DecoratorSet decorators = IN_HEAP | IN_HEAP_ARRAY;
+
+  LIR_Opr result = rlock_result(x, x->elt_type());
+  access_load_at(decorators, x->elt_type(),
+                 array, index.result(), result,
+                 NULL, null_check_info);
 }
 
 
@@ -2272,157 +2138,21 @@ void LIRGenerator::do_UnsafeGetObject(UnsafeGetObject* x) {
   off.load_item();
   src.load_item();
 
-  LIR_Opr value = rlock_result(x, x->basic_type());
+  DecoratorSet decorators = IN_HEAP;
 
-  if (support_IRIW_for_not_multiple_copy_atomic_cpu && x->is_volatile() && os::is_MP()) {
-    __ membar();
+  if (x->is_volatile()) {
+    decorators |= MO_SEQ_CST;
   }
-
-  get_Object_unsafe(value, src.result(), off.result(), type, x->is_volatile());
-
-#if INCLUDE_ALL_GCS
-  // We might be reading the value of the referent field of a
-  // Reference object in order to attach it back to the live
-  // object graph. If G1 is enabled then we need to record
-  // the value that is being returned in an SATB log buffer.
-  //
-  // We need to generate code similar to the following...
-  //
-  // if (offset == java_lang_ref_Reference::referent_offset) {
-  //   if (src != NULL) {
-  //     if (klass(src)->reference_type() != REF_NONE) {
-  //       pre_barrier(..., value, ...);
-  //     }
-  //   }
-  // }
-
-  if (UseG1GC && type == T_OBJECT) {
-    bool gen_pre_barrier = true;     // Assume we need to generate pre_barrier.
-    bool gen_offset_check = true;    // Assume we need to generate the offset guard.
-    bool gen_source_check = true;    // Assume we need to check the src object for null.
-    bool gen_type_check = true;      // Assume we need to check the reference_type.
-
-    if (off.is_constant()) {
-      jlong off_con = (off.type()->is_int() ?
-                        (jlong) off.get_jint_constant() :
-                        off.get_jlong_constant());
-
-
-      if (off_con != (jlong) java_lang_ref_Reference::referent_offset) {
-        // The constant offset is something other than referent_offset.
-        // We can skip generating/checking the remaining guards and
-        // skip generation of the code stub.
-        gen_pre_barrier = false;
-      } else {
-        // The constant offset is the same as referent_offset -
-        // we do not need to generate a runtime offset check.
-        gen_offset_check = false;
-      }
-    }
-
-    // We don't need to generate stub if the source object is an array
-    if (gen_pre_barrier && src.type()->is_array()) {
-      gen_pre_barrier = false;
-    }
-
-    if (gen_pre_barrier) {
-      // We still need to continue with the checks.
-      if (src.is_constant()) {
-        ciObject* src_con = src.get_jobject_constant();
-        guarantee(src_con != NULL, "no source constant");
-
-        if (src_con->is_null_object()) {
-          // The constant src object is null - We can skip
-          // generating the code stub.
-          gen_pre_barrier = false;
-        } else {
-          // Non-null constant source object. We still have to generate
-          // the slow stub - but we don't need to generate the runtime
-          // null object check.
-          gen_source_check = false;
-        }
-      }
-    }
-    if (gen_pre_barrier && !PatchALot) {
-      // Can the klass of object be statically determined to be
-      // a sub-class of Reference?
-      ciType* type = src.value()->declared_type();
-      if ((type != NULL) && type->is_loaded()) {
-        if (type->is_subtype_of(compilation()->env()->Reference_klass())) {
-          gen_type_check = false;
-        } else if (type->is_klass() &&
-                   !compilation()->env()->Object_klass()->is_subtype_of(type->as_klass())) {
-          // Not Reference and not Object klass.
-          gen_pre_barrier = false;
-        }
-      }
-    }
-
-    if (gen_pre_barrier) {
-      LabelObj* Lcont = new LabelObj();
-
-      // We can have generate one runtime check here. Let's start with
-      // the offset check.
-      if (gen_offset_check) {
-        // if (offset != referent_offset) -> continue
-        // If offset is an int then we can do the comparison with the
-        // referent_offset constant; otherwise we need to move
-        // referent_offset into a temporary register and generate
-        // a reg-reg compare.
-
-        LIR_Opr referent_off;
-
-        if (off.type()->is_int()) {
-          referent_off = LIR_OprFact::intConst(java_lang_ref_Reference::referent_offset);
-        } else {
-          assert(off.type()->is_long(), "what else?");
-          referent_off = new_register(T_LONG);
-          __ move(LIR_OprFact::longConst(java_lang_ref_Reference::referent_offset), referent_off);
-        }
-        __ cmp(lir_cond_notEqual, off.result(), referent_off);
-        __ branch(lir_cond_notEqual, as_BasicType(off.type()), Lcont->label());
-      }
-      if (gen_source_check) {
-        // offset is a const and equals referent offset
-        // if (source == null) -> continue
-        __ cmp(lir_cond_equal, src.result(), LIR_OprFact::oopConst(NULL));
-        __ branch(lir_cond_equal, T_OBJECT, Lcont->label());
-      }
-      LIR_Opr src_klass = new_register(T_OBJECT);
-      if (gen_type_check) {
-        // We have determined that offset == referent_offset && src != null.
-        // if (src->_klass->_reference_type == REF_NONE) -> continue
-        __ move(new LIR_Address(src.result(), oopDesc::klass_offset_in_bytes(), T_ADDRESS), src_klass);
-        LIR_Address* reference_type_addr = new LIR_Address(src_klass, in_bytes(InstanceKlass::reference_type_offset()), T_BYTE);
-        LIR_Opr reference_type = new_register(T_INT);
-        __ move(reference_type_addr, reference_type);
-        __ cmp(lir_cond_equal, reference_type, LIR_OprFact::intConst(REF_NONE));
-        __ branch(lir_cond_equal, T_INT, Lcont->label());
-      }
-      {
-        // We have determined that src->_klass->_reference_type != REF_NONE
-        // so register the value in the referent field with the pre-barrier.
-        pre_barrier(LIR_OprFact::illegalOpr /* addr_opr */,
-                    value  /* pre_val */,
-                    false  /* do_load */,
-                    false  /* patch */,
-                    NULL   /* info */);
-      }
-      __ branch_destination(Lcont->label());
-    }
-  }
-#endif // INCLUDE_ALL_GCS
-
-  if (x->is_volatile() && os::is_MP()) __ membar_acquire();
-
-  /* Normalize boolean value returned by unsafe operation, i.e., value  != 0 ? value = true : value false. */
   if (type == T_BOOLEAN) {
-    LabelObj* equalZeroLabel = new LabelObj();
-    __ cmp(lir_cond_equal, value, 0);
-    __ branch(lir_cond_equal, T_BOOLEAN, equalZeroLabel->label());
-    __ move(LIR_OprFact::intConst(1), value);
-    __ branch_destination(equalZeroLabel->label());
+    decorators |= C1_MASK_BOOLEAN;
   }
+  if (type == T_ARRAY || type == T_OBJECT) {
+    decorators |= ON_UNKNOWN_OOP_REF;
+  }
+
+  LIR_Opr result = rlock_result(x, type);
+  access_load_at(decorators, type,
+                 src, off.result(), result);
 }
 
 
@@ -2442,11 +2172,36 @@ void LIRGenerator::do_UnsafePutObject(UnsafePutObject* x) {
 
   set_no_result(x);
 
-  if (x->is_volatile() && os::is_MP()) __ membar_release();
-  put_Object_unsafe(src.result(), off.result(), data.result(), type, x->is_volatile());
-  if (!support_IRIW_for_not_multiple_copy_atomic_cpu && x->is_volatile() && os::is_MP()) __ membar();
+  DecoratorSet decorators = IN_HEAP;
+  if (type == T_ARRAY || type == T_OBJECT) {
+    decorators |= ON_UNKNOWN_OOP_REF;
+  }
+  if (x->is_volatile()) {
+    decorators |= MO_SEQ_CST;
+  }
+  access_store_at(decorators, type, src, off.result(), data.result());
 }
 
+void LIRGenerator::do_UnsafeGetAndSetObject(UnsafeGetAndSetObject* x) {
+  BasicType type = x->basic_type();
+  LIRItem src(x->object(), this);
+  LIRItem off(x->offset(), this);
+  LIRItem value(x->value(), this);
+
+  DecoratorSet decorators = IN_HEAP | MO_SEQ_CST;
+
+  if (type == T_ARRAY || type == T_OBJECT) {
+    decorators |= ON_UNKNOWN_OOP_REF;
+  }
+
+  LIR_Opr result;
+  if (x->is_add()) {
+    result = access_atomic_add_at(decorators, type, src, off, value);
+  } else {
+    result = access_atomic_xchg_at(decorators, type, src, off, value);
+  }
+  set_result(x, result);
+}
 
 void LIRGenerator::do_SwitchRanges(SwitchRangeArray* x, LIR_Opr value, BlockBegin* default_sux) {
   int lng = x->length();
@@ -2549,8 +2304,8 @@ void LIRGenerator::do_TableSwitch(TableSwitch* x) {
   move_to_phi(x->state());
 
   int lo_key = x->lo_key();
-  int hi_key = x->hi_key();
   int len = x->length();
+  assert(lo_key <= (lo_key + (len - 1)), "integer overflow");
   LIR_Opr value = tag.result();
 
   if (compilation()->env()->comp_level() == CompLevel_full_profile && UseSwitchProfiling) {
@@ -3158,7 +2913,7 @@ void LIRGenerator::do_IfOp(IfOp* x) {
   __ cmove(lir_cond(x->cond()), t_val.result(), f_val.result(), reg, as_BasicType(x->x()->type()));
 }
 
-#ifdef TRACE_HAVE_INTRINSICS
+#ifdef JFR_HAVE_INTRINSICS
 void LIRGenerator::do_ClassIDIntrinsic(Intrinsic* x) {
   CodeEmitInfo* info = state_for(x);
   CodeEmitInfo* info2 = new CodeEmitInfo(info); // Clone for the second null check
@@ -3170,7 +2925,7 @@ void LIRGenerator::do_ClassIDIntrinsic(Intrinsic* x) {
   LIR_Opr klass = new_register(T_METADATA);
   __ move(new LIR_Address(arg.result(), java_lang_Class::klass_offset_in_bytes(), T_ADDRESS), klass, info);
   LIR_Opr id = new_register(T_LONG);
-  ByteSize offset = TRACE_KLASS_TRACE_ID_OFFSET;
+  ByteSize offset = KLASS_TRACE_ID_OFFSET;
   LIR_Address* trace_id_addr = new LIR_Address(klass, in_bytes(offset), T_LONG);
 
   __ move(trace_id_addr, id);
@@ -3180,18 +2935,18 @@ void LIRGenerator::do_ClassIDIntrinsic(Intrinsic* x) {
 #ifdef TRACE_ID_META_BITS
   __ logical_and(id, LIR_OprFact::longConst(~TRACE_ID_META_BITS), id);
 #endif
-#ifdef TRACE_ID_CLASS_SHIFT
-  __ unsigned_shift_right(id, TRACE_ID_CLASS_SHIFT, id);
+#ifdef TRACE_ID_SHIFT
+  __ unsigned_shift_right(id, TRACE_ID_SHIFT, id);
 #endif
 
   __ move(id, rlock_result(x));
 }
 
-void LIRGenerator::do_getBufferWriter(Intrinsic* x) {
+void LIRGenerator::do_getEventWriter(Intrinsic* x) {
   LabelObj* L_end = new LabelObj();
 
   LIR_Address* jobj_addr = new LIR_Address(getThreadPointer(),
-                                           in_bytes(TRACE_THREAD_DATA_WRITER_OFFSET),
+                                           in_bytes(THREAD_LOCAL_WRITER_OFFSET_JFR),
                                            T_OBJECT);
   LIR_Opr result = rlock_result(x);
   __ move_wide(jobj_addr, result);
@@ -3229,15 +2984,15 @@ void LIRGenerator::do_Intrinsic(Intrinsic* x) {
     break;
   }
 
-#ifdef TRACE_HAVE_INTRINSICS
+#ifdef JFR_HAVE_INTRINSICS
   case vmIntrinsics::_getClassId:
     do_ClassIDIntrinsic(x);
     break;
-  case vmIntrinsics::_getBufferWriter:
-    do_getBufferWriter(x);
+  case vmIntrinsics::_getEventWriter:
+    do_getEventWriter(x);
     break;
   case vmIntrinsics::_counterTime:
-    do_RuntimeCall(CAST_FROM_FN_PTR(address, TRACE_TIME_METHOD), x);
+    do_RuntimeCall(CAST_FROM_FN_PTR(address, JFR_TIME_FUNCTION), x);
     break;
 #endif
 
@@ -3492,11 +3247,26 @@ void LIRGenerator::do_ProfileInvoke(ProfileInvoke* x) {
     if (_method->has_option_value("CompileThresholdScaling", scale)) {
       freq_log = Arguments::scaled_freq_log(freq_log, scale);
     }
-    increment_event_counter_impl(info, x->inlinee(), right_n_bits(freq_log), InvocationEntryBci, false, true);
+    increment_event_counter_impl(info, x->inlinee(), LIR_OprFact::intConst(InvocationCounter::count_increment), right_n_bits(freq_log), InvocationEntryBci, false, true);
   }
 }
 
-void LIRGenerator::increment_event_counter(CodeEmitInfo* info, int bci, bool backedge) {
+void LIRGenerator::increment_backedge_counter_conditionally(LIR_Condition cond, LIR_Opr left, LIR_Opr right, CodeEmitInfo* info, int left_bci, int right_bci, int bci) {
+  if (compilation()->count_backedges()) {
+    __ cmp(cond, left, right);
+    LIR_Opr step = new_register(T_INT);
+    LIR_Opr plus_one = LIR_OprFact::intConst(InvocationCounter::count_increment);
+    LIR_Opr zero = LIR_OprFact::intConst(0);
+    __ cmove(cond,
+        (left_bci < bci) ? plus_one : zero,
+        (right_bci < bci) ? plus_one : zero,
+        step, left->type());
+    increment_backedge_counter(info, step, bci);
+  }
+}
+
+
+void LIRGenerator::increment_event_counter(CodeEmitInfo* info, LIR_Opr step, int bci, bool backedge) {
   int freq_log = 0;
   int level = compilation()->env()->comp_level();
   if (level == CompLevel_limited_profile) {
@@ -3511,7 +3281,7 @@ void LIRGenerator::increment_event_counter(CodeEmitInfo* info, int bci, bool bac
   if (_method->has_option_value("CompileThresholdScaling", scale)) {
     freq_log = Arguments::scaled_freq_log(freq_log, scale);
   }
-  increment_event_counter_impl(info, info->scope()->method(), right_n_bits(freq_log), bci, backedge, true);
+  increment_event_counter_impl(info, info->scope()->method(), step, right_n_bits(freq_log), bci, backedge, true);
 }
 
 void LIRGenerator::decrement_age(CodeEmitInfo* info) {
@@ -3536,7 +3306,7 @@ void LIRGenerator::decrement_age(CodeEmitInfo* info) {
 
 
 void LIRGenerator::increment_event_counter_impl(CodeEmitInfo* info,
-                                                ciMethod *method, int frequency,
+                                                ciMethod *method, LIR_Opr step, int frequency,
                                                 int bci, bool backedge, bool notify) {
   assert(frequency == 0 || is_power_of_2(frequency + 1), "Frequency must be x^2 - 1 or 0");
   int level = _compilation->env()->comp_level();
@@ -3567,7 +3337,7 @@ void LIRGenerator::increment_event_counter_impl(CodeEmitInfo* info,
   LIR_Address* counter = new LIR_Address(counter_holder, offset, T_INT);
   LIR_Opr result = new_register(T_INT);
   __ load(counter, result);
-  __ add(result, LIR_OprFact::intConst(InvocationCounter::count_increment), result);
+  __ add(result, step, result);
   __ store(result, counter);
   if (notify && (!backedge || UseOnStackReplacement)) {
     LIR_Opr meth = LIR_OprFact::metadataConst(method->constant_encoding());
@@ -3575,9 +3345,19 @@ void LIRGenerator::increment_event_counter_impl(CodeEmitInfo* info,
     CodeStub* overflow = new CounterOverflowStub(info, bci, meth);
     int freq = frequency << InvocationCounter::count_shift;
     if (freq == 0) {
-      __ branch(lir_cond_always, T_ILLEGAL, overflow);
+      if (!step->is_constant()) {
+        __ cmp(lir_cond_notEqual, step, LIR_OprFact::intConst(0));
+        __ branch(lir_cond_notEqual, T_ILLEGAL, overflow);
+      } else {
+        __ branch(lir_cond_always, T_ILLEGAL, overflow);
+      }
     } else {
       LIR_Opr mask = load_immediate(freq, T_INT);
+      if (!step->is_constant()) {
+        // If step is 0, make sure the overflow check below always fails
+        __ cmp(lir_cond_notEqual, step, LIR_OprFact::intConst(0));
+        __ cmove(lir_cond_notEqual, result, LIR_OprFact::intConst(InvocationCounter::count_increment), result, T_INT);
+      }
       __ logical_and(result, mask, result);
       __ cmp(lir_cond_equal, result, LIR_OprFact::intConst(0));
       __ branch(lir_cond_equal, T_INT, overflow);
@@ -3826,25 +3606,30 @@ void LIRGenerator::do_MemBar(MemBar* x) {
   }
 }
 
+LIR_Opr LIRGenerator::mask_boolean(LIR_Opr array, LIR_Opr value, CodeEmitInfo*& null_check_info) {
+  LIR_Opr value_fixed = rlock_byte(T_BYTE);
+  if (TwoOperandLIRForm) {
+    __ move(value, value_fixed);
+    __ logical_and(value_fixed, LIR_OprFact::intConst(1), value_fixed);
+  } else {
+    __ logical_and(value, LIR_OprFact::intConst(1), value_fixed);
+  }
+  LIR_Opr klass = new_register(T_METADATA);
+  __ move(new LIR_Address(array, oopDesc::klass_offset_in_bytes(), T_ADDRESS), klass, null_check_info);
+  null_check_info = NULL;
+  LIR_Opr layout = new_register(T_INT);
+  __ move(new LIR_Address(klass, in_bytes(Klass::layout_helper_offset()), T_INT), layout);
+  int diffbit = Klass::layout_helper_boolean_diffbit();
+  __ logical_and(layout, LIR_OprFact::intConst(diffbit), layout);
+  __ cmp(lir_cond_notEqual, layout, LIR_OprFact::intConst(0));
+  __ cmove(lir_cond_notEqual, value_fixed, value, value_fixed, T_BYTE);
+  value = value_fixed;
+  return value;
+}
+
 LIR_Opr LIRGenerator::maybe_mask_boolean(StoreIndexed* x, LIR_Opr array, LIR_Opr value, CodeEmitInfo*& null_check_info) {
   if (x->check_boolean()) {
-    LIR_Opr value_fixed = rlock_byte(T_BYTE);
-    if (TwoOperandLIRForm) {
-      __ move(value, value_fixed);
-      __ logical_and(value_fixed, LIR_OprFact::intConst(1), value_fixed);
-    } else {
-      __ logical_and(value, LIR_OprFact::intConst(1), value_fixed);
-    }
-    LIR_Opr klass = new_register(T_METADATA);
-    __ move(new LIR_Address(array, oopDesc::klass_offset_in_bytes(), T_ADDRESS), klass, null_check_info);
-    null_check_info = NULL;
-    LIR_Opr layout = new_register(T_INT);
-    __ move(new LIR_Address(klass, in_bytes(Klass::layout_helper_offset()), T_INT), layout);
-    int diffbit = Klass::layout_helper_boolean_diffbit();
-    __ logical_and(layout, LIR_OprFact::intConst(diffbit), layout);
-    __ cmp(lir_cond_notEqual, layout, LIR_OprFact::intConst(0));
-    __ cmove(lir_cond_notEqual, value_fixed, value, value_fixed, T_BYTE);
-    value = value_fixed;
+    value = mask_boolean(array, value, null_check_info);
   }
   return value;
 }

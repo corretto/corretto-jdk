@@ -38,10 +38,13 @@
 #include "oops/klassVtable.hpp"
 #include "runtime/handles.hpp"
 #include "runtime/os.hpp"
-#include "trace/traceMacros.hpp"
 #include "utilities/accessFlags.hpp"
 #include "utilities/align.hpp"
 #include "utilities/macros.hpp"
+#if INCLUDE_JFR
+#include "jfr/support/jfrKlassExtension.hpp"
+#endif
+
 
 // An InstanceKlass is the VM level representation of a Java class.
 // It contains all information needed for at class at execution runtime.
@@ -321,6 +324,10 @@ class InstanceKlass: public Klass {
   }
   bool is_shared_app_class() const {
     return (_misc_flags & _misc_is_shared_app_class) != 0;
+  }
+
+  void clear_class_loader_type() {
+    _misc_flags &= ~loader_type_bits();
   }
 
   void set_class_loader_type(s2 loader_type) {
@@ -962,7 +969,7 @@ public:
 
   // support for stub routines
   static ByteSize init_state_offset()  { return in_ByteSize(offset_of(InstanceKlass, _init_state)); }
-  TRACE_DEFINE_KLASS_TRACE_ID_OFFSET;
+  JFR_ONLY(DEFINE_KLASS_TRACE_ID_OFFSET;)
   static ByteSize init_thread_offset() { return in_ByteSize(offset_of(InstanceKlass, _init_thread)); }
 
   // subclass/subinterface checks
@@ -1013,7 +1020,8 @@ public:
 
   // virtual operations from Klass
   bool is_leaf_class() const               { return _subklass == NULL; }
-  GrowableArray<Klass*>* compute_secondary_supers(int num_extra_slots);
+  GrowableArray<Klass*>* compute_secondary_supers(int num_extra_slots,
+                                                  Array<Klass*>* transitive_interfaces);
   bool compute_is_subtype_of(Klass* k);
   bool can_be_primary_super_slow() const;
   int oop_size(oop obj)  const             { return size_helper(); }
@@ -1149,9 +1157,11 @@ public:
 #endif // INCLUDE_JVMTI
 
   void clean_weak_instanceklass_links();
+ private:
   void clean_implementors_list();
   void clean_method_data();
 
+ public:
   // Explicit metaspace deallocation of fields
   // For RedefineClasses and class file parsing errors, we need to deallocate
   // instanceKlasses and the metadata they point to.
@@ -1177,7 +1187,7 @@ public:
 
   // GC specific object visitors
   //
-#if INCLUDE_ALL_GCS
+#if INCLUDE_PARALLELGC
   // Parallel Scavenge
   void oop_ps_push_contents(  oop obj, PSPromotionManager* pm);
   // Parallel Compact
@@ -1214,7 +1224,7 @@ public:
 
 
   // Reverse iteration
-#if INCLUDE_ALL_GCS
+#if INCLUDE_OOP_OOP_ITERATE_BACKWARDS
  public:
   // Iterate over all oop fields in the oop maps.
   template <bool nv, class OopClosureType>
@@ -1234,7 +1244,7 @@ public:
   // Iterate over all oop fields in one oop map.
   template <bool nv, typename T, class OopClosureType>
   inline void oop_oop_iterate_oop_map_reverse(OopMapBlock* map, oop obj, OopClosureType* closure);
-#endif
+#endif // INCLUDE_OOP_OOP_ITERATE_BACKWARDS
 
 
   // Bounded range iteration
@@ -1264,10 +1274,10 @@ public:
   ALL_OOP_OOP_ITERATE_CLOSURES_1(OOP_OOP_ITERATE_DECL)
   ALL_OOP_OOP_ITERATE_CLOSURES_2(OOP_OOP_ITERATE_DECL)
 
-#if INCLUDE_ALL_GCS
+#if INCLUDE_OOP_OOP_ITERATE_BACKWARDS
   ALL_OOP_OOP_ITERATE_CLOSURES_1(OOP_OOP_ITERATE_DECL_BACKWARDS)
   ALL_OOP_OOP_ITERATE_CLOSURES_2(OOP_OOP_ITERATE_DECL_BACKWARDS)
-#endif // INCLUDE_ALL_GCS
+#endif
 
   u2 idnum_allocated_count() const      { return _idnum_allocated_count; }
 

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2017, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2017, 2018, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -100,7 +100,7 @@ void CMSHeap::initialize_serviceability() {
   _young_manager = new GCMemoryManager("ParNew", "end of minor GC");
   _old_manager = new GCMemoryManager("ConcurrentMarkSweep", "end of major GC");
 
-  ParNewGeneration* young = (ParNewGeneration*) young_gen();
+  ParNewGeneration* young = young_gen();
   _eden_pool = new ContiguousSpacePool(young->eden(),
                                        "Par Eden Space",
                                        young->max_eden_size(),
@@ -128,18 +128,11 @@ void CMSHeap::initialize_serviceability() {
 
 }
 
-void CMSHeap::check_gen_kinds() {
-  assert(young_gen()->kind() == Generation::ParNew,
-         "Wrong youngest generation type");
-  assert(old_gen()->kind() == Generation::ConcurrentMarkSweep,
-         "Wrong generation kind");
-}
-
 CMSHeap* CMSHeap::heap() {
   CollectedHeap* heap = Universe::heap();
   assert(heap != NULL, "Uninitialized access to CMSHeap::heap()");
   assert(heap->kind() == CollectedHeap::CMS, "Invalid name");
-  return (CMSHeap*) heap;
+  return static_cast<CMSHeap*>(heap);
 }
 
 void CMSHeap::gc_threads_do(ThreadClosure* tc) const {
@@ -229,10 +222,9 @@ void CMSHeap::cms_process_roots(StrongRootsScope* scope,
                                 OopsInGenClosure* root_closure,
                                 CLDClosure* cld_closure) {
   MarkingCodeBlobClosure mark_code_closure(root_closure, !CodeBlobToOopClosure::FixRelocations);
-  OopsInGenClosure* weak_roots = only_strong_roots ? NULL : root_closure;
   CLDClosure* weak_cld_closure = only_strong_roots ? NULL : cld_closure;
 
-  process_roots(scope, so, root_closure, weak_roots, cld_closure, weak_cld_closure, &mark_code_closure);
+  process_roots(scope, so, root_closure, cld_closure, weak_cld_closure, &mark_code_closure);
   if (!only_strong_roots) {
     process_string_table_roots(scope, root_closure);
   }

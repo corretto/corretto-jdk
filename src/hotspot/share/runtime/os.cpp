@@ -251,6 +251,14 @@ bool os::dll_build_name(char* buffer, size_t size, const char* fname) {
   return (n != -1);
 }
 
+#if !defined(LINUX) && !defined(_WINDOWS)
+bool os::committed_in_range(address start, size_t size, address& committed_start, size_t& committed_size) {
+  committed_start = start;
+  committed_size = size;
+  return true;
+}
+#endif
+
 // Helper for dll_locate_lib.
 // Pass buffer and printbuffer as we already printed the path to buffer
 // when we called get_current_directory. This way we avoid another buffer
@@ -435,37 +443,29 @@ void os::init_before_ergo() {
   VM_Version::init_before_ergo();
 }
 
-void os::signal_init(TRAPS) {
+void os::initialize_jdk_signal_support(TRAPS) {
   if (!ReduceSignalUsage) {
     // Setup JavaThread for processing signals
-    Klass* k = SystemDictionary::resolve_or_fail(vmSymbols::java_lang_Thread(), true, CHECK);
-    InstanceKlass* ik = InstanceKlass::cast(k);
-    instanceHandle thread_oop = ik->allocate_instance_handle(CHECK);
-
     const char thread_name[] = "Signal Dispatcher";
     Handle string = java_lang_String::create_from_str(thread_name, CHECK);
 
     // Initialize thread_oop to put it into the system threadGroup
     Handle thread_group (THREAD, Universe::system_thread_group());
-    JavaValue result(T_VOID);
-    JavaCalls::call_special(&result, thread_oop,
-                           ik,
-                           vmSymbols::object_initializer_name(),
+    Handle thread_oop = JavaCalls::construct_new_instance(SystemDictionary::Thread_klass(),
                            vmSymbols::threadgroup_string_void_signature(),
                            thread_group,
                            string,
                            CHECK);
 
     Klass* group = SystemDictionary::ThreadGroup_klass();
+    JavaValue result(T_VOID);
     JavaCalls::call_special(&result,
                             thread_group,
                             group,
                             vmSymbols::add_method_name(),
                             vmSymbols::thread_void_signature(),
-                            thread_oop,         // ARG 1
+                            thread_oop,
                             CHECK);
-
-    os::signal_init_pd();
 
     { MutexLocker mu(Threads_lock);
       JavaThread* signal_thread = new JavaThread(&signal_thread_entry);
@@ -1241,6 +1241,33 @@ char* os::format_boot_path(const char* format_string,
 
     assert((q - formatted_path) == formatted_path_len, "formatted_path size botched");
     return formatted_path;
+}
+
+// This function is a proxy to fopen, it tries to add a non standard flag ('e' or 'N')
+// that ensures automatic closing of the file on exec. If it can not find support in
+// the underlying c library, it will make an extra system call (fcntl) to ensure automatic
+// closing of the file on exec.
+FILE* os::fopen(const char* path, const char* mode) {
+  char modified_mode[20];
+  assert(strlen(mode) + 1 < sizeof(modified_mode), "mode chars plus one extra must fit in buffer");
+  sprintf(modified_mode, "%s" LINUX_ONLY("e") BSD_ONLY("e") WINDOWS_ONLY("N"), mode);
+  FILE* file = ::fopen(path, modified_mode);
+
+#if !(defined LINUX || defined BSD || defined _WINDOWS)
+  // assume fcntl FD_CLOEXEC support as a backup solution when 'e' or 'N'
+  // is not supported as mode in fopen
+  if (file != NULL) {
+    int fd = fileno(file);
+    if (fd != -1) {
+      int fd_flags = fcntl(fd, F_GETFD);
+      if (fd_flags != -1) {
+        fcntl(fd, F_SETFD, fd_flags | FD_CLOEXEC);
+      }
+    }
+  }
+#endif
+
+  return file;
 }
 
 bool os::set_boot_path(char fileSep, char pathSep) {

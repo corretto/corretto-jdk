@@ -112,7 +112,9 @@ G1FullCollector::G1FullCollector(G1CollectedHeap* heap, GCMemoryManager* memory_
     _preserved_marks_set(true),
     _serial_compaction_point(),
     _is_alive(heap->concurrent_mark()->next_mark_bitmap()),
-    _is_alive_mutator(heap->ref_processor_stw(), &_is_alive) {
+    _is_alive_mutator(heap->ref_processor_stw(), &_is_alive),
+    _always_subject_to_discovery(),
+    _is_subject_mutator(heap->ref_processor_stw(), &_always_subject_to_discovery) {
   assert(SafepointSynchronize::is_at_safepoint(), "must be at a safepoint");
 
   _preserved_marks_set.init(_num_workers);
@@ -220,7 +222,7 @@ void G1FullCollector::phase1_mark_live_objects() {
   if (ClassUnloading) {
     GCTraceTime(Debug, gc, phases) debug("Phase 1: Class Unloading and Cleanup", scope()->timer());
     // Unload classes and purge the SystemDictionary.
-    bool purged_class = SystemDictionary::do_unloading(&_is_alive, scope()->timer());
+    bool purged_class = SystemDictionary::do_unloading(scope()->timer());
     _heap->complete_cleaning(&_is_alive, purged_class);
   } else {
     GCTraceTime(Debug, gc, phases) debug("Phase 1: String and Symbol Tables Cleanup", scope()->timer());

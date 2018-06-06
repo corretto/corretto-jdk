@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 1999, 2018, Oracle and/or its affiliates. All rights reserved.
- * Copyright (c) 2012, 2015 SAP SE. All rights reserved.
+ * Copyright (c) 2012, 2018 SAP SE. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -33,17 +33,18 @@
 #include "runtime/sharedRuntime.hpp"
 #include "utilities/macros.hpp"
 #include "vmreg_ppc.inline.hpp"
-#if INCLUDE_ALL_GCS
-#include "gc/g1/g1BarrierSet.hpp"
-#endif // INCLUDE_ALL_GCS
 
 #define __ ce->masm()->
 
 
-RangeCheckStub::RangeCheckStub(CodeEmitInfo* info, LIR_Opr index,
-                               bool throw_index_out_of_bounds_exception)
-  : _throw_index_out_of_bounds_exception(throw_index_out_of_bounds_exception)
-  , _index(index) {
+RangeCheckStub::RangeCheckStub(CodeEmitInfo* info, LIR_Opr index, LIR_Opr array)
+  : _throw_index_out_of_bounds_exception(false), _index(index), _array(array) {
+  assert(info != NULL, "must have info");
+  _info = new CodeEmitInfo(info);
+}
+
+RangeCheckStub::RangeCheckStub(CodeEmitInfo* info, LIR_Opr index)
+  : _throw_index_out_of_bounds_exception(true), _index(index), _array(NULL) {
   assert(info != NULL, "must have info");
   _info = new CodeEmitInfo(info);
 }
@@ -71,12 +72,16 @@ void RangeCheckStub::emit_code(LIR_Assembler* ce) {
   __ add_const_optimized(R0, R29_TOC, MacroAssembler::offset_to_global_toc(stub));
   __ mtctr(R0);
 
-  Register index = R0; // pass in R0
+  Register index = R0;
   if (_index->is_register()) {
     __ extsw(index, _index->as_register());
   } else {
     __ load_const_optimized(index, _index->as_jint());
   }
+  if (_array) {
+    __ std(_array->as_pointer_register(), -8, R1_SP);
+  }
+  __ std(index, -16, R1_SP);
 
   __ bctrl();
   ce->add_call_info_here(_info);
@@ -469,59 +474,5 @@ void ArrayCopyStub::emit_code(LIR_Assembler* ce) {
 
   __ b(_continuation);
 }
-
-
-///////////////////////////////////////////////////////////////////////////////////
-#if INCLUDE_ALL_GCS
-
-void G1PreBarrierStub::emit_code(LIR_Assembler* ce) {
-  // At this point we know that marking is in progress.
-  // If do_load() is true then we have to emit the
-  // load of the previous value; otherwise it has already
-  // been loaded into _pre_val.
-
-  __ bind(_entry);
-
-  assert(pre_val()->is_register(), "Precondition.");
-  Register pre_val_reg = pre_val()->as_register();
-
-  if (do_load()) {
-    ce->mem2reg(addr(), pre_val(), T_OBJECT, patch_code(), info(), false /*wide*/, false /*unaligned*/);
-  }
-
-  __ cmpdi(CCR0, pre_val_reg, 0);
-  __ bc_far_optimized(Assembler::bcondCRbiIs1, __ bi0(CCR0, Assembler::equal), _continuation);
-
-  address stub = Runtime1::entry_for(Runtime1::Runtime1::g1_pre_barrier_slow_id);
-  //__ load_const_optimized(R0, stub);
-  __ add_const_optimized(R0, R29_TOC, MacroAssembler::offset_to_global_toc(stub));
-  __ std(pre_val_reg, -8, R1_SP); // Pass pre_val on stack.
-  __ mtctr(R0);
-  __ bctrl();
-  __ b(_continuation);
-}
-
-void G1PostBarrierStub::emit_code(LIR_Assembler* ce) {
-  __ bind(_entry);
-
-  assert(addr()->is_register(), "Precondition.");
-  assert(new_val()->is_register(), "Precondition.");
-  Register addr_reg = addr()->as_pointer_register();
-  Register new_val_reg = new_val()->as_register();
-
-  __ cmpdi(CCR0, new_val_reg, 0);
-  __ bc_far_optimized(Assembler::bcondCRbiIs1, __ bi0(CCR0, Assembler::equal), _continuation);
-
-  address stub = Runtime1::entry_for(Runtime1::Runtime1::g1_post_barrier_slow_id);
-  //__ load_const_optimized(R0, stub);
-  __ add_const_optimized(R0, R29_TOC, MacroAssembler::offset_to_global_toc(stub));
-  __ mtctr(R0);
-  __ mr(R0, addr_reg); // Pass addr in R0.
-  __ bctrl();
-  __ b(_continuation);
-}
-
-#endif // INCLUDE_ALL_GCS
-///////////////////////////////////////////////////////////////////////////////////
 
 #undef __
