@@ -25,7 +25,7 @@
 
 # All valid JVM features, regardless of platform
 VALID_JVM_FEATURES="compiler1 compiler2 zero minimal dtrace jvmti jvmci \
-    graal vm-structs jni-check services management cmsgc g1gc parallelgc serialgc nmt cds \
+    graal vm-structs jni-check services management cmsgc epsilongc g1gc parallelgc serialgc zgc nmt cds \
     static-build link-time-opt aot jfr"
 
 # Deprecated JVM features (these are ignored, but with a warning)
@@ -241,15 +241,25 @@ AC_DEFUN_ONCE([HOTSPOT_ENABLE_DISABLE_AOT],
 #
 AC_DEFUN_ONCE([HOTSPOT_ENABLE_DISABLE_CDS],
 [
-  AC_ARG_ENABLE([cds], [AS_HELP_STRING([--enable-cds@<:@=yes/no@:>@],
-      [enable class data sharing feature in non-minimal VM. Default is yes.])])
+  AC_ARG_ENABLE([cds], [AS_HELP_STRING([--enable-cds@<:@=yes/no/auto@:>@],
+      [enable class data sharing feature in non-minimal VM. Default is auto, where cds is enabled if supported on the platform.])])
 
-  if test "x$enable_cds" = "x" || test "x$enable_cds" = "xyes"; then
+  if test "x$enable_cds" = "x" || test "x$enable_cds" = "xauto"; then
+    ENABLE_CDS="true"
+  elif test "x$enable_cds" = "xyes"; then
     ENABLE_CDS="true"
   elif test "x$enable_cds" = "xno"; then
     ENABLE_CDS="false"
   else
     AC_MSG_ERROR([Invalid value for --enable-cds: $enable_cds])
+  fi
+
+  # Disable CDS on AIX.
+  if test "x$OPENJDK_TARGET_OS" = "xaix"; then
+    ENABLE_CDS="false"
+    if test "x$enable_cds" = "xyes"; then
+      AC_MSG_ERROR([CDS is currently not supported on AIX. Remove --enable-cds.])
+    fi
   fi
 
   AC_SUBST(ENABLE_CDS)
@@ -372,6 +382,19 @@ AC_DEFUN_ONCE([HOTSPOT_SETUP_JVM_FEATURES],
     fi
   fi
 
+  # Only enable ZGC on Linux x86_64
+  AC_MSG_CHECKING([if zgc should be built])
+  if HOTSPOT_CHECK_JVM_FEATURE(zgc); then
+    if test "x$OPENJDK_TARGET_OS" = "xlinux" && test "x$OPENJDK_TARGET_CPU" = "xx86_64"; then
+      AC_MSG_RESULT([yes])
+    else
+      DISABLED_JVM_FEATURES="$DISABLED_JVM_FEATURES zgc"
+      AC_MSG_RESULT([no, platform not supported])
+    fi
+  else
+    AC_MSG_RESULT([no])
+  fi
+
   # Turn on additional features based on other parts of configure
   if test "x$INCLUDE_DTRACE" = "xtrue"; then
     JVM_FEATURES="$JVM_FEATURES dtrace"
@@ -454,9 +477,22 @@ AC_DEFUN_ONCE([HOTSPOT_SETUP_JVM_FEATURES],
   fi
 
   # All variants but minimal (and custom) get these features
-  NON_MINIMAL_FEATURES="$NON_MINIMAL_FEATURES cmsgc g1gc parallelgc serialgc jni-check jvmti management nmt services vm-structs"
+  NON_MINIMAL_FEATURES="$NON_MINIMAL_FEATURES cmsgc g1gc parallelgc serialgc epsilongc jni-check jvmti management nmt services vm-structs"
+
+  AC_MSG_CHECKING([if cds should be enabled])
   if test "x$ENABLE_CDS" = "xtrue"; then
+    if test "x$enable_cds" = "xyes"; then
+      AC_MSG_RESULT([yes, forced])
+    else
+      AC_MSG_RESULT([yes])
+    fi
     NON_MINIMAL_FEATURES="$NON_MINIMAL_FEATURES cds"
+  else
+    if test "x$enable_cds" = "xno"; then
+      AC_MSG_RESULT([no, forced])
+    else
+      AC_MSG_RESULT([no])
+    fi
   fi
 
   # Enable features depending on variant.

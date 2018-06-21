@@ -1853,9 +1853,36 @@ public class AMD64Assembler extends Assembler {
         CMP.getMIOpcode(DWORD, isByte(imm32)).emit(this, DWORD, dst, imm32);
     }
 
-    // The 32-bit cmpxchg compares the value at adr with the contents of X86.rax,
-    // and stores reg into adr if so; otherwise, the value at adr is loaded into X86.rax,.
-    // The ZF is set if the compared values were equal, and cleared otherwise.
+    /**
+     * The 8-bit cmpxchg compares the value at adr with the contents of X86.rax, and stores reg into
+     * adr if so; otherwise, the value at adr is loaded into X86.rax,. The ZF is set if the compared
+     * values were equal, and cleared otherwise.
+     */
+    public final void cmpxchgb(Register reg, AMD64Address adr) { // cmpxchg
+        prefixb(adr, reg);
+        emitByte(0x0F);
+        emitByte(0xB0);
+        emitOperandHelper(reg, adr, 0);
+    }
+
+    /**
+     * The 16-bit cmpxchg compares the value at adr with the contents of X86.rax, and stores reg
+     * into adr if so; otherwise, the value at adr is loaded into X86.rax,. The ZF is set if the
+     * compared values were equal, and cleared otherwise.
+     */
+    public final void cmpxchgw(Register reg, AMD64Address adr) { // cmpxchg
+        emitByte(0x66); // Switch to 16-bit mode.
+        prefix(adr, reg);
+        emitByte(0x0F);
+        emitByte(0xB1);
+        emitOperandHelper(reg, adr, 0);
+    }
+
+    /**
+     * The 32-bit cmpxchg compares the value at adr with the contents of X86.rax, and stores reg
+     * into adr if so; otherwise, the value at adr is loaded into X86.rax,. The ZF is set if the
+     * compared values were equal, and cleared otherwise.
+     */
     public final void cmpxchgl(Register reg, AMD64Address adr) { // cmpxchg
         prefix(adr, reg);
         emitByte(0x0F);
@@ -2109,7 +2136,7 @@ public class AMD64Assembler extends Assembler {
 
     public final void movb(AMD64Address dst, Register src) {
         assert src.getRegisterCategory().equals(AMD64.CPU) : "must have byte register";
-        prefix(dst, src, true);
+        prefixb(dst, src);
         emitByte(0x88);
         emitOperandHelper(src, dst, 0);
     }
@@ -3255,6 +3282,10 @@ public class AMD64Assembler extends Assembler {
         }
     }
 
+    private void prefixb(AMD64Address adr, Register reg) {
+        prefix(adr, reg, true);
+    }
+
     private void prefix(AMD64Address adr, Register reg) {
         prefix(adr, reg, false);
     }
@@ -3677,6 +3708,21 @@ public class AMD64Assembler extends Assembler {
         emitByte(imm8);
     }
 
+    public final void xaddb(AMD64Address dst, Register src) {
+        prefixb(dst, src);
+        emitByte(0x0F);
+        emitByte(0xC0);
+        emitOperandHelper(src, dst, 0);
+    }
+
+    public final void xaddw(AMD64Address dst, Register src) {
+        emitByte(0x66); // Switch to 16-bit mode.
+        prefix(dst, src);
+        emitByte(0x0F);
+        emitByte(0xC1);
+        emitOperandHelper(src, dst, 0);
+    }
+
     public final void xaddl(AMD64Address dst, Register src) {
         prefix(dst, src);
         emitByte(0x0F);
@@ -3689,6 +3735,19 @@ public class AMD64Assembler extends Assembler {
         emitByte(0x0F);
         emitByte(0xC1);
         emitOperandHelper(src, dst, 0);
+    }
+
+    public final void xchgb(Register dst, AMD64Address src) {
+        prefixb(src, dst);
+        emitByte(0x86);
+        emitOperandHelper(dst, src, 0);
+    }
+
+    public final void xchgw(Register dst, AMD64Address src) {
+        emitByte(0x66);
+        prefix(src, dst);
+        emitByte(0x87);
+        emitOperandHelper(dst, src, 0);
     }
 
     public final void xchgl(Register dst, AMD64Address src) {

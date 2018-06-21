@@ -199,6 +199,9 @@ class OopStorage;
   do_klass(StackFrameInfo_klass,                        java_lang_StackFrameInfo,                  Opt                 ) \
   do_klass(LiveStackFrameInfo_klass,                    java_lang_LiveStackFrameInfo,              Opt                 ) \
                                                                                                                          \
+  /* support for stack dump lock analysis */                                                                             \
+  do_klass(java_util_concurrent_locks_AbstractOwnableSynchronizer_klass, java_util_concurrent_locks_AbstractOwnableSynchronizer, Pre ) \
+                                                                                                                         \
   /* Preload boxing klasses */                                                                                           \
   do_klass(Boolean_klass,                               java_lang_Boolean,                         Pre                 ) \
   do_klass(Character_klass,                             java_lang_Character,                       Pre                 ) \
@@ -449,12 +452,6 @@ public:
   }
   static BasicType box_klass_type(Klass* k);  // inverse of box_klass
 
-  // methods returning lazily loaded klasses
-  // The corresponding method to load the class must be called before calling them.
-  static InstanceKlass* abstract_ownable_synchronizer_klass() { return check_klass(_abstract_ownable_synchronizer_klass); }
-
-  static void load_abstract_ownable_synchronizer_klass(TRAPS);
-
 protected:
   // Returns the class loader data to be used when looking up/updating the
   // system dictionary.
@@ -572,10 +569,6 @@ public:
                                                      Handle *appendix_result,
                                                      Handle *method_type_result,
                                                      TRAPS);
-
-  // Utility for printing loader "name" as part of tracing constraints
-  static const char* loader_name(const oop loader);
-  static const char* loader_name(const ClassLoaderData* loader_data);
 
   // Record the error when the first attempt to resolve a reference from a constant
   // pool entry to a class fails.
@@ -728,9 +721,6 @@ protected:
 
   // Variables holding commonly used klasses (preloaded)
   static InstanceKlass* _well_known_klasses[];
-
-  // Lazily loaded klasses
-  static InstanceKlass* volatile _abstract_ownable_synchronizer_klass;
 
   // table of box klasses (int_klass, etc.)
   static InstanceKlass* _box_klasses[T_VOID+1];

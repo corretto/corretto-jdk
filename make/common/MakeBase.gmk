@@ -634,7 +634,7 @@ endef
 ################################################################################
 # Filter out duplicate sub strings while preserving order. Keeps the first occurance.
 uniq = \
-    $(if $1,$(firstword $1) $(call uniq,$(filter-out $(firstword $1),$1)))
+    $(strip $(if $1,$(firstword $1) $(call uniq,$(filter-out $(firstword $1),$1))))
 
 # Returns all whitespace-separated words in $2 where at least one of the
 # whitespace-separated words in $1 is a substring.
@@ -1073,6 +1073,22 @@ ColonList = \
   $(strip \
       $(subst ::,:,$(subst $(SPACE),:,$(strip $1))) \
   )
+
+################################################################################
+# Given a list of files, filters out locale specific files for translations
+# that should be excluded from this build.
+# $1 - The list of files to filter
+# $2 - The suffix of the files that should be considered (.java or .properties)
+FilterExcludedTranslations = \
+  $(strip $(if $(EXCLUDE_TRANSLATIONS), \
+    $(filter-out \
+        $(foreach suffix, $2, \
+          $(addprefix %_, $(addsuffix $(suffix), $(EXCLUDE_TRANSLATIONS))) \
+        ), \
+        $1 \
+    ), \
+    $1 \
+  ))
 
 ################################################################################
 

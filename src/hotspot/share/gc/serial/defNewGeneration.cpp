@@ -40,6 +40,7 @@
 #include "gc/shared/generationSpec.hpp"
 #include "gc/shared/preservedMarks.inline.hpp"
 #include "gc/shared/referencePolicy.hpp"
+#include "gc/shared/referenceProcessorPhaseTimes.hpp"
 #include "gc/shared/space.inline.hpp"
 #include "gc/shared/spaceDecorator.hpp"
 #include "gc/shared/strongRootsScope.hpp"
@@ -127,7 +128,7 @@ void CLDScanClosure::do_cld(ClassLoaderData* cld) {
   NOT_PRODUCT(ResourceMark rm);
   log_develop_trace(gc, scavenge)("CLDScanClosure::do_cld " PTR_FORMAT ", %s, dirty: %s",
                                   p2i(cld),
-                                  cld->loader_name(),
+                                  cld->loader_name_and_id(),
                                   cld->has_modified_oops() ? "true" : "false");
 
   // If the cld has not been dirtied we know that there's
@@ -629,7 +630,7 @@ void DefNewGeneration::collect(bool   full,
   FastKeepAliveClosure keep_alive(this, &scan_weak_ref);
   ReferenceProcessor* rp = ref_processor();
   rp->setup_policy(clear_all_soft_refs);
-  ReferenceProcessorPhaseTimes pt(_gc_timer, rp->num_queues());
+  ReferenceProcessorPhaseTimes pt(_gc_timer, rp->max_num_queues());
   const ReferenceProcessorStats& stats =
   rp->process_discovered_references(&is_alive, &keep_alive, &evacuate_followers,
                                     NULL, &pt);

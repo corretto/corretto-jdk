@@ -76,7 +76,7 @@
 #include "runtime/java.hpp"
 #include "runtime/javaCalls.hpp"
 #include "runtime/mutexLocker.hpp"
-#include "runtime/orderAccess.inline.hpp"
+#include "runtime/orderAccess.hpp"
 #include "runtime/sharedRuntime.hpp"
 #include "runtime/signature.hpp"
 #include "services/classLoadingService.hpp"
@@ -109,9 +109,6 @@ oop         SystemDictionary::_java_system_loader         =  NULL;
 oop         SystemDictionary::_java_platform_loader       =  NULL;
 
 bool        SystemDictionary::_has_checkPackageAccess     =  false;
-
-// lazily initialized klass variables
-InstanceKlass* volatile SystemDictionary::_abstract_ownable_synchronizer_klass = NULL;
 
 // Default ProtectionDomainCacheSize value
 
@@ -1897,22 +1894,6 @@ void SystemDictionary::remove_classes_in_error_state() {
 }
 
 // ----------------------------------------------------------------------------
-// Lazily load klasses
-
-void SystemDictionary::load_abstract_ownable_synchronizer_klass(TRAPS) {
-  // if multiple threads calling this function, only one thread will load
-  // the class.  The other threads will find the loaded version once the
-  // class is loaded.
-  Klass* aos = _abstract_ownable_synchronizer_klass;
-  if (aos == NULL) {
-    Klass* k = resolve_or_fail(vmSymbols::java_util_concurrent_locks_AbstractOwnableSynchronizer(), true, CHECK);
-    // Force a fence to prevent any read before the write completes
-    OrderAccess::fence();
-    _abstract_ownable_synchronizer_klass = InstanceKlass::cast(k);
-  }
-}
-
-// ----------------------------------------------------------------------------
 // Initialization
 
 void SystemDictionary::initialize(TRAPS) {
@@ -3029,18 +3010,6 @@ void SystemDictionary::combine_shared_dictionaries() {
   _loader_constraints  = new LoaderConstraintTable(_loader_constraint_size);
 
   NOT_PRODUCT(SystemDictionary::verify());
-}
-
-// caller needs ResourceMark
-const char* SystemDictionary::loader_name(const oop loader) {
-  return ((loader) == NULL ? "<bootloader>" :
-          InstanceKlass::cast((loader)->klass())->name()->as_C_string());
-}
-
-// caller needs ResourceMark
-const char* SystemDictionary::loader_name(const ClassLoaderData* loader_data) {
-  return (loader_data->class_loader() == NULL ? "<bootloader>" :
-          SystemDictionary::loader_name(loader_data->class_loader()));
 }
 
 void SystemDictionary::initialize_oop_storage() {

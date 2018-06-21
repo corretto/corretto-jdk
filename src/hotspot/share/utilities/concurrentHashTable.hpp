@@ -361,7 +361,7 @@ class ConcurrentHashTable : public CHeapObj<F> {
   template <typename EVALUATE_FUNC, typename DELETE_FUNC>
   void do_bulk_delete_locked_for(Thread* thread, size_t start_idx,
                                  size_t stop_idx, EVALUATE_FUNC& eval_f,
-                                 DELETE_FUNC& del_f);
+                                 DELETE_FUNC& del_f, bool is_mt = false);
 
   // Method to delete one items.
   template <typename LOOKUP_FUNC>
@@ -483,6 +483,9 @@ class ConcurrentHashTable : public CHeapObj<F> {
   template <typename VALUE_SIZE_FUNC>
   void statistics_to(Thread* thread, VALUE_SIZE_FUNC& vs_f, outputStream* st,
                      const char* table_name);
+
+  // Moves all nodes from this table to to_cht
+  bool try_move_nodes_to(Thread* thread, ConcurrentHashTable<VALUE, CONFIG, F>* to_cht);
 
   // This is a Curiously Recurring Template Pattern (CRPT) interface for the
   // specialization.

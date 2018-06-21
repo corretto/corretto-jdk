@@ -49,6 +49,7 @@
 #include "gc/shared/isGCActiveMark.hpp"
 #include "gc/shared/referencePolicy.hpp"
 #include "gc/shared/referenceProcessor.hpp"
+#include "gc/shared/referenceProcessorPhaseTimes.hpp"
 #include "gc/shared/spaceDecorator.hpp"
 #include "gc/shared/weakProcessor.hpp"
 #include "logging/log.hpp"
@@ -851,7 +852,8 @@ void PSParallelCompact::post_initialize() {
                            true,                // mt discovery
                            ParallelGCThreads,   // mt discovery degree
                            true,                // atomic_discovery
-                           &_is_alive_closure); // non-header is alive closure
+                           &_is_alive_closure,  // non-header is alive closure
+                           false);              // disable adjusting number of processing threads
   _counters = new CollectorCounters("PSParallelCompact", 1);
 
   // Initialize static fields in ParCompactionManager.
@@ -2111,8 +2113,11 @@ void PSParallelCompact::marking_phase(ParCompactionManager* cm,
     GCTraceTime(Debug, gc, phases) tm("Reference Processing", &_gc_timer);
 
     ReferenceProcessorStats stats;
-    ReferenceProcessorPhaseTimes pt(&_gc_timer, ref_processor()->num_queues());
+    ReferenceProcessorPhaseTimes pt(&_gc_timer, ref_processor()->max_num_queues());
+
     if (ref_processor()->processing_is_mt()) {
+      ref_processor()->set_active_mt_degree(active_gc_threads);
+
       RefProcTaskExecutor task_executor;
       stats = ref_processor()->process_discovered_references(
         is_alive_closure(), &mark_and_push_closure, &follow_stack_closure,

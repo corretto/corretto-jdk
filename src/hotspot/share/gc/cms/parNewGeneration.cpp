@@ -23,6 +23,7 @@
  */
 
 #include "precompiled.hpp"
+#include "classfile/stringTable.hpp"
 #include "gc/cms/cmsHeap.inline.hpp"
 #include "gc/cms/compactibleFreeListSpace.hpp"
 #include "gc/cms/concurrentMarkSweepGeneration.hpp"
@@ -41,6 +42,7 @@
 #include "gc/shared/plab.inline.hpp"
 #include "gc/shared/preservedMarks.inline.hpp"
 #include "gc/shared/referencePolicy.hpp"
+#include "gc/shared/referenceProcessorPhaseTimes.hpp"
 #include "gc/shared/space.hpp"
 #include "gc/shared/spaceDecorator.hpp"
 #include "gc/shared/strongRootsScope.hpp"
@@ -201,7 +203,7 @@ bool ParScanThreadState::take_from_overflow_stack() {
   const size_t num_overflow_elems = of_stack->size();
   const size_t space_available = queue->max_elems() - queue->size();
   const size_t num_take_elems = MIN3(space_available / 4,
-                                     ParGCDesiredObjsFromOverflowList,
+                                     (size_t)ParGCDesiredObjsFromOverflowList,
                                      num_overflow_elems);
   // Transfer the most recent num_take_elems from the overflow
   // stack to our work queue.
@@ -589,7 +591,8 @@ ParNewGenTask::ParNewGenTask(ParNewGeneration* young_gen,
     _young_gen(young_gen), _old_gen(old_gen),
     _young_old_boundary(young_old_boundary),
     _state_set(state_set),
-    _strong_roots_scope(strong_roots_scope)
+    _strong_roots_scope(strong_roots_scope),
+    _par_state_string(StringTable::weak_storage())
 {}
 
 void ParNewGenTask::work(uint worker_id) {
@@ -611,7 +614,8 @@ void ParNewGenTask::work(uint worker_id) {
   heap->young_process_roots(_strong_roots_scope,
                            &par_scan_state.to_space_root_closure(),
                            &par_scan_state.older_gen_closure(),
-                           &cld_scan_closure);
+                           &cld_scan_closure,
+                           &_par_state_string);
 
   par_scan_state.end_strong_roots();
 
@@ -789,14 +793,17 @@ void ParNewRefProcTaskProxy::work(uint worker_id) {
              par_scan_state.evacuate_followers_closure());
 }
 
-void ParNewRefProcTaskExecutor::execute(ProcessTask& task) {
+void ParNewRefProcTaskExecutor::execute(ProcessTask& task, uint ergo_workers) {
   CMSHeap* gch = CMSHeap::heap();
   WorkGang* workers = gch->workers();
   assert(workers != NULL, "Need parallel worker threads.");
+  assert(workers->active_workers() == ergo_workers,
+         "Ergonomically chosen workers (%u) must be equal to active workers (%u)",
+         ergo_workers, workers->active_workers());
   _state_set.reset(workers->active_workers(), _young_gen.promotion_failed());
   ParNewRefProcTaskProxy rp_task(task, _young_gen, _old_gen,
                                  _young_gen.reserved().end(), _state_set);
-  workers->run_task(&rp_task);
+  workers->run_task(&rp_task, workers->active_workers());
   _state_set.reset(0 /* bad value in debug if not reset */,
                    _young_gen.promotion_failed());
 }
@@ -809,7 +816,7 @@ void ParNewRefProcTaskExecutor::set_single_threaded_mode() {
 
 ScanClosureWithParBarrier::
 ScanClosureWithParBarrier(ParNewGeneration* g, bool gc_barrier) :
-  ScanClosure(g, gc_barrier)
+  OopsInClassLoaderDataOrGenClosure(g), _g(g), _boundary(g->reserved().end()), _gc_barrier(gc_barrier)
 { }
 
 template <typename OopClosureType1, typename OopClosureType2>
@@ -958,7 +965,7 @@ void ParNewGeneration::collect(bool   full,
   // Can  the mt_degree be set later (at run_task() time would be best)?
   rp->set_active_mt_degree(active_workers);
   ReferenceProcessorStats stats;
-  ReferenceProcessorPhaseTimes pt(_gc_timer, rp->num_queues());
+  ReferenceProcessorPhaseTimes pt(_gc_timer, rp->max_num_queues());
   if (rp->processing_is_mt()) {
     ParNewRefProcTaskExecutor task_executor(*this, *_old_gen, thread_state_set);
     stats = rp->process_discovered_references(&is_alive, &keep_alive,
@@ -1446,7 +1453,8 @@ void ParNewGeneration::ref_processor_init() {
                              refs_discovery_is_mt(),     // mt discovery
                              ParallelGCThreads,          // mt discovery degree
                              refs_discovery_is_atomic(), // atomic_discovery
-                             NULL);                      // is_alive_non_header
+                             NULL,                       // is_alive_non_header
+                             false);                     // disable adjusting number of processing threads
   }
 }
 

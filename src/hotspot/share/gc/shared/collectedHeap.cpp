@@ -365,20 +365,54 @@ void CollectedHeap::check_for_valid_allocation_state() {
 }
 #endif
 
-HeapWord* CollectedHeap::allocate_from_tlab_slow(Klass* klass, Thread* thread, size_t size) {
+HeapWord* CollectedHeap::obj_allocate_raw(Klass* klass, size_t size,
+                                          bool* gc_overhead_limit_was_exceeded, TRAPS) {
+  if (UseTLAB) {
+    HeapWord* result = allocate_from_tlab(klass, size, THREAD);
+    if (result != NULL) {
+      return result;
+    }
+  }
+
+  return allocate_outside_tlab(klass, size, gc_overhead_limit_was_exceeded, THREAD);
+}
+
+HeapWord* CollectedHeap::allocate_from_tlab_slow(Klass* klass, size_t size, TRAPS) {
+  HeapWord* obj = NULL;
+
+  // In assertion mode, check that there was a sampling collector present
+  // in the stack. This enforces checking that no path is without a sampling
+  // collector.
+  // Only check if the sampler could actually sample something in this call path.
+  assert(!JvmtiExport::should_post_sampled_object_alloc()
+         || !JvmtiSampledObjectAllocEventCollector::object_alloc_is_safe_to_sample()
+         || THREAD->heap_sampler().sampling_collector_present(),
+         "Sampling collector not present.");
+
+  if (ThreadHeapSampler::enabled()) {
+    // Try to allocate the sampled object from TLAB, it is possible a sample
+    // point was put and the TLAB still has space.
+    obj = THREAD->tlab().allocate_sampled_object(size);
+
+    if (obj != NULL) {
+      return obj;
+    }
+  }
+
+  ThreadLocalAllocBuffer& tlab = THREAD->tlab();
 
   // Retain tlab and allocate object in shared space if
   // the amount free in the tlab is too large to discard.
-  if (thread->tlab().free() > thread->tlab().refill_waste_limit()) {
-    thread->tlab().record_slow_allocation(size);
+  if (tlab.free() > tlab.refill_waste_limit()) {
+    tlab.record_slow_allocation(size);
     return NULL;
   }
 
   // Discard tlab and allocate a new one.
   // To minimize fragmentation, the last TLAB may be smaller than the rest.
-  size_t new_tlab_size = thread->tlab().compute_size(size);
+  size_t new_tlab_size = tlab.compute_size(size);
 
-  thread->tlab().clear_before_allocation();
+  tlab.clear_before_allocation();
 
   if (new_tlab_size == 0) {
     return NULL;
@@ -388,7 +422,7 @@ HeapWord* CollectedHeap::allocate_from_tlab_slow(Klass* klass, Thread* thread, s
   // between minimal and new_tlab_size is accepted.
   size_t actual_tlab_size = 0;
   size_t min_tlab_size = ThreadLocalAllocBuffer::compute_min_size(size);
-  HeapWord* obj = Universe::heap()->allocate_new_tlab(min_tlab_size, new_tlab_size, &actual_tlab_size);
+  obj = Universe::heap()->allocate_new_tlab(min_tlab_size, new_tlab_size, &actual_tlab_size);
   if (obj == NULL) {
     assert(actual_tlab_size == 0, "Allocation failed, but actual size was updated. min: " SIZE_FORMAT ", desired: " SIZE_FORMAT ", actual: " SIZE_FORMAT,
            min_tlab_size, new_tlab_size, actual_tlab_size);
@@ -397,7 +431,7 @@ HeapWord* CollectedHeap::allocate_from_tlab_slow(Klass* klass, Thread* thread, s
   assert(actual_tlab_size != 0, "Allocation succeeded but actual size not updated. obj at: " PTR_FORMAT " min: " SIZE_FORMAT ", desired: " SIZE_FORMAT,
          p2i(obj), min_tlab_size, new_tlab_size);
 
-  AllocTracer::send_allocation_in_new_tlab(klass, obj, actual_tlab_size * HeapWordSize, size * HeapWordSize, thread);
+  AllocTracer::send_allocation_in_new_tlab(klass, obj, actual_tlab_size * HeapWordSize, size * HeapWordSize, THREAD);
 
   if (ZeroTLAB) {
     // ..and clear it.
@@ -412,7 +446,15 @@ HeapWord* CollectedHeap::allocate_from_tlab_slow(Klass* klass, Thread* thread, s
     Copy::fill_to_words(obj + hdr_size, actual_tlab_size - hdr_size, badHeapWordVal);
 #endif // ASSERT
   }
-  thread->tlab().fill(obj, obj + size, actual_tlab_size);
+
+  // Send the thread information about this allocation in case a sample is
+  // requested.
+  if (ThreadHeapSampler::enabled()) {
+    size_t tlab_bytes_since_last_sample = THREAD->tlab().bytes_since_last_sample_point();
+    THREAD->heap_sampler().check_for_sampling(obj, size, tlab_bytes_since_last_sample);
+  }
+
+  tlab.fill(obj, obj + size, actual_tlab_size);
   return obj;
 }
 
@@ -511,6 +553,10 @@ void CollectedHeap::fill_with_objects(HeapWord* start, size_t words, bool zap)
   }
 
   fill_with_object_impl(start, words, zap);
+}
+
+void CollectedHeap::fill_with_dummy_object(HeapWord* start, HeapWord* end, bool zap) {
+  CollectedHeap::fill_with_object(start, end, zap);
 }
 
 HeapWord* CollectedHeap::allocate_new_tlab(size_t min_size,

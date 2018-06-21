@@ -29,6 +29,7 @@
 #include "gc/serial/defNewGeneration.hpp"
 #include "gc/shared/copyFailedInfo.hpp"
 #include "gc/shared/gcTrace.hpp"
+#include "gc/shared/oopStorageParState.hpp"
 #include "gc/shared/plab.hpp"
 #include "gc/shared/preservedMarks.hpp"
 #include "gc/shared/taskqueue.hpp"
@@ -236,6 +237,7 @@ class ParNewGenTask: public AbstractGangTask {
   HeapWord*                    _young_old_boundary;
   class ParScanThreadStateSet* _state_set;
   StrongRootsScope*            _strong_roots_scope;
+  OopStorage::ParState<false, false> _par_state_string;
 
 public:
   ParNewGenTask(ParNewGeneration*      young_gen,
@@ -273,9 +275,14 @@ class EvacuateFollowersClosureGeneral: public VoidClosure {
 
 // Closure for scanning ParNewGeneration.
 // Same as ScanClosure, except does parallel GC barrier.
-class ScanClosureWithParBarrier: public ScanClosure {
- protected:
+class ScanClosureWithParBarrier: public OopsInClassLoaderDataOrGenClosure {
+ private:
+  ParNewGeneration* _g;
+  HeapWord*         _boundary;
+  bool              _gc_barrier;
+
   template <class T> void do_oop_work(T* p);
+
  public:
   ScanClosureWithParBarrier(ParNewGeneration* g, bool gc_barrier);
   virtual void do_oop(oop* p);
@@ -296,7 +303,7 @@ class ParNewRefProcTaskExecutor: public AbstractRefProcTaskExecutor {
   { }
 
   // Executes a task using worker threads.
-  virtual void execute(ProcessTask& task);
+  virtual void execute(ProcessTask& task, uint ergo_workers);
   // Switch to single threaded mode.
   virtual void set_single_threaded_mode();
 };

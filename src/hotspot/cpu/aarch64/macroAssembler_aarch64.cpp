@@ -37,6 +37,7 @@
 #include "compiler/disassembler.hpp"
 #include "memory/resourceArea.hpp"
 #include "nativeInst_aarch64.hpp"
+#include "oops/accessDecorators.hpp"
 #include "oops/compressedOops.inline.hpp"
 #include "oops/klass.inline.hpp"
 #include "oops/oop.hpp"
@@ -2112,7 +2113,6 @@ void MacroAssembler::verify_heapbase(const char* msg) {
 #endif
 
 void MacroAssembler::resolve_jobject(Register value, Register thread, Register tmp) {
-  BarrierSetAssembler *bs = BarrierSet::barrier_set()->barrier_set_assembler();
   Label done, not_weak;
   cbz(value, done);           // Use NULL as-is.
 
@@ -2120,15 +2120,15 @@ void MacroAssembler::resolve_jobject(Register value, Register thread, Register t
   tbz(r0, 0, not_weak);    // Test for jweak tag.
 
   // Resolve jweak.
-  bs->load_at(this, IN_ROOT | ON_PHANTOM_OOP_REF, T_OBJECT,
-                    value, Address(value, -JNIHandles::weak_tag_value), tmp, thread);
+  access_load_at(T_OBJECT, IN_NATIVE | ON_PHANTOM_OOP_REF, value,
+                 Address(value, -JNIHandles::weak_tag_value), tmp, thread);
   verify_oop(value);
   b(done);
 
   bind(not_weak);
   // Resolve (untagged) jobject.
-  bs->load_at(this, IN_ROOT | IN_CONCURRENT_ROOT, T_OBJECT,
-                    value, Address(value, 0), tmp, thread);
+  access_load_at(T_OBJECT, IN_CONCURRENT_ROOT, value, Address(value, 0), tmp,
+                 thread);
   verify_oop(value);
   bind(done);
 }
@@ -2570,54 +2570,47 @@ void MacroAssembler::c_stub_prolog(int gp_arg_count, int fp_arg_count, int ret_t
 #endif
 
 void MacroAssembler::push_call_clobbered_registers() {
+  int step = 4 * wordSize;
   push(RegSet::range(r0, r18) - RegSet::of(rscratch1, rscratch2), sp);
-
+  sub(sp, sp, step);
+  mov(rscratch1, -step);
   // Push v0-v7, v16-v31.
-  for (int i = 30; i >= 0; i -= 2) {
-    if (i <= v7->encoding() || i >= v16->encoding()) {
-        stpd(as_FloatRegister(i), as_FloatRegister(i+1),
-             Address(pre(sp, -2 * wordSize)));
-    }
+  for (int i = 31; i>= 4; i -= 4) {
+    if (i <= v7->encoding() || i >= v16->encoding())
+      st1(as_FloatRegister(i-3), as_FloatRegister(i-2), as_FloatRegister(i-1),
+          as_FloatRegister(i), T1D, Address(post(sp, rscratch1)));
   }
+  st1(as_FloatRegister(0), as_FloatRegister(1), as_FloatRegister(2),
+      as_FloatRegister(3), T1D, Address(sp));
 }
 
 void MacroAssembler::pop_call_clobbered_registers() {
-
-  for (int i = 0; i < 32; i += 2) {
-    if (i <= v7->encoding() || i >= v16->encoding()) {
-      ldpd(as_FloatRegister(i), as_FloatRegister(i+1),
-           Address(post(sp, 2 * wordSize)));
-    }
+  for (int i = 0; i < 32; i += 4) {
+    if (i <= v7->encoding() || i >= v16->encoding())
+      ld1(as_FloatRegister(i), as_FloatRegister(i+1), as_FloatRegister(i+2),
+          as_FloatRegister(i+3), T1D, Address(post(sp, 4 * wordSize)));
   }
 
   pop(RegSet::range(r0, r18) - RegSet::of(rscratch1, rscratch2), sp);
 }
 
 void MacroAssembler::push_CPU_state(bool save_vectors) {
+  int step = (save_vectors ? 8 : 4) * wordSize;
   push(0x3fffffff, sp);         // integer registers except lr & sp
-
-  if (!save_vectors) {
-    for (int i = 30; i >= 0; i -= 2)
-      stpd(as_FloatRegister(i), as_FloatRegister(i+1),
-           Address(pre(sp, -2 * wordSize)));
-  } else {
-    for (int i = 30; i >= 0; i -= 2)
-      stpq(as_FloatRegister(i), as_FloatRegister(i+1),
-           Address(pre(sp, -4 * wordSize)));
+  mov(rscratch1, -step);
+  sub(sp, sp, step);
+  for (int i = 28; i >= 4; i -= 4) {
+    st1(as_FloatRegister(i), as_FloatRegister(i+1), as_FloatRegister(i+2),
+        as_FloatRegister(i+3), save_vectors ? T2D : T1D, Address(post(sp, rscratch1)));
   }
+  st1(v0, v1, v2, v3, save_vectors ? T2D : T1D, sp);
 }
 
 void MacroAssembler::pop_CPU_state(bool restore_vectors) {
-  if (!restore_vectors) {
-    for (int i = 0; i < 32; i += 2)
-      ldpd(as_FloatRegister(i), as_FloatRegister(i+1),
-           Address(post(sp, 2 * wordSize)));
-  } else {
-    for (int i = 0; i < 32; i += 2)
-      ldpq(as_FloatRegister(i), as_FloatRegister(i+1),
-           Address(post(sp, 4 * wordSize)));
-  }
-
+  int step = (restore_vectors ? 8 : 4) * wordSize;
+  for (int i = 0; i <= 28; i += 4)
+    ld1(as_FloatRegister(i), as_FloatRegister(i+1), as_FloatRegister(i+2),
+        as_FloatRegister(i+3), restore_vectors ? T2D : T1D, Address(post(sp, step)));
   pop(0x3fffffff, sp);         // integer registers except lr & sp
 }
 
@@ -3359,12 +3352,12 @@ void MacroAssembler::kernel_crc32(Register crc, Register buf, Register len,
       pmull2(v19, T8H, v0, v4, T16B);
       pmull2(v17, T8H, v0, v6, T16B);
 
-      uzp1(v24, v20, v22, T8H);
-      uzp2(v25, v20, v22, T8H);
+      uzp1(v24, T8H, v20, v22);
+      uzp2(v25, T8H, v20, v22);
       eor(v20, T16B, v24, v25);
 
-      uzp1(v26, v16, v18, T8H);
-      uzp2(v27, v16, v18, T8H);
+      uzp1(v26, T8H, v16, v18);
+      uzp2(v27, T8H, v16, v18);
       eor(v16, T16B, v26, v27);
 
       ushll2(v22, T4S, v20, T8H, 8);
@@ -3378,8 +3371,8 @@ void MacroAssembler::kernel_crc32(Register crc, Register buf, Register len,
       eor(v20, T16B, v21, v20);
       eor(v16, T16B, v17, v16);
 
-      uzp1(v17, v16, v20, T2D);
-      uzp2(v21, v16, v20, T2D);
+      uzp1(v17, T2D, v16, v20);
+      uzp2(v21, T2D, v16, v20);
       eor(v17, T16B, v17, v21);
 
       ushll2(v20, T2D, v17, T4S, 16);
@@ -3388,8 +3381,8 @@ void MacroAssembler::kernel_crc32(Register crc, Register buf, Register len,
       eor(v20, T16B, v20, v22);
       eor(v16, T16B, v16, v18);
 
-      uzp1(v17, v20, v16, T2D);
-      uzp2(v21, v20, v16, T2D);
+      uzp1(v17, T2D, v20, v16);
+      uzp2(v21, T2D, v20, v16);
       eor(v28, T16B, v17, v21);
 
       pmull(v22, T8H, v1, v5, T8B);
@@ -3404,12 +3397,12 @@ void MacroAssembler::kernel_crc32(Register crc, Register buf, Register len,
 
       ld1(v0, v1, T2D, post(buf, 32));
 
-      uzp1(v24, v20, v22, T8H);
-      uzp2(v25, v20, v22, T8H);
+      uzp1(v24, T8H, v20, v22);
+      uzp2(v25, T8H, v20, v22);
       eor(v20, T16B, v24, v25);
 
-      uzp1(v26, v16, v18, T8H);
-      uzp2(v27, v16, v18, T8H);
+      uzp1(v26, T8H, v16, v18);
+      uzp2(v27, T8H, v16, v18);
       eor(v16, T16B, v26, v27);
 
       ushll2(v22, T4S, v20, T8H, 8);
@@ -3423,8 +3416,8 @@ void MacroAssembler::kernel_crc32(Register crc, Register buf, Register len,
       eor(v20, T16B, v21, v20);
       eor(v16, T16B, v17, v16);
 
-      uzp1(v17, v16, v20, T2D);
-      uzp2(v21, v16, v20, T2D);
+      uzp1(v17, T2D, v16, v20);
+      uzp2(v21, T2D, v16, v20);
       eor(v16, T16B, v17, v21);
 
       ushll2(v20, T2D, v16, T4S, 16);
@@ -3433,8 +3426,8 @@ void MacroAssembler::kernel_crc32(Register crc, Register buf, Register len,
       eor(v20, T16B, v22, v20);
       eor(v16, T16B, v16, v18);
 
-      uzp1(v17, v20, v16, T2D);
-      uzp2(v21, v20, v16, T2D);
+      uzp1(v17, T2D, v20, v16);
+      uzp2(v21, T2D, v20, v16);
       eor(v20, T16B, v17, v21);
 
       shl(v16, T2D, v28, 1);
@@ -3651,6 +3644,11 @@ void MacroAssembler::cmpptr(Register src1, Address src2) {
   cmp(src1, rscratch1);
 }
 
+void MacroAssembler::cmpoop(Register obj1, Register obj2) {
+  BarrierSetAssembler* bs = BarrierSet::barrier_set()->barrier_set_assembler();
+  bs->obj_equals(this, obj1, obj2);
+}
+
 void MacroAssembler::load_klass(Register dst, Register src) {
   if (UseCompressedClassPointers) {
     ldrw(dst, Address(src, oopDesc::klass_offset_in_bytes()));
@@ -3663,9 +3661,8 @@ void MacroAssembler::load_klass(Register dst, Register src) {
 // ((OopHandle)result).resolve();
 void MacroAssembler::resolve_oop_handle(Register result, Register tmp) {
   // OopHandle::resolve is an indirection.
-  BarrierSetAssembler *bs = BarrierSet::barrier_set()->barrier_set_assembler();
-  bs->load_at(this, IN_ROOT | IN_CONCURRENT_ROOT, T_OBJECT,
-                    result, Address(result, 0), tmp, rthread);
+  access_load_at(T_OBJECT, IN_CONCURRENT_ROOT,
+                 result, Address(result, 0), tmp, noreg);
 }
 
 void MacroAssembler::load_mirror(Register dst, Register method, Register tmp) {
@@ -3983,6 +3980,7 @@ void MacroAssembler::access_load_at(BasicType type, DecoratorSet decorators,
                                     Register dst, Address src,
                                     Register tmp1, Register thread_tmp) {
   BarrierSetAssembler *bs = BarrierSet::barrier_set()->barrier_set_assembler();
+  decorators = AccessInternal::decorator_fixup(decorators);
   bool as_raw = (decorators & AS_RAW) != 0;
   if (as_raw) {
     bs->BarrierSetAssembler::load_at(this, decorators, type, dst, src, tmp1, thread_tmp);
@@ -3995,6 +3993,7 @@ void MacroAssembler::access_store_at(BasicType type, DecoratorSet decorators,
                                      Address dst, Register src,
                                      Register tmp1, Register thread_tmp) {
   BarrierSetAssembler *bs = BarrierSet::barrier_set()->barrier_set_assembler();
+  decorators = AccessInternal::decorator_fixup(decorators);
   bool as_raw = (decorators & AS_RAW) != 0;
   if (as_raw) {
     bs->BarrierSetAssembler::store_at(this, decorators, type, dst, src, tmp1, thread_tmp);
@@ -5047,6 +5046,8 @@ void MacroAssembler::arrays_equals(Register a1, Register a2, Register tmp3,
     // a1 & a2 == 0 means (some-pointer is null) or
     // (very-rare-or-even-probably-impossible-pointer-values)
     // so, we can save one branch in most cases
+    cmpoop(a1, a2);
+    br(EQ, SAME);
     eor(rscratch1, a1, a2);
     tst(a1, a2);
     mov(result, false);
@@ -5130,7 +5131,7 @@ void MacroAssembler::arrays_equals(Register a1, Register a2, Register tmp3,
     // faster to perform another branch before comparing a1 and a2
     cmp(cnt1, elem_per_word);
     br(LE, SHORT); // short or same
-    cmp(a1, a2);
+    cmpoop(a1, a2);
     br(EQ, SAME);
     ldr(tmp3, Address(pre(a1, base_offset)));
     cmp(cnt1, stubBytesThreshold);

@@ -49,7 +49,7 @@
 #include "runtime/javaCalls.hpp"
 #include "runtime/mutexLocker.hpp"
 #include "runtime/objectMonitor.hpp"
-#include "runtime/orderAccess.inline.hpp"
+#include "runtime/orderAccess.hpp"
 #include "runtime/osThread.hpp"
 #include "runtime/perfMemory.hpp"
 #include "runtime/sharedRuntime.hpp"
@@ -1665,16 +1665,6 @@ void* os::dll_lookup(void* handle, const char* name) {
 
 void* os::get_default_process_handle() {
   return (void*)::dlopen(NULL, RTLD_LAZY);
-}
-
-int os::stat(const char *path, struct stat *sbuf) {
-  char pathbuf[MAX_PATH];
-  if (strlen(path) > MAX_PATH - 1) {
-    errno = ENAMETOOLONG;
-    return -1;
-  }
-  os::native_path(strcpy(pathbuf, path));
-  return ::stat(pathbuf, sbuf);
 }
 
 static inline time_t get_mtime(const char* filename) {
@@ -4472,10 +4462,6 @@ jlong os::seek_to_file_offset(int fd, jlong offset) {
 
 jlong os::lseek(int fd, jlong offset, int whence) {
   return (jlong) ::lseek64(fd, offset, whence);
-}
-
-char * os::native_path(char *path) {
-  return path;
 }
 
 int os::ftruncate(int fd, jlong length) {

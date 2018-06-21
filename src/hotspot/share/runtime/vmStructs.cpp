@@ -164,7 +164,6 @@ typedef HashtableEntry<intptr_t, mtInternal>  IntptrHashtableEntry;
 typedef Hashtable<intptr_t, mtInternal>       IntptrHashtable;
 typedef Hashtable<Symbol*, mtSymbol>          SymbolHashtable;
 typedef HashtableEntry<Symbol*, mtClass>      SymbolHashtableEntry;
-typedef Hashtable<oop, mtSymbol>              StringHashtable;
 typedef Hashtable<InstanceKlass*, mtClass>       KlassHashtable;
 typedef HashtableEntry<InstanceKlass*, mtClass>  KlassHashtableEntry;
 typedef CompactHashtable<Symbol*, char>       SymbolCompactHashTable;
@@ -292,6 +291,7 @@ typedef PaddedEnd<ObjectMonitor>              PaddedObjectMonitor;
   nonstatic_field(DataLayout,                  _header._struct._tag,                          u1)                                    \
   nonstatic_field(DataLayout,                  _header._struct._flags,                        u1)                                    \
   nonstatic_field(DataLayout,                  _header._struct._bci,                          u2)                                    \
+  nonstatic_field(DataLayout,                  _header._struct._traps,                        u4)                                    \
   nonstatic_field(DataLayout,                  _cells[0],                                     intptr_t)                              \
   nonstatic_field(MethodCounters,              _nmethod_age,                                  int)                                   \
   nonstatic_field(MethodCounters,              _interpreter_invocation_limit,                 int)                                   \
@@ -475,12 +475,6 @@ typedef PaddedEnd<ObjectMonitor>              PaddedObjectMonitor;
      static_field(SymbolTable,                 _the_table,                                    SymbolTable*)                          \
      static_field(SymbolTable,                 _shared_table,                                 SymbolCompactHashTable)                \
      static_field(RehashableSymbolHashtable,   _seed,                                         juint)                                 \
-                                                                                                                                     \
-  /***************/                                                                                                                  \
-  /* StringTable */                                                                                                                  \
-  /***************/                                                                                                                  \
-                                                                                                                                     \
-     static_field(StringTable,                 _the_table,                                    StringTable*)                          \
                                                                                                                                      \
   /********************/                                                                                                             \
   /* CompactHashTable */                                                                                                             \
@@ -1123,11 +1117,11 @@ typedef PaddedEnd<ObjectMonitor>              PaddedObjectMonitor;
   /* FileMapInfo fields (CDS archive related) */                                                                                     \
   /********************************************/                                                                                     \
                                                                                                                                      \
-  nonstatic_field(FileMapInfo,                 _header,                                       FileMapInfo::FileMapHeader*)           \
-     static_field(FileMapInfo,                 _current_info,                                 FileMapInfo*)                          \
-  nonstatic_field(FileMapInfo::FileMapHeader,  _space[0],                                     FileMapInfo::FileMapHeader::space_info)\
-  nonstatic_field(FileMapInfo::FileMapHeader::space_info, _addr._base,                        char*)                                 \
-  nonstatic_field(FileMapInfo::FileMapHeader::space_info, _used,                              size_t)                                \
+  CDS_ONLY(nonstatic_field(FileMapInfo,                            _header,                   FileMapInfo::FileMapHeader*))          \
+  CDS_ONLY(   static_field(FileMapInfo,                            _current_info,             FileMapInfo*))                         \
+  CDS_ONLY(nonstatic_field(FileMapInfo::FileMapHeader,             _space[0],                 FileMapInfo::FileMapHeader::space_info))\
+  CDS_ONLY(nonstatic_field(FileMapInfo::FileMapHeader::space_info, _addr._base,               char*))                                \
+  CDS_ONLY(nonstatic_field(FileMapInfo::FileMapHeader::space_info, _used,                     size_t))                               \
                                                                                                                                      \
   /******************/                                                                                                               \
   /* VMError fields */                                                                                                               \
@@ -1278,6 +1272,7 @@ typedef PaddedEnd<ObjectMonitor>              PaddedObjectMonitor;
   declare_integer_type(intptr_t)                                          \
   declare_unsigned_integer_type(uintx)                                    \
   declare_unsigned_integer_type(uintptr_t)                                \
+  declare_unsigned_integer_type(uint8_t)                                  \
   declare_unsigned_integer_type(uint32_t)                                 \
   declare_unsigned_integer_type(uint64_t)                                 \
                                                                           \
@@ -1365,7 +1360,6 @@ typedef PaddedEnd<ObjectMonitor>              PaddedObjectMonitor;
   declare_toplevel_type(BasicHashtable<mtSymbol>)                         \
     declare_type(RehashableSymbolHashtable, BasicHashtable<mtSymbol>)     \
   declare_type(SymbolTable, SymbolHashtable)                              \
-  declare_type(StringTable, StringHashtable)                              \
     declare_type(Dictionary, KlassHashtable)                              \
   declare_toplevel_type(BasicHashtableEntry<mtInternal>)                  \
   declare_type(IntptrHashtableEntry, BasicHashtableEntry<mtInternal>)     \
@@ -2387,6 +2381,7 @@ typedef PaddedEnd<ObjectMonitor>              PaddedObjectMonitor;
   declare_constant(Deoptimization::Reason_array_check)                    \
   declare_constant(Deoptimization::Reason_intrinsic)                      \
   declare_constant(Deoptimization::Reason_bimorphic)                      \
+  declare_constant(Deoptimization::Reason_profile_predicate)              \
   declare_constant(Deoptimization::Reason_unloaded)                       \
   declare_constant(Deoptimization::Reason_uninitialized)                  \
   declare_constant(Deoptimization::Reason_unreached)                      \
@@ -2609,6 +2604,12 @@ typedef PaddedEnd<ObjectMonitor>              PaddedObjectMonitor;
 // all #defined constants.
 
 #define VM_LONG_CONSTANTS(declare_constant, declare_preprocessor_constant, declare_c1_constant, declare_c2_constant, declare_c2_preprocessor_constant) \
+                                                                          \
+  /****************/                                                      \
+  /* GC constants */                                                      \
+  /****************/                                                      \
+                                                                          \
+  VM_LONG_CONSTANTS_GC(declare_constant)                                  \
                                                                           \
   /*********************/                                                 \
   /* MarkOop constants */                                                 \

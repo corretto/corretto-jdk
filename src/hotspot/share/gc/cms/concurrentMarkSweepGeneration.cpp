@@ -54,7 +54,9 @@
 #include "gc/shared/genCollectedHeap.hpp"
 #include "gc/shared/genOopClosures.inline.hpp"
 #include "gc/shared/isGCActiveMark.hpp"
+#include "gc/shared/oopStorageParState.hpp"
 #include "gc/shared/referencePolicy.hpp"
+#include "gc/shared/referenceProcessorPhaseTimes.hpp"
 #include "gc/shared/space.inline.hpp"
 #include "gc/shared/strongRootsScope.hpp"
 #include "gc/shared/taskqueue.inline.hpp"
@@ -74,7 +76,7 @@
 #include "runtime/globals_extension.hpp"
 #include "runtime/handles.inline.hpp"
 #include "runtime/java.hpp"
-#include "runtime/orderAccess.inline.hpp"
+#include "runtime/orderAccess.hpp"
 #include "runtime/timer.hpp"
 #include "runtime/vmThread.hpp"
 #include "services/memoryService.hpp"
@@ -298,7 +300,8 @@ void CMSCollector::ref_processor_init() {
                              _cmsGen->refs_discovery_is_mt(),        // mt discovery
                              MAX2(ConcGCThreads, ParallelGCThreads), // mt discovery degree
                              _cmsGen->refs_discovery_is_atomic(),    // discovery is not atomic
-                             &_is_alive_closure);                    // closure for liveness info
+                             &_is_alive_closure,                     // closure for liveness info
+                             false);                                 // disable adjusting number of processing threads
     // Initialize the _ref_processor field of CMSGen
     _cmsGen->set_ref_processor(_ref_processor);
 
@@ -2769,10 +2772,12 @@ class CMSParMarkTask : public AbstractGangTask {
  protected:
   CMSCollector*     _collector;
   uint              _n_workers;
+  OopStorage::ParState<false, false> _par_state_string;
   CMSParMarkTask(const char* name, CMSCollector* collector, uint n_workers) :
       AbstractGangTask(name),
       _collector(collector),
-      _n_workers(n_workers) {}
+      _n_workers(n_workers),
+      _par_state_string(StringTable::weak_storage()) {}
   // Work method in support of parallel rescan ... of young gen spaces
   void do_young_space_rescan(OopsInGenClosure* cl,
                              ContiguousSpace* space,
@@ -4274,7 +4279,9 @@ void CMSParInitialMarkTask::work(uint worker_id) {
                           GenCollectedHeap::ScanningOption(_collector->CMSCollector::roots_scanning_options()),
                           _collector->should_unload_classes(),
                           &par_mri_cl,
-                          &cld_closure);
+                          &cld_closure,
+                          &_par_state_string);
+
   assert(_collector->should_unload_classes()
          || (_collector->CMSCollector::roots_scanning_options() & GenCollectedHeap::SO_AllCodeCache),
          "if we didn't scan the code cache, we have to be ready to drop nmethods with expired weak oops");
@@ -4403,7 +4410,8 @@ void CMSParRemarkTask::work(uint worker_id) {
                           GenCollectedHeap::ScanningOption(_collector->CMSCollector::roots_scanning_options()),
                           _collector->should_unload_classes(),
                           &par_mrias_cl,
-                          NULL);     // The dirty klasses will be handled below
+                          NULL,     // The dirty klasses will be handled below
+                          &_par_state_string);
 
   assert(_collector->should_unload_classes()
          || (_collector->CMSCollector::roots_scanning_options() & GenCollectedHeap::SO_AllCodeCache),
@@ -5119,16 +5127,18 @@ void CMSRefProcTaskProxy::do_work_steal(int i,
   log_develop_trace(gc, task)("\t(%d: stole %d oops)", i, num_steals);
 }
 
-void CMSRefProcTaskExecutor::execute(ProcessTask& task)
-{
+void CMSRefProcTaskExecutor::execute(ProcessTask& task, uint ergo_workers) {
   CMSHeap* heap = CMSHeap::heap();
   WorkGang* workers = heap->workers();
   assert(workers != NULL, "Need parallel worker threads.");
+  assert(workers->active_workers() == ergo_workers,
+         "Ergonomically chosen workers (%u) must be equal to active workers (%u)",
+         ergo_workers, workers->active_workers());
   CMSRefProcTaskProxy rp_task(task, &_collector,
                               _collector.ref_processor_span(),
                               _collector.markBitMap(),
                               workers, _collector.task_queues());
-  workers->run_task(&rp_task);
+  workers->run_task(&rp_task, workers->active_workers());
 }
 
 void CMSCollector::refProcessingWork() {
@@ -5142,7 +5152,7 @@ void CMSCollector::refProcessingWork() {
   rp->setup_policy(false);
   verify_work_stacks_empty();
 
-  ReferenceProcessorPhaseTimes pt(_gc_timer_cm, rp->num_queues());
+  ReferenceProcessorPhaseTimes pt(_gc_timer_cm, rp->max_num_queues());
   {
     GCTraceTime(Debug, gc, phases) t("Reference Processing", _gc_timer_cm);
 
@@ -8078,6 +8088,7 @@ TraceCMSMemoryManagerStats::TraceCMSMemoryManagerStats(CMSCollector::CollectorSt
     case CMSCollector::InitialMarking:
       initialize(manager /* GC manager */ ,
                  cause   /* cause of the GC */,
+                 true    /* allMemoryPoolsAffected */,
                  true    /* recordGCBeginTime */,
                  true    /* recordPreGCUsage */,
                  false   /* recordPeakUsage */,
@@ -8090,6 +8101,7 @@ TraceCMSMemoryManagerStats::TraceCMSMemoryManagerStats(CMSCollector::CollectorSt
     case CMSCollector::FinalMarking:
       initialize(manager /* GC manager */ ,
                  cause   /* cause of the GC */,
+                 true    /* allMemoryPoolsAffected */,
                  false   /* recordGCBeginTime */,
                  false   /* recordPreGCUsage */,
                  false   /* recordPeakUsage */,
@@ -8102,6 +8114,7 @@ TraceCMSMemoryManagerStats::TraceCMSMemoryManagerStats(CMSCollector::CollectorSt
     case CMSCollector::Sweeping:
       initialize(manager /* GC manager */ ,
                  cause   /* cause of the GC */,
+                 true    /* allMemoryPoolsAffected */,
                  false   /* recordGCBeginTime */,
                  false   /* recordPreGCUsage */,
                  true    /* recordPeakUsage */,

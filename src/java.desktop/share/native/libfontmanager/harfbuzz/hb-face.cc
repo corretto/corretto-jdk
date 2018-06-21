@@ -117,9 +117,6 @@ _hb_face_for_data_closure_create (hb_blob_t *blob, unsigned int index)
   return closure;
 }
 
-#ifdef __SUNPRO_CC
-extern "C" {
-#endif
 static void
 _hb_face_for_data_closure_destroy (void *data)
 {
@@ -128,9 +125,6 @@ _hb_face_for_data_closure_destroy (void *data)
   hb_blob_destroy (closure->blob);
   free (closure);
 }
-#ifdef __SUNPRO_CC
-}
-#endif
 
 static hb_blob_t *
 _hb_face_for_data_reference_table (hb_face_t *face HB_UNUSED, hb_tag_t tag, void *user_data)
@@ -170,7 +164,7 @@ hb_face_create (hb_blob_t    *blob,
   if (unlikely (!blob))
     blob = hb_blob_get_empty ();
 
-  hb_face_for_data_closure_t *closure = _hb_face_for_data_closure_create (OT::Sanitizer<OT::OpenTypeFontFile>::sanitize (hb_blob_reference (blob)), index);
+  hb_face_for_data_closure_t *closure = _hb_face_for_data_closure_create (OT::Sanitizer<OT::OpenTypeFontFile>().sanitize (hb_blob_reference (blob)), index);
 
   if (unlikely (!closure))
     return hb_face_get_empty ();
@@ -430,7 +424,7 @@ hb_face_get_upem (hb_face_t *face)
 void
 hb_face_t::load_upem (void) const
 {
-  hb_blob_t *head_blob = OT::Sanitizer<OT::head>::sanitize (reference_table (HB_OT_TAG_head));
+  hb_blob_t *head_blob = OT::Sanitizer<OT::head>().sanitize (reference_table (HB_OT_TAG_head));
   const OT::head *head_table = OT::Sanitizer<OT::head>::lock_instance (head_blob);
   upem = head_table->get_upem ();
   hb_blob_destroy (head_blob);
@@ -474,7 +468,7 @@ hb_face_get_glyph_count (hb_face_t *face)
 void
 hb_face_t::load_num_glyphs (void) const
 {
-  hb_blob_t *maxp_blob = OT::Sanitizer<OT::maxp>::sanitize (reference_table (HB_OT_TAG_maxp));
+  hb_blob_t *maxp_blob = OT::Sanitizer<OT::maxp>().sanitize (reference_table (HB_OT_TAG_maxp));
   const OT::maxp *maxp_table = OT::Sanitizer<OT::maxp>::lock_instance (maxp_blob);
   num_glyphs = maxp_table->get_num_glyphs ();
   hb_blob_destroy (maxp_blob);
@@ -496,7 +490,7 @@ hb_face_get_table_tags (hb_face_t    *face,
                         unsigned int *table_count, /* IN/OUT */
                         hb_tag_t     *table_tags /* OUT */)
 {
-  if (face->destroy != _hb_face_for_data_closure_destroy)
+  if (face->destroy != (hb_destroy_func_t) _hb_face_for_data_closure_destroy)
   {
     if (table_count)
       *table_count = 0;
