@@ -41,6 +41,8 @@ requires.properties= \
     vm.graal.enabled \
     vm.cds \
     vm.musl \
+    vm.hasSA \
+    vm.hasSAandCanAttach \
     docker.support \
     release.implementor
 
