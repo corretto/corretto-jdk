@@ -43,6 +43,7 @@ requires.properties= \
     vm.musl \
     vm.hasSA \
     vm.hasSAandCanAttach \
+    vm.hasJFR \
     docker.support \
     release.implementor
 

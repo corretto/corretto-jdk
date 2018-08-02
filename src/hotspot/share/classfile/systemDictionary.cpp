@@ -1364,18 +1364,18 @@ InstanceKlass* SystemDictionary::load_shared_class(InstanceKlass* ik,
 
     // notify a class loaded from shared object
     ClassLoadingService::notify_class_loaded(ik, true /* shared class */);
-  }
 
-  ik->set_has_passed_fingerprint_check(false);
-  if (UseAOT && ik->supers_have_passed_fingerprint_checks()) {
-    uint64_t aot_fp = AOTLoader::get_saved_fingerprint(ik);
-    uint64_t cds_fp = ik->get_stored_fingerprint();
-    if (aot_fp != 0 && aot_fp == cds_fp) {
-      // This class matches with a class saved in an AOT library
-      ik->set_has_passed_fingerprint_check(true);
-    } else {
-      ResourceMark rm;
-      log_info(class, fingerprint)("%s :  expected = " PTR64_FORMAT " actual = " PTR64_FORMAT, ik->external_name(), aot_fp, cds_fp);
+    ik->set_has_passed_fingerprint_check(false);
+    if (UseAOT && ik->supers_have_passed_fingerprint_checks()) {
+      uint64_t aot_fp = AOTLoader::get_saved_fingerprint(ik);
+      uint64_t cds_fp = ik->get_stored_fingerprint();
+      if (aot_fp != 0 && aot_fp == cds_fp) {
+        // This class matches with a class saved in an AOT library
+        ik->set_has_passed_fingerprint_check(true);
+      } else {
+        ResourceMark rm;
+        log_info(class, fingerprint)("%s :  expected = " PTR64_FORMAT " actual = " PTR64_FORMAT, ik->external_name(), aot_fp, cds_fp);
+      }
     }
   }
   return ik;
@@ -1908,7 +1908,7 @@ void SystemDictionary::initialize(TRAPS) {
   // Allocate private object used as system class loader lock
   _system_loader_lock_obj = oopFactory::new_intArray(0, CHECK);
   // Initialize basic classes
-  initialize_preloaded_classes(CHECK);
+  resolve_preloaded_classes(CHECK);
 }
 
 // Compact table of directions on the initialization of klasses:
@@ -1922,7 +1922,7 @@ static const short wk_init_info[] = {
   0
 };
 
-bool SystemDictionary::initialize_wk_klass(WKID id, int init_opt, TRAPS) {
+bool SystemDictionary::resolve_wk_klass(WKID id, int init_opt, TRAPS) {
   assert(id >= (int)FIRST_WKID && id < (int)WKID_LIMIT, "oob");
   int  info = wk_init_info[id - FIRST_WKID];
   int  sid  = (info >> CEIL_LG_OPTION_LIMIT);
@@ -1952,7 +1952,7 @@ bool SystemDictionary::initialize_wk_klass(WKID id, int init_opt, TRAPS) {
   return ((*klassp) != NULL);
 }
 
-void SystemDictionary::initialize_wk_klasses_until(WKID limit_id, WKID &start_id, TRAPS) {
+void SystemDictionary::resolve_wk_klasses_until(WKID limit_id, WKID &start_id, TRAPS) {
   assert((int)start_id <= (int)limit_id, "IDs are out of order!");
   for (int id = (int)start_id; id < (int)limit_id; id++) {
     assert(id >= (int)FIRST_WKID && id < (int)WKID_LIMIT, "oob");
@@ -1960,14 +1960,14 @@ void SystemDictionary::initialize_wk_klasses_until(WKID limit_id, WKID &start_id
     int sid  = (info >> CEIL_LG_OPTION_LIMIT);
     int opt  = (info & right_n_bits(CEIL_LG_OPTION_LIMIT));
 
-    initialize_wk_klass((WKID)id, opt, CHECK);
+    resolve_wk_klass((WKID)id, opt, CHECK);
   }
 
   // move the starting value forward to the limit:
   start_id = limit_id;
 }
 
-void SystemDictionary::initialize_preloaded_classes(TRAPS) {
+void SystemDictionary::resolve_preloaded_classes(TRAPS) {
   assert(WK_KLASS(Object_klass) == NULL, "preloaded classes should only be initialized once");
 
   // Create the ModuleEntry for java.base.  This call needs to be done here,
@@ -1979,14 +1979,14 @@ void SystemDictionary::initialize_preloaded_classes(TRAPS) {
   // first do Object, then String, Class
 #if INCLUDE_CDS
   if (UseSharedSpaces) {
-    initialize_wk_klasses_through(WK_KLASS_ENUM_NAME(Object_klass), scan, CHECK);
+    resolve_wk_klasses_through(WK_KLASS_ENUM_NAME(Object_klass), scan, CHECK);
     // Initialize the constant pool for the Object_class
     Object_klass()->constants()->restore_unshareable_info(CHECK);
-    initialize_wk_klasses_through(WK_KLASS_ENUM_NAME(Class_klass), scan, CHECK);
+    resolve_wk_klasses_through(WK_KLASS_ENUM_NAME(Class_klass), scan, CHECK);
   } else
 #endif
   {
-    initialize_wk_klasses_through(WK_KLASS_ENUM_NAME(Class_klass), scan, CHECK);
+    resolve_wk_klasses_through(WK_KLASS_ENUM_NAME(Class_klass), scan, CHECK);
   }
 
   // Calculate offsets for String and Class classes since they are loaded and
@@ -2003,13 +2003,13 @@ void SystemDictionary::initialize_preloaded_classes(TRAPS) {
   Universe::fixup_mirrors(CHECK);
 
   // do a bunch more:
-  initialize_wk_klasses_through(WK_KLASS_ENUM_NAME(Reference_klass), scan, CHECK);
+  resolve_wk_klasses_through(WK_KLASS_ENUM_NAME(Reference_klass), scan, CHECK);
 
   // Preload ref klasses and set reference types
   InstanceKlass::cast(WK_KLASS(Reference_klass))->set_reference_type(REF_OTHER);
   InstanceRefKlass::update_nonstatic_oop_maps(WK_KLASS(Reference_klass));
 
-  initialize_wk_klasses_through(WK_KLASS_ENUM_NAME(PhantomReference_klass), scan, CHECK);
+  resolve_wk_klasses_through(WK_KLASS_ENUM_NAME(PhantomReference_klass), scan, CHECK);
   InstanceKlass::cast(WK_KLASS(SoftReference_klass))->set_reference_type(REF_SOFT);
   InstanceKlass::cast(WK_KLASS(WeakReference_klass))->set_reference_type(REF_WEAK);
   InstanceKlass::cast(WK_KLASS(FinalReference_klass))->set_reference_type(REF_FINAL);
@@ -2018,9 +2018,9 @@ void SystemDictionary::initialize_preloaded_classes(TRAPS) {
   // JSR 292 classes
   WKID jsr292_group_start = WK_KLASS_ENUM_NAME(MethodHandle_klass);
   WKID jsr292_group_end   = WK_KLASS_ENUM_NAME(VolatileCallSite_klass);
-  initialize_wk_klasses_until(jsr292_group_start, scan, CHECK);
-  initialize_wk_klasses_through(jsr292_group_end, scan, CHECK);
-  initialize_wk_klasses_until(NOT_JVMCI(WKID_LIMIT) JVMCI_ONLY(FIRST_JVMCI_WKID), scan, CHECK);
+  resolve_wk_klasses_until(jsr292_group_start, scan, CHECK);
+  resolve_wk_klasses_through(jsr292_group_end, scan, CHECK);
+  resolve_wk_klasses_until(NOT_JVMCI(WKID_LIMIT) JVMCI_ONLY(FIRST_JVMCI_WKID), scan, CHECK);
 
   _box_klasses[T_BOOLEAN] = WK_KLASS(Boolean_klass);
   _box_klasses[T_CHAR]    = WK_KLASS(Character_klass);
@@ -2084,9 +2084,9 @@ void SystemDictionary::check_constraints(unsigned int d_hash,
       assert(check->is_instance_klass(), "noninstance in systemdictionary");
       if ((defining == true) || (k != check)) {
         throwException = true;
-        ss.print("loader %s", java_lang_ClassLoader::describe_external(class_loader()));
-        ss.print(" attempted duplicate %s definition for %s.",
-                 k->external_kind(), k->external_name());
+        ss.print("loader %s", loader_data->loader_name_and_id());
+        ss.print(" attempted duplicate %s definition for %s. (%s)",
+                 k->external_kind(), k->external_name(), k->class_in_module_of_loader(false, true));
       } else {
         return;
       }
@@ -2100,15 +2100,17 @@ void SystemDictionary::check_constraints(unsigned int d_hash,
     if (throwException == false) {
       if (constraints()->check_or_update(k, class_loader, name) == false) {
         throwException = true;
-        ss.print("loader constraint violation: loader %s",
-                 java_lang_ClassLoader::describe_external(class_loader()));
+        ss.print("loader constraint violation: loader %s", loader_data->loader_name_and_id());
         ss.print(" wants to load %s %s.",
                  k->external_kind(), k->external_name());
         Klass *existing_klass = constraints()->find_constrained_klass(name, class_loader);
         if (existing_klass->class_loader() != class_loader()) {
-          ss.print(" A different %s with the same name was previously loaded by %s.",
+          ss.print(" A different %s with the same name was previously loaded by %s. (%s)",
                    existing_klass->external_kind(),
-                   java_lang_ClassLoader::describe_external(existing_klass->class_loader()));
+                   existing_klass->class_loader_data()->loader_name_and_id(),
+                   existing_klass->class_in_module_of_loader(false, true));
+        } else {
+          ss.print(" (%s)", k->class_in_module_of_loader(false, true));
         }
       }
     }
@@ -2224,12 +2226,14 @@ bool SystemDictionary::add_loader_constraint(Symbol* class_name,
   ClassLoaderData* loader_data2 = class_loader_data(class_loader2);
 
   Symbol* constraint_name = NULL;
+  // Needs to be in same scope as constraint_name in case a Symbol is created and
+  // assigned to constraint_name.
+  FieldArrayInfo fd;
   if (!FieldType::is_array(class_name)) {
     constraint_name = class_name;
   } else {
     // For array classes, their Klass*s are not kept in the
     // constraint table. The element classes are.
-    FieldArrayInfo fd;
     BasicType t = FieldType::get_array_info(class_name, fd, CHECK_(false));
     // primitive types always pass
     if (t != T_OBJECT) {

@@ -71,78 +71,70 @@ final class SSLAlgorithmConstraints implements AlgorithmConstraints {
 
     SSLAlgorithmConstraints(SSLSocket socket,
             boolean withDefaultCertPathConstraints) {
-        AlgorithmConstraints configuredConstraints = null;
-        if (socket != null) {
-            HandshakeContext hc =
-                    ((SSLSocketImpl)socket).conContext.handshakeContext;
-            if (hc != null) {
-                configuredConstraints = hc.sslConfig.algorithmConstraints;
-            } else {
-                configuredConstraints = null;
-            }
-        }
-        this.userSpecifiedConstraints = configuredConstraints;
+        this.userSpecifiedConstraints = getConstraints(socket);
         this.peerSpecifiedConstraints = null;
         this.enabledX509DisabledAlgConstraints = withDefaultCertPathConstraints;
     }
 
     SSLAlgorithmConstraints(SSLEngine engine,
             boolean withDefaultCertPathConstraints) {
-        AlgorithmConstraints configuredConstraints = null;
-        if (engine != null) {
-            HandshakeContext hc =
-                    ((SSLEngineImpl)engine).conContext.handshakeContext;
-            if (hc != null) {
-                configuredConstraints = hc.sslConfig.algorithmConstraints;
-            } else {
-                configuredConstraints = null;
-            }
-        }
-        this.userSpecifiedConstraints = configuredConstraints;
+        this.userSpecifiedConstraints = getConstraints(engine);
         this.peerSpecifiedConstraints = null;
         this.enabledX509DisabledAlgConstraints = withDefaultCertPathConstraints;
     }
 
     SSLAlgorithmConstraints(SSLSocket socket, String[] supportedAlgorithms,
             boolean withDefaultCertPathConstraints) {
-        AlgorithmConstraints configuredConstraints = null;
-        AlgorithmConstraints negotiatedConstraints = null;
-        if (socket != null) {
-            HandshakeContext hc =
-                    ((SSLSocketImpl)socket).conContext.handshakeContext;
-            if (hc != null) {
-                configuredConstraints = hc.sslConfig.algorithmConstraints;
-            } else {
-                configuredConstraints = null;
-            }
-
-            negotiatedConstraints =
+        this.userSpecifiedConstraints = getConstraints(socket);
+        this.peerSpecifiedConstraints =
                 new SupportedSignatureAlgorithmConstraints(supportedAlgorithms);
-        }
-        this.userSpecifiedConstraints = configuredConstraints;
-        this.peerSpecifiedConstraints = negotiatedConstraints;
         this.enabledX509DisabledAlgConstraints = withDefaultCertPathConstraints;
     }
 
     SSLAlgorithmConstraints(SSLEngine engine, String[] supportedAlgorithms,
             boolean withDefaultCertPathConstraints) {
-        AlgorithmConstraints configuredConstraints = null;
-        AlgorithmConstraints negotiatedConstraints = null;
-        if (engine != null) {
-            HandshakeContext hc =
-                    ((SSLEngineImpl)engine).conContext.handshakeContext;
-            if (hc != null) {
-                configuredConstraints = hc.sslConfig.algorithmConstraints;
-            } else {
-                configuredConstraints = null;
-            }
-
-            negotiatedConstraints =
+        this.userSpecifiedConstraints = getConstraints(engine);
+        this.peerSpecifiedConstraints =
                 new SupportedSignatureAlgorithmConstraints(supportedAlgorithms);
-        }
-        this.userSpecifiedConstraints = configuredConstraints;
-        this.peerSpecifiedConstraints = negotiatedConstraints;
         this.enabledX509DisabledAlgConstraints = withDefaultCertPathConstraints;
+    }
+
+    private static AlgorithmConstraints getConstraints(SSLEngine engine) {
+        if (engine != null) {
+            // Note that the KeyManager or TrustManager implementation may be
+            // not implemented in the same provider as SSLSocket/SSLEngine.
+            // Please check the instance before casting to use SSLEngineImpl.
+            if (engine instanceof SSLEngineImpl) {
+                HandshakeContext hc =
+                        ((SSLEngineImpl)engine).conContext.handshakeContext;
+                if (hc != null) {
+                    return hc.sslConfig.algorithmConstraints;
+                }
+            } else {
+                return engine.getSSLParameters().getAlgorithmConstraints();
+            }
+        }
+
+        return null;
+    }
+
+    private static AlgorithmConstraints getConstraints(SSLSocket socket) {
+        if (socket != null) {
+            // Note that the KeyManager or TrustManager implementation may be
+            // not implemented in the same provider as SSLSocket/SSLEngine.
+            // Please check the instance before casting to use SSLSocketImpl.
+            if (socket instanceof SSLSocketImpl) {
+                HandshakeContext hc =
+                        ((SSLSocketImpl)socket).conContext.handshakeContext;
+                if (hc != null) {
+                    return hc.sslConfig.algorithmConstraints;
+                }
+            } else {
+                return socket.getSSLParameters().getAlgorithmConstraints();
+            }
+        }
+
+        return null;
     }
 
     @Override
