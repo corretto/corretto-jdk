@@ -94,6 +94,8 @@ public class VMProps implements Callable<Map<String, String>> {
         map.put("vm.cds.archived.java.heap", vmCDSForArchivedJavaHeap());
         // vm.graal.enabled is true if Graal is used as JIT
         map.put("vm.graal.enabled", isGraalEnabled());
+        map.put("vm.compiler1.enabled", isCompiler1Enabled());
+        map.put("vm.compiler2.enabled", isCompiler2Enabled());
         map.put("docker.support", dockerSupport());
         map.put("vm.musl", isMusl());
         map.put("release.implementor", implementor());
@@ -393,6 +395,23 @@ public class VMProps implements Callable<Map<String, String>> {
         return Compiler.isGraalEnabled() ? "true" : "false";
     }
 
+    /**
+     * Check if Compiler1 is present.
+     *
+     * @return true if Compiler1 is used as JIT compiler, either alone or as part of the tiered system.
+     */
+    protected String isCompiler1Enabled() {
+        return Compiler.isC1Enabled() ? "true" : "false";
+    }
+
+    /**
+     * Check if Compiler2 is present.
+     *
+     * @return true if Compiler2 is used as JIT compiler, either alone or as part of the tiered system.
+     */
+    protected String isCompiler2Enabled() {
+        return Compiler.isC2Enabled() ? "true" : "false";
+    }
 
    /**
      * A simple check for docker support
