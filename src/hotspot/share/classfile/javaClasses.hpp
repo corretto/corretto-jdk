@@ -82,12 +82,6 @@
   f(java_lang_StackFrameInfo) \
   f(java_lang_LiveStackFrameInfo) \
   f(java_util_concurrent_locks_AbstractOwnableSynchronizer) \
-  f(jdk_internal_module_ArchivedModuleGraph) \
-  f(java_lang_Integer_IntegerCache) \
-  f(java_lang_module_Configuration) \
-  f(java_util_ImmutableCollections_ListN) \
-  f(java_util_ImmutableCollections_MapN) \
-  f(java_util_ImmutableCollections_SetN) \
   //end
 
 #define BASIC_JAVA_CLASSES_DO(f) \
@@ -283,6 +277,7 @@ class java_lang_Class : AllStatic {
 
   // Conversion
   static Klass* as_Klass(oop java_class);
+  static Klass* as_Klass_raw(oop java_class);
   static void set_klass(oop java_class, Klass* klass);
   static BasicType as_BasicType(oop java_class, Klass** reference_klass = NULL);
   static Symbol* as_signature(oop java_class, bool intern_if_not_found, TRAPS);
@@ -316,8 +311,10 @@ class java_lang_Class : AllStatic {
   static oop module(oop java_class);
 
   static int oop_size(oop java_class);
+  static int oop_size_raw(oop java_class);
   static void set_oop_size(HeapWord* java_class, int size);
   static int static_oop_field_count(oop java_class);
+  static int static_oop_field_count_raw(oop java_class);
   static void set_static_oop_field_count(oop java_class, int size);
 
   static GrowableArray<Klass*>* fixup_mirror_list() {
@@ -1326,6 +1323,7 @@ class java_lang_ClassLoader : AllStatic {
   static void serialize_offsets(SerializeClosure* f) NOT_CDS_RETURN;
 
   static ClassLoaderData* loader_data(oop loader);
+  static ClassLoaderData* loader_data_raw(oop loader);
   static ClassLoaderData* cmpxchg_loader_data(ClassLoaderData* new_data, oop loader, ClassLoaderData* expected_data);
 
   static oop parent(oop loader);
@@ -1528,66 +1526,6 @@ class java_util_concurrent_locks_AbstractOwnableSynchronizer : AllStatic {
  public:
   static void compute_offsets();
   static oop  get_owner_threadObj(oop obj);
-  static void serialize_offsets(SerializeClosure* f) NOT_CDS_RETURN;
-};
-
-class java_lang_Integer_IntegerCache: AllStatic {
- private:
-  static int _archivedCache_offset;
- public:
-  static int archivedCache_offset()  { return _archivedCache_offset; }
-  static void compute_offsets();
-  static void serialize_offsets(SerializeClosure* f) NOT_CDS_RETURN;
-};
-
-class jdk_internal_module_ArchivedModuleGraph: AllStatic {
- private:
-  static int _archivedSystemModules_offset;
-  static int _archivedModuleFinder_offset;
-  static int _archivedMainModule_offset;
-  static int _archivedConfiguration_offset;
- public:
-  static int  archivedSystemModules_offset()      { return _archivedSystemModules_offset; }
-  static int  archivedModuleFinder_offset()       { return _archivedModuleFinder_offset; }
-  static int  archivedMainModule_offset()         { return _archivedMainModule_offset; }
-  static int  archivedConfiguration_offset()      { return _archivedConfiguration_offset; }
-  static void compute_offsets();
-  static void serialize_offsets(SerializeClosure* f) NOT_CDS_RETURN;
-};
-
-class java_lang_module_Configuration: AllStatic {
- private:
-  static int _EMPTY_CONFIGURATION_offset;
- public:
-  static int EMPTY_CONFIGURATION_offset() { return _EMPTY_CONFIGURATION_offset; }
-  static void compute_offsets();
-  static void serialize_offsets(SerializeClosure* f) NOT_CDS_RETURN;
-};
-
-class java_util_ImmutableCollections_ListN : AllStatic {
- private:
-  static int _EMPTY_LIST_offset;
- public:
-  static int EMPTY_LIST_offset() { return _EMPTY_LIST_offset; }
-  static void compute_offsets();
-  static void serialize_offsets(SerializeClosure* f) NOT_CDS_RETURN;
-};
-
-class java_util_ImmutableCollections_SetN : AllStatic {
- private:
-  static int _EMPTY_SET_offset;
- public:
-  static int EMPTY_SET_offset() { return _EMPTY_SET_offset; }
-  static void compute_offsets();
-  static void serialize_offsets(SerializeClosure* f) NOT_CDS_RETURN;
-};
-
-class java_util_ImmutableCollections_MapN : AllStatic {
- private:
-  static int _EMPTY_MAP_offset;
- public:
-  static int EMPTY_MAP_offset() { return _EMPTY_MAP_offset; }
-  static void compute_offsets();
   static void serialize_offsets(SerializeClosure* f) NOT_CDS_RETURN;
 };
 
