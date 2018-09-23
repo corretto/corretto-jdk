@@ -27,9 +27,7 @@
 #include "jni_tools.h"
 #include "jvmti_tools.h"
 
-#ifdef __cplusplus
 extern "C" {
-#endif
 
 /* ============================================================================= */
 
@@ -69,7 +67,7 @@ static jlong chainClassTag  = 99;
 static jlong rootObjectTag  = 10;
 static jlong chainObjectTag = 100;
 
-static jvmtiHeapCallbacks heapCallbacks = {};
+static jvmtiHeapCallbacks heapCallbacks;
 
 static const char* ref_kind_str[28] = {
    "unknown_0",
@@ -773,6 +771,4 @@ jint Agent_Initialize(JavaVM *jvm, char *options, void *reserved) {
 
 /* ============================================================================= */
 
-#ifdef __cplusplus
 }
-#endif

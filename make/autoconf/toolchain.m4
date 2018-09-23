@@ -232,6 +232,7 @@ AC_DEFUN_ONCE([TOOLCHAIN_DETERMINE_TOOLCHAIN_TYPE],
       XCODE_VERSION_OUTPUT=`"$XCODEBUILD" -version 2>&1 | $HEAD -n 1`
       $ECHO "$XCODE_VERSION_OUTPUT" | $GREP "Xcode " > /dev/null
       if test $? -ne 0; then
+        AC_MSG_NOTICE([xcodebuild output: $XCODE_VERSION_OUTPUT])
         AC_MSG_ERROR([Failed to determine Xcode version.])
       fi
       XCODE_MAJOR_VERSION=`$ECHO $XCODE_VERSION_OUTPUT | \
@@ -1026,8 +1027,6 @@ AC_DEFUN_ONCE([TOOLCHAIN_MISC_CHECKS],
   HOTSPOT_TOOLCHAIN_TYPE=$TOOLCHAIN_TYPE
   if test "x$TOOLCHAIN_TYPE" = xclang; then
     HOTSPOT_TOOLCHAIN_TYPE=gcc
-  elif test "x$TOOLCHAIN_TYPE" = xsolstudio; then
-    HOTSPOT_TOOLCHAIN_TYPE=sparcWorks
   elif test "x$TOOLCHAIN_TYPE" = xmicrosoft; then
     HOTSPOT_TOOLCHAIN_TYPE=visCPP
   fi

@@ -698,20 +698,10 @@ protected:
 
   static ByteSize polling_page_offset()          { return byte_offset_of(Thread, _polling_page); }
 
-#define TLAB_FIELD_OFFSET(name) \
-  static ByteSize tlab_##name##_offset()         { return byte_offset_of(Thread, _tlab) + ThreadLocalAllocBuffer::name##_offset(); }
-
-  TLAB_FIELD_OFFSET(start)
-  TLAB_FIELD_OFFSET(end)
-  TLAB_FIELD_OFFSET(top)
-  TLAB_FIELD_OFFSET(pf_top)
-  TLAB_FIELD_OFFSET(size)                   // desired_size
-  TLAB_FIELD_OFFSET(refill_waste_limit)
-  TLAB_FIELD_OFFSET(number_of_refills)
-  TLAB_FIELD_OFFSET(fast_refill_waste)
-  TLAB_FIELD_OFFSET(slow_allocations)
-
-#undef TLAB_FIELD_OFFSET
+  static ByteSize tlab_start_offset()            { return byte_offset_of(Thread, _tlab) + ThreadLocalAllocBuffer::start_offset(); }
+  static ByteSize tlab_end_offset()              { return byte_offset_of(Thread, _tlab) + ThreadLocalAllocBuffer::end_offset(); }
+  static ByteSize tlab_top_offset()              { return byte_offset_of(Thread, _tlab) + ThreadLocalAllocBuffer::top_offset(); }
+  static ByteSize tlab_pf_top_offset()           { return byte_offset_of(Thread, _tlab) + ThreadLocalAllocBuffer::pf_top_offset(); }
 
   static ByteSize allocated_bytes_offset()       { return byte_offset_of(Thread, _allocated_bytes); }
 
@@ -2146,6 +2136,7 @@ class Threads: AllStatic {
   static int         _thread_claim_parity;
 #ifdef ASSERT
   static bool        _vm_complete;
+  static size_t      _threads_before_barrier_set;
 #endif
 
   static void initialize_java_lang_classes(JavaThread* main_thread, TRAPS);
@@ -2215,7 +2206,15 @@ class Threads: AllStatic {
 
 #ifdef ASSERT
   static bool is_vm_complete() { return _vm_complete; }
-#endif
+
+  static size_t threads_before_barrier_set() {
+    return _threads_before_barrier_set;
+  }
+
+  static void inc_threads_before_barrier_set() {
+    ++_threads_before_barrier_set;
+  }
+#endif // ASSERT
 
   // Verification
   static void verify();

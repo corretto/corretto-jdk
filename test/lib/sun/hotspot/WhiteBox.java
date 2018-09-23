@@ -103,6 +103,7 @@ public class WhiteBox {
     return isClassAlive0(name.replace('.', '/'));
   }
   private native boolean isClassAlive0(String name);
+  public  native int getSymbolRefcount(String name);
 
   private native boolean isMonitorInflated0(Object obj);
   public         boolean isMonitorInflated(Object obj) {
@@ -539,4 +540,7 @@ public class WhiteBox {
 
   // Resolved Method Table
   public native int resolvedMethodRemovedCount();
+
+  // Protection Domain Table
+  public native int protectionDomainRemovedCount();
 }

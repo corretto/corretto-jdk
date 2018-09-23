@@ -27,15 +27,13 @@
 #include "jvmti_tools.h"
 #include "jvmti_FollowRefObjects.h"
 
-#ifdef __cplusplus
 extern "C" {
-#endif
 
 /* ============================================================================= */
 
 int g_fakeUserData = 0;
 int g_userDataError = 0;
-jvmtiHeapCallbacks g_wrongHeapCallbacks = {};
+jvmtiHeapCallbacks g_wrongHeapCallbacks;
 
 /* This array has to be up-to-date with the jvmtiHeapReferenceKind enum */
 const char * const g_refKindStr[28] = {
@@ -392,6 +390,4 @@ void jvmti_FollowRefObject_init()
 
 /* ============================================================================= */
 
-#ifdef __cplusplus
 }
-#endif

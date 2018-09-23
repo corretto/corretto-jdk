@@ -2875,7 +2875,7 @@ void TemplateTable::getfield_or_static(int byte_no, bool is_static, RewriteContr
 
   const Address field(obj, off, Address::times_1, 0*wordSize);
 
-  Label Done, notByte, notBool, notInt, notShort, notChar, notLong, notFloat, notObj, notDouble;
+  Label Done, notByte, notBool, notInt, notShort, notChar, notLong, notFloat, notObj;
 
   __ shrl(flags, ConstantPoolCacheEntry::tos_state_shift);
   // Make sure we don't need to mask edx after the above shift
@@ -2981,6 +2981,7 @@ void TemplateTable::getfield_or_static(int byte_no, bool is_static, RewriteContr
 
   __ bind(notFloat);
 #ifdef ASSERT
+  Label notDouble;
   __ cmpl(flags, dtos);
   __ jcc(Assembler::notEqual, notDouble);
 #endif
@@ -3132,7 +3133,7 @@ void TemplateTable::putfield_or_static(int byte_no, bool is_static, RewriteContr
   NOT_LP64( const Address hi(obj, off, Address::times_1, 1*wordSize);)
 
   Label notByte, notBool, notInt, notShort, notChar,
-        notLong, notFloat, notObj, notDouble;
+        notLong, notFloat, notObj;
 
   __ shrl(flags, ConstantPoolCacheEntry::tos_state_shift);
 
@@ -3286,6 +3287,7 @@ void TemplateTable::putfield_or_static(int byte_no, bool is_static, RewriteContr
 
   __ bind(notFloat);
 #ifdef ASSERT
+  Label notDouble;
   __ cmpl(flags, dtos);
   __ jcc(Assembler::notEqual, notDouble);
 #endif
@@ -4080,7 +4082,7 @@ void TemplateTable::_new() {
     // make sure rdx was multiple of 8
     Label L;
     // Ignore partial flag stall after shrl() since it is debug VM
-    __ jccb(Assembler::carryClear, L);
+    __ jcc(Assembler::carryClear, L);
     __ stop("object size is not multiple of 2 - adjust this code");
     __ bind(L);
     // rdx must be > 0, no extra check needed here
