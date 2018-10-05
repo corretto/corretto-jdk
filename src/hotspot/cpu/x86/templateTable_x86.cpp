@@ -448,7 +448,7 @@ void TemplateTable::fast_aldc(bool wide) {
     Label notNull;
     ExternalAddress null_sentinel((address)Universe::the_null_sentinel_addr());
     __ movptr(tmp, null_sentinel);
-    __ cmpptr(tmp, result);
+    __ cmpoop(tmp, result);
     __ jccb(Assembler::notEqual, notNull);
     __ xorptr(result, result);  // NULL object reference
     __ bind(notNull);
@@ -2714,7 +2714,6 @@ void TemplateTable::_return(TosState state) {
 
 void TemplateTable::volatile_barrier(Assembler::Membar_mask_bits order_constraint ) {
   // Helper function to insert a is-volatile test and memory barrier
-  if(!os::is_MP()) return;    // Not needed on single CPU
   __ membar(order_constraint);
 }
 
@@ -2995,7 +2994,6 @@ void TemplateTable::getfield_or_static(int byte_no, bool is_static, RewriteContr
 #ifdef ASSERT
   __ jmp(Done);
 
-
   __ bind(notDouble);
   __ stop("Bad state");
 #endif
@@ -3113,7 +3111,6 @@ void TemplateTable::putfield_or_static(int byte_no, bool is_static, RewriteContr
   const Register obj   = rcx;
   const Register off   = rbx;
   const Register flags = rax;
-  const Register bc    = LP64_ONLY(c_rarg3) NOT_LP64(rcx);
 
   resolve_cache_and_index(byte_no, cache, index, sizeof(u2));
   jvmti_post_field_mod(cache, index, is_static);
@@ -3128,12 +3125,33 @@ void TemplateTable::putfield_or_static(int byte_no, bool is_static, RewriteContr
   __ shrl(rdx, ConstantPoolCacheEntry::is_volatile_shift);
   __ andl(rdx, 0x1);
 
+  // Check for volatile store
+  __ testl(rdx, rdx);
+  __ jcc(Assembler::zero, notVolatile);
+
+  putfield_or_static_helper(byte_no, is_static, rc, obj, off, flags);
+  volatile_barrier(Assembler::Membar_mask_bits(Assembler::StoreLoad |
+                                               Assembler::StoreStore));
+  __ jmp(Done);
+  __ bind(notVolatile);
+
+  putfield_or_static_helper(byte_no, is_static, rc, obj, off, flags);
+
+  __ bind(Done);
+}
+
+void TemplateTable::putfield_or_static_helper(int byte_no, bool is_static, RewriteControl rc,
+                                              Register obj, Register off, Register flags) {
+
   // field addresses
   const Address field(obj, off, Address::times_1, 0*wordSize);
   NOT_LP64( const Address hi(obj, off, Address::times_1, 1*wordSize);)
 
   Label notByte, notBool, notInt, notShort, notChar,
         notLong, notFloat, notObj;
+  Label Done;
+
+  const Register bc    = LP64_ONLY(c_rarg3) NOT_LP64(rcx);
 
   __ shrl(flags, ConstantPoolCacheEntry::tos_state_shift);
 
@@ -3233,42 +3251,17 @@ void TemplateTable::putfield_or_static(int byte_no, bool is_static, RewriteContr
   __ jcc(Assembler::notEqual, notLong);
 
   // ltos
-#ifdef _LP64
   {
     __ pop(ltos);
     if (!is_static) pop_and_check_object(obj);
     __ access_store_at(T_LONG, IN_HEAP, field, noreg /* ltos*/, noreg, noreg);
+#ifdef _LP64
     if (!is_static && rc == may_rewrite) {
       patch_bytecode(Bytecodes::_fast_lputfield, bc, rbx, true, byte_no);
     }
+#endif // _LP64
     __ jmp(Done);
   }
-#else
-  {
-    Label notVolatileLong;
-    __ testl(rdx, rdx);
-    __ jcc(Assembler::zero, notVolatileLong);
-
-    __ pop(ltos);  // overwrites rdx, do this after testing volatile.
-    if (!is_static) pop_and_check_object(obj);
-
-    // Replace with real volatile test
-    __ access_store_at(T_LONG, IN_HEAP | MO_RELAXED, field, noreg /* ltos */, noreg, noreg);
-    // volatile_barrier();
-    volatile_barrier(Assembler::Membar_mask_bits(Assembler::StoreLoad |
-                                                 Assembler::StoreStore));
-    // Don't rewrite volatile version
-    __ jmp(notVolatile);
-
-    __ bind(notVolatileLong);
-
-    __ pop(ltos);  // overwrites rdx
-    if (!is_static) pop_and_check_object(obj);
-    __ access_store_at(T_LONG, IN_HEAP, field, noreg /* ltos */, noreg, noreg);
-    // Don't rewrite to _fast_lputfield for potential volatile case.
-    __ jmp(notVolatile);
-  }
-#endif // _LP64
 
   __ bind(notLong);
   __ cmpl(flags, ftos);
@@ -3310,13 +3303,6 @@ void TemplateTable::putfield_or_static(int byte_no, bool is_static, RewriteContr
 #endif
 
   __ bind(Done);
-
-  // Check for volatile store
-  __ testl(rdx, rdx);
-  __ jcc(Assembler::zero, notVolatile);
-  volatile_barrier(Assembler::Membar_mask_bits(Assembler::StoreLoad |
-                                               Assembler::StoreStore));
-  __ bind(notVolatile);
 }
 
 void TemplateTable::putfield(int byte_no) {
@@ -3412,7 +3398,7 @@ void TemplateTable::fast_storefield(TosState state) {
   // volatile_barrier(Assembler::Membar_mask_bits(Assembler::LoadStore |
   //                                              Assembler::StoreStore));
 
-  Label notVolatile;
+  Label notVolatile, Done;
   __ shrl(rdx, ConstantPoolCacheEntry::is_volatile_shift);
   __ andl(rdx, 0x1);
 
@@ -3421,6 +3407,23 @@ void TemplateTable::fast_storefield(TosState state) {
 
   // field address
   const Address field(rcx, rbx, Address::times_1);
+
+  // Check for volatile store
+  __ testl(rdx, rdx);
+  __ jcc(Assembler::zero, notVolatile);
+
+  fast_storefield_helper(field, rax);
+  volatile_barrier(Assembler::Membar_mask_bits(Assembler::StoreLoad |
+                                               Assembler::StoreStore));
+  __ jmp(Done);
+  __ bind(notVolatile);
+
+  fast_storefield_helper(field, rax);
+
+  __ bind(Done);
+}
+
+void TemplateTable::fast_storefield_helper(Address field, Register rax) {
 
   // access field
   switch (bytecode()) {
@@ -3458,13 +3461,6 @@ void TemplateTable::fast_storefield(TosState state) {
   default:
     ShouldNotReachHere();
   }
-
-  // Check for volatile store
-  __ testl(rdx, rdx);
-  __ jcc(Assembler::zero, notVolatile);
-  volatile_barrier(Assembler::Membar_mask_bits(Assembler::StoreLoad |
-                                               Assembler::StoreStore));
-  __ bind(notVolatile);
 }
 
 void TemplateTable::fast_accessfield(TosState state) {
@@ -3496,13 +3492,12 @@ void TemplateTable::fast_accessfield(TosState state) {
   __ get_cache_and_index_at_bcp(rcx, rbx, 1);
   // replace index with field offset from cache entry
   // [jk] not needed currently
-  // if (os::is_MP()) {
-  //   __ movl(rdx, Address(rcx, rbx, Address::times_8,
-  //                        in_bytes(ConstantPoolCache::base_offset() +
-  //                                 ConstantPoolCacheEntry::flags_offset())));
-  //   __ shrl(rdx, ConstantPoolCacheEntry::is_volatile_shift);
-  //   __ andl(rdx, 0x1);
-  // }
+  // __ movl(rdx, Address(rcx, rbx, Address::times_8,
+  //                      in_bytes(ConstantPoolCache::base_offset() +
+  //                               ConstantPoolCacheEntry::flags_offset())));
+  // __ shrl(rdx, ConstantPoolCacheEntry::is_volatile_shift);
+  // __ andl(rdx, 0x1);
+  //
   __ movptr(rbx, Address(rcx, rbx, Address::times_ptr,
                          in_bytes(ConstantPoolCache::base_offset() +
                                   ConstantPoolCacheEntry::f2_offset())));
@@ -3547,13 +3542,11 @@ void TemplateTable::fast_accessfield(TosState state) {
     ShouldNotReachHere();
   }
   // [jk] not needed currently
-  // if (os::is_MP()) {
   //   Label notVolatile;
   //   __ testl(rdx, rdx);
   //   __ jcc(Assembler::zero, notVolatile);
   //   __ membar(Assembler::LoadLoad);
   //   __ bind(notVolatile);
-  //};
 }
 
 void TemplateTable::fast_xaccess(TosState state) {
@@ -3588,17 +3581,15 @@ void TemplateTable::fast_xaccess(TosState state) {
   }
 
   // [jk] not needed currently
-  // if (os::is_MP()) {
-  //   Label notVolatile;
-  //   __ movl(rdx, Address(rcx, rdx, Address::times_8,
-  //                        in_bytes(ConstantPoolCache::base_offset() +
-  //                                 ConstantPoolCacheEntry::flags_offset())));
-  //   __ shrl(rdx, ConstantPoolCacheEntry::is_volatile_shift);
-  //   __ testl(rdx, 0x1);
-  //   __ jcc(Assembler::zero, notVolatile);
-  //   __ membar(Assembler::LoadLoad);
-  //   __ bind(notVolatile);
-  // }
+  // Label notVolatile;
+  // __ movl(rdx, Address(rcx, rdx, Address::times_8,
+  //                      in_bytes(ConstantPoolCache::base_offset() +
+  //                               ConstantPoolCacheEntry::flags_offset())));
+  // __ shrl(rdx, ConstantPoolCacheEntry::is_volatile_shift);
+  // __ testl(rdx, 0x1);
+  // __ jcc(Assembler::zero, notVolatile);
+  // __ membar(Assembler::LoadLoad);
+  // __ bind(notVolatile);
 
   __ decrement(rbcp);
 }

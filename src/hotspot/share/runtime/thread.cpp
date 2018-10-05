@@ -851,11 +851,9 @@ void Thread::oops_do(OopClosure* f, CodeBlobClosure* cf) {
   f->do_oop((oop*)&_pending_exception);
   handle_area()->oops_do(f);
 
-  if (MonitorInUseLists) {
-    // When using thread local monitor lists, we scan them here,
-    // and the remaining global monitors in ObjectSynchronizer::oops_do().
-    ObjectSynchronizer::thread_local_used_oops_do(this, f);
-  }
+  // We scan thread local monitor lists here, and the remaining global
+  // monitors in ObjectSynchronizer::oops_do().
+  ObjectSynchronizer::thread_local_used_oops_do(this, f);
 }
 
 void Thread::metadata_handles_do(void f(Metadata*)) {
@@ -1953,13 +1951,9 @@ void JavaThread::exit(bool destroy_vm, ExitType exit_type) {
   // between JNI-acquired and regular Java monitors. We can only see
   // regular Java monitors here if monitor enter-exit matching is broken.
   //
-  // Optionally release any monitors for regular JavaThread exits. This
-  // is provided as a work around for any bugs in monitor enter-exit
-  // matching. This can be expensive so it is not enabled by default.
-  //
   // ensure_join() ignores IllegalThreadStateExceptions, and so does
   // ObjectSynchronizer::release_monitors_owned_by_thread().
-  if (exit_type == jni_detach || ObjectMonitor::Knob_ExitRelease) {
+  if (exit_type == jni_detach) {
     // Sanity check even though JNI DetachCurrentThread() would have
     // returned JNI_ERR if there was a Java frame. JavaThread exit
     // should be done executing Java code by the time we get here.
@@ -1989,7 +1983,7 @@ void JavaThread::exit(bool destroy_vm, ExitType exit_type) {
   remove_stack_guard_pages();
 
   if (UseTLAB) {
-    tlab().make_parsable(true);  // retire TLAB
+    tlab().retire();
   }
 
   if (JvmtiEnv::environments_might_exist()) {
@@ -2045,7 +2039,7 @@ void JavaThread::cleanup_failed_attach_current_thread() {
   remove_stack_guard_pages();
 
   if (UseTLAB) {
-    tlab().make_parsable(true);  // retire TLAB, if any
+    tlab().retire();
   }
 
   BarrierSet::barrier_set()->on_thread_detach(this);

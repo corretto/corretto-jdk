@@ -539,8 +539,7 @@ var getJibProfilesProfiles = function (input, common, data) {
             profiles[maketestName].default_make_targets = [ "test-make" ];
         });
 
-    // Profiles for building the zero jvm variant. These are used for verification
-    // in JPRT.
+    // Profiles for building the zero jvm variant. These are used for verification.
     var zeroProfiles = {
         "linux-x64-zero": {
             target_os: "linux",
@@ -751,18 +750,8 @@ var getJibProfilesProfiles = function (input, common, data) {
         });
     });
 
-    // Profiles used to run tests. Used in JPRT and Mach 5.
+    // Profiles used to run tests.
     var testOnlyProfiles = {
-        "run-test-jprt": {
-            target_os: input.build_os,
-            target_cpu: input.build_cpu,
-            dependencies: [ "jtreg", "gnumake", "boot_jdk", "devkit", "jib" ],
-            labels: "test",
-            environment: {
-                "JT_JAVA": common.boot_jdk_home
-            }
-        },
-
         "run-test": {
             target_os: input.build_os,
             target_cpu: input.build_cpu,
@@ -824,7 +813,6 @@ var getJibProfilesProfiles = function (input, common, data) {
                 + "/Xcode.app/Contents/Developer/usr/bin"
         };
         profiles["run-test"] = concatObjects(profiles["run-test"], macosxRunTestExtra);
-        profiles["run-test-jprt"] = concatObjects(profiles["run-test-jprt"], macosxRunTestExtra);
         profiles["run-test-prebuilt"] = concatObjects(profiles["run-test-prebuilt"], macosxRunTestExtra);
     }
     // On windows we want the debug symbols available at test time
@@ -858,7 +846,7 @@ var getJibProfilesDependencies = function (input, common) {
         linux_x64: "gcc7.3.0-OEL6.4+1.0",
         macosx_x64: "Xcode9.4-MacOSX10.13+1.0",
         solaris_x64: "SS12u4-Solaris11u1+1.0",
-        solaris_sparcv9: "SS12u4-Solaris11u1+1.1",
+        solaris_sparcv9: "SS12u6-Solaris11u3+1.0",
         windows_x64: "VS2017-15.5.5+1.0",
         linux_aarch64: (input.profile != null && input.profile.indexOf("arm64") >= 0
                     ? "gcc-linaro-aarch64-linux-gnu-4.8-2013.11_linux+1.0"
@@ -980,9 +968,9 @@ var getJibProfilesDependencies = function (input, common) {
             ext: "zip",
             classifier: "distribution",
             revision: "3.0-SNAPSHOT",
-            environment_name: "JIB_JAR",
+            environment_name: "JIB_HOME",
             environment_value: input.get("jib", "install_path")
-                + "/jib-3.0-SNAPSHOT-distribution/lib/jib-3.0-SNAPSHOT.jar"
+                + "/jib-3.0-SNAPSHOT-distribution"
         },
 
         ant: {
