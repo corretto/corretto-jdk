@@ -67,7 +67,6 @@ Dictionary::~Dictionary() {
   }
   assert(number_of_entries() == 0, "should have removed all entries");
   assert(new_entry_free_list() == NULL, "entry present on Dictionary's free list");
-  free_buckets();
 }
 
 DictionaryEntry* Dictionary::new_entry(unsigned int hash, InstanceKlass* klass) {
@@ -236,7 +235,7 @@ void Dictionary::clean_cached_protection_domains(DictionaryEntry* probe) {
 
 
 void Dictionary::do_unloading() {
-  assert(SafepointSynchronize::is_at_safepoint(), "must be at safepoint");
+  assert_locked_or_safepoint(SystemDictionary_lock);
 
   // The NULL class loader doesn't initiate loading classes from other class loaders
   if (loader_data() == ClassLoaderData::the_null_class_loader_data()) {

@@ -37,18 +37,18 @@ extern "C" {
 
 /* line number matrix of original methods */
 static int orig_ln[METH_NUM][8] = {
-    {34, 0, 0, 0, 0, 0, 0, 0}, /* <init> */
-    {40,41,43, 0, 0, 0, 0, 0}, /* checkIt */
-    {55, 0, 0, 0, 0, 0, 0, 0}, /* finMethod */
-    {48,50,51,50,52, 0, 0, 0}  /* statMethod */
+    { 34, 0, 0, 0, 0, 0, 0, 0 }, /* <init> */
+    { 40,41,43, 0, 0, 0, 0, 0 }, /* checkIt */
+    { 55, 0, 0, 0, 0, 0, 0, 0 }, /* finMethod */
+    { 48,50,51,50,52, 0, 0, 0 }  /* statMethod */
 };
 
 /* line number matrix of redefined methods */
 static int redf_ln[METH_NUM][8] = {
-    {38,39,40,41,42,43,44,46}, /* <init> */
-    {51,53,55, 0, 0, 0, 0, 0}, /* checkIt */
-    {64,66,67,68,69,70,72, 0}, /* finMethod */
-    {60, 0, 0, 0, 0, 0, 0, 0}  /* statMethod */
+    { 38,39,40,41,42,43,44,46 }, /* <init> */
+    { 51,53,55, 0, 0, 0, 0, 0 }, /* checkIt */
+    { 64,66,67,68,69,70,72, 0 }, /* finMethod */
+    { 60, 0, 0, 0, 0, 0, 0, 0 }  /* statMethod */
 };
 
 typedef struct {   /* line numbers of a method */
@@ -61,18 +61,18 @@ typedef struct {   /* line numbers of a method */
 
 /* list of original methods */
 static methInfo origMethInfo[] = {
-    {1, (char*) "<init>", (char*) "()V", 1, NULL},
-    {1, (char*) "checkIt", (char*) "(Ljava/io/PrintStream;Z)I", 3, NULL},
-    {1, (char*) "finMethod", (char*) "(CJIJ)V", 1, NULL},
-    {0, (char*) "statMethod", (char*) "(III)D", 5, NULL}
+    { 1, (char*) "<init>", (char*) "()V", 1, NULL },
+    { 1, (char*) "checkIt", (char*) "(Ljava/io/PrintStream;Z)I", 3, NULL },
+    { 1, (char*) "finMethod", (char*) "(CJIJ)V", 1, NULL },
+    { 0, (char*) "statMethod", (char*) "(III)D", 5, NULL }
 };
 
 /* list of redefined methods */
 static methInfo redefMethInfo[] = {
-    {1, (char*) "<init>", (char*) "()V", 8, NULL},
-    {1, (char*) "checkIt", (char*) "(Ljava/io/PrintStream;Z)I", 3, NULL},
-    {1, (char*) "finMethod", (char*) "(CJIJ)V", 7, NULL},
-    {0, (char*) "statMethod", (char*) "(III)D", 1, NULL}
+    { 1, (char*) "<init>", (char*) "()V", 8, NULL },
+    { 1, (char*) "checkIt", (char*) "(Ljava/io/PrintStream;Z)I", 3, NULL },
+    { 1, (char*) "finMethod", (char*) "(CJIJ)V", 7, NULL },
+    { 0, (char*) "statMethod", (char*) "(III)D", 1, NULL }
 };
 
 static jvmtiEnv *jvmti = NULL;
@@ -93,7 +93,8 @@ jint  Agent_Initialize(JavaVM *vm, char *options, void *reserved) {
     jint res;
     jvmtiError err;
 
-    if ((res = vm->GetEnv((void **) &jvmti, JVMTI_VERSION_1_1)) != JNI_OK) {
+    res = vm->GetEnv((void **) &jvmti, JVMTI_VERSION_1_1);
+    if (res != JNI_OK) {
         printf("%s: Failed to call GetEnv: error=%d\n", __FILE__, res);
         return JNI_ERR;
     }
@@ -159,8 +160,8 @@ int checkAttr(JNIEnv *env, jclass redefCls, methInfo methodsInfo[], jint vrb) {
         }
 
         /* get the LineNumberTable attribute */
-        if ((err = (jvmti->GetLineNumberTable(methodsInfo[i].mid,
-                &count, &ln_table))) != JVMTI_ERROR_NONE) {
+        err = jvmti->GetLineNumberTable(methodsInfo[i].mid, &count, &ln_table);
+        if (err != JVMTI_ERROR_NONE) {
             printf("%s: Failed to call GetLineNumberTable(): error=%d: %s\n",
                 __FILE__, err, TranslateError(err));
             printf("\tfor the%s%s method \"%s\", signature \"%s\"\n\n",
@@ -241,7 +242,8 @@ Java_nsk_jvmti_RedefineClasses_redefclass010_makeRedefinition(JNIEnv *env,
     if (vrb)
         printf("\n>>>>>>>> Invoke RedefineClasses():\n\tnew class byte count=%d\n",
             classDef.class_byte_count);
-    if ((err = (jvmti->RedefineClasses(1, &classDef))) != JVMTI_ERROR_NONE) {
+    err = jvmti->RedefineClasses(1, &classDef);
+    if (err != JVMTI_ERROR_NONE) {
         printf("%s: Failed to call RedefineClasses(): error=%d: %s\n",
             __FILE__, err, TranslateError(err));
         printf("\tFor more info about this error see the JVMTI spec.\n");

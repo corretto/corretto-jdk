@@ -29,6 +29,7 @@
 #include "classfile/classLoaderExt.hpp"
 #include "classfile/dictionary.hpp"
 #include "classfile/loaderConstraints.hpp"
+#include "classfile/javaClasses.inline.hpp"
 #include "classfile/placeholders.hpp"
 #include "classfile/symbolTable.hpp"
 #include "classfile/stringTable.hpp"
@@ -64,6 +65,7 @@
 #include "utilities/align.hpp"
 #include "utilities/bitMap.hpp"
 #include "utilities/defaultStream.hpp"
+#include "utilities/hashtable.inline.hpp"
 #if INCLUDE_G1GC
 #include "gc/g1/g1CollectedHeap.hpp"
 #endif
@@ -349,7 +351,11 @@ void MetaspaceShared::post_initialize(TRAPS) {
   }
 }
 
+static GrowableArray<Handle>* _extra_interned_strings = NULL;
+
 void MetaspaceShared::read_extra_data(const char* filename, TRAPS) {
+  _extra_interned_strings = new (ResourceObj::C_HEAP, mtInternal)GrowableArray<Handle>(10000, true);
+
   HashtableTextDump reader(filename);
   reader.check_version("VERSION: 1.0");
 
@@ -357,15 +363,45 @@ void MetaspaceShared::read_extra_data(const char* filename, TRAPS) {
     int utf8_length;
     int prefix_type = reader.scan_prefix(&utf8_length);
     ResourceMark rm(THREAD);
-    char* utf8_buffer = NEW_RESOURCE_ARRAY(char, utf8_length);
+    if (utf8_length == 0x7fffffff) {
+      // buf_len will overflown 32-bit value.
+      vm_exit_during_initialization(err_msg("string length too large: %d", utf8_length));
+    }
+    int buf_len = utf8_length+1;
+    char* utf8_buffer = NEW_RESOURCE_ARRAY(char, buf_len);
     reader.get_utf8(utf8_buffer, utf8_length);
+    utf8_buffer[utf8_length] = '\0';
 
     if (prefix_type == HashtableTextDump::SymbolPrefix) {
-      SymbolTable::new_symbol(utf8_buffer, utf8_length, THREAD);
+      SymbolTable::new_permanent_symbol(utf8_buffer, THREAD);
     } else{
       assert(prefix_type == HashtableTextDump::StringPrefix, "Sanity");
-      utf8_buffer[utf8_length] = '\0';
       oop s = StringTable::intern(utf8_buffer, THREAD);
+
+      if (HAS_PENDING_EXCEPTION) {
+        log_warning(cds, heap)("[line %d] extra interned string allocation failed; size too large: %d",
+                               reader.last_line_no(), utf8_length);
+        CLEAR_PENDING_EXCEPTION;
+      } else {
+#if INCLUDE_G1GC
+        if (UseG1GC) {
+          typeArrayOop body = java_lang_String::value(s);
+          const HeapRegion* hr = G1CollectedHeap::heap()->heap_region_containing(body);
+          if (hr->is_humongous()) {
+            // Don't keep it alive, so it will be GC'ed before we dump the strings, in order
+            // to maximize free heap space and minimize fragmentation.
+            log_warning(cds, heap)("[line %d] extra interned string ignored; size too large: %d",
+                                reader.last_line_no(), utf8_length);
+            continue;
+          }
+        }
+#endif
+        // Interned strings are GC'ed if there are no references to it, so let's
+        // add a reference to keep this string alive.
+        assert(s != NULL, "must succeed");
+        Handle h(THREAD, s);
+        _extra_interned_strings->append(h);
+      }
     }
   }
 }
@@ -449,8 +485,6 @@ address MetaspaceShared::cds_i2i_entry_code_buffers(size_t total_size) {
   assert(_cds_i2i_entry_code_buffers_size == total_size, "must not change");
   return _cds_i2i_entry_code_buffers;
 }
-
-// CDS code for dumping shared archive.
 
 // Global object for holding classes that have been loaded.  Since this
 // is run at a safepoint just before exit, this is the entire set of classes.
@@ -1067,26 +1101,19 @@ public:
 // metaspace data into their final location in the shared regions.
 
 class ArchiveCompactor : AllStatic {
+  static const int INITIAL_TABLE_SIZE = 8087;
+  static const int MAX_TABLE_SIZE     = 1000000;
+
   static DumpAllocStats* _alloc_stats;
   static SortedSymbolClosure* _ssc;
 
-  static unsigned my_hash(const address& a) {
-    return primitive_hash<address>(a);
-  }
-  static bool my_equals(const address& a0, const address& a1) {
-    return primitive_equals<address>(a0, a1);
-  }
-  typedef ResourceHashtable<
-      address, address,
-      ArchiveCompactor::my_hash,   // solaris compiler doesn't like: primitive_hash<address>
-      ArchiveCompactor::my_equals, // solaris compiler doesn't like: primitive_equals<address>
-      16384, ResourceObj::C_HEAP> RelocationTable;
+  typedef KVHashtable<address, address, mtInternal> RelocationTable;
   static RelocationTable* _new_loc_table;
 
 public:
   static void initialize() {
     _alloc_stats = new(ResourceObj::C_HEAP, mtInternal)DumpAllocStats;
-    _new_loc_table = new(ResourceObj::C_HEAP, mtInternal)RelocationTable;
+    _new_loc_table = new RelocationTable(INITIAL_TABLE_SIZE);
   }
   static DumpAllocStats* alloc_stats() {
     return _alloc_stats;
@@ -1136,15 +1163,17 @@ public:
       newtop = _rw_region.top();
     }
     memcpy(p, obj, bytes);
-    bool isnew = _new_loc_table->put(obj, (address)p);
+    assert(_new_loc_table->lookup(obj) == NULL, "each object can be relocated at most once");
+    _new_loc_table->add(obj, (address)p);
     log_trace(cds)("Copy: " PTR_FORMAT " ==> " PTR_FORMAT " %d", p2i(obj), p2i(p), bytes);
-    assert(isnew, "must be");
-
+    if (_new_loc_table->maybe_grow(MAX_TABLE_SIZE)) {
+      log_info(cds, hashtables)("Expanded _new_loc_table to %d", _new_loc_table->table_size());
+    }
     _alloc_stats->record(ref->msotype(), int(newtop - oldtop), read_only);
   }
 
   static address get_new_loc(MetaspaceClosure::Ref* ref) {
-    address* pp = _new_loc_table->get(ref->obj());
+    address* pp = _new_loc_table->lookup(ref->obj());
     assert(pp != NULL, "must be");
     return *pp;
   }
@@ -1288,7 +1317,7 @@ public:
 
   static Klass* get_relocated_klass(Klass* orig_klass) {
     assert(DumpSharedSpaces, "dump time only");
-    address* pp = _new_loc_table->get((address)orig_klass);
+    address* pp = _new_loc_table->lookup((address)orig_klass);
     assert(pp != NULL, "must be");
     Klass* klass = (Klass*)(*pp);
     assert(klass->is_klass(), "must be");
@@ -1494,6 +1523,12 @@ void VM_PopulateDumpSharedSpace::doit() {
   if (PrintSystemDictionaryAtExit) {
     SystemDictionary::print();
   }
+
+  if (AllowArchivingWithJavaAgent) {
+    warning("This archive was created with AllowArchivingWithJavaAgent. It should be used "
+            "for testing purposes only and should not be used in a production environment");
+  }
+
   // There may be other pending VM operations that operate on the InstanceKlasses,
   // which will fail because InstanceKlasses::remove_unshareable_info()
   // has been called. Forget these operations and exit the VM directly.
@@ -1683,6 +1718,13 @@ void MetaspaceShared::preload_and_dump(TRAPS) {
     // are implemented by K are not verified.
     link_and_cleanup_shared_classes(CATCH);
     tty->print_cr("Rewriting and linking classes: done");
+
+    if (HeapShared::is_heap_object_archiving_allowed()) {
+      // Avoid fragmentation while archiving heap objects.
+      Universe::heap()->soft_ref_policy()->set_should_clear_all_soft_refs(true);
+      Universe::heap()->collect(GCCause::_archive_time_gc);
+      Universe::heap()->soft_ref_policy()->set_should_clear_all_soft_refs(false);
+    }
 
     VM_PopulateDumpSharedSpace op;
     VMThread::execute(&op);
@@ -1919,6 +1961,7 @@ bool MetaspaceShared::map_shared_spaces(FileMapInfo* mapinfo) {
     assert(ro_top == md_base, "must be");
     assert(md_top == od_base, "must be");
 
+    _core_spaces_size = mapinfo->core_spaces_size();
     MetaspaceObj::set_shared_metaspace_range((void*)mc_base, (void*)od_top);
     return true;
   } else {
@@ -1951,7 +1994,8 @@ void MetaspaceShared::initialize_shared_spaces() {
   FileMapInfo *mapinfo = FileMapInfo::current_info();
   _cds_i2i_entry_code_buffers = mapinfo->cds_i2i_entry_code_buffers();
   _cds_i2i_entry_code_buffers_size = mapinfo->cds_i2i_entry_code_buffers_size();
-  _core_spaces_size = mapinfo->core_spaces_size();
+  // _core_spaces_size is loaded from the shared archive immediatelly after mapping
+  assert(_core_spaces_size == mapinfo->core_spaces_size(), "sanity");
   char* buffer = mapinfo->misc_data_patching_start();
   clone_cpp_vtables((intptr_t*)buffer);
 

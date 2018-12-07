@@ -40,7 +40,7 @@ static jvmtiCapabilities caps;
 static jint result = PASSED;
 static jboolean printdump = JNI_FALSE;
 static jfieldID actual_fid = NULL;
-static jfieldID fids[4] = {NULL, NULL, NULL, NULL};
+static jfieldID fids[4] = { NULL, NULL, NULL, NULL };
 
 void JNICALL FieldAccess(jvmtiEnv *jvmti_env, JNIEnv *env,
         jthread thr, jmethodID method,
@@ -76,7 +76,8 @@ jint  Agent_Initialize(JavaVM *jvm, char *options, void *reserved) {
         return JNI_ERR;
     }
 
-    if ((err = (jvmti->GetCapabilities(&caps))) != JVMTI_ERROR_NONE) {
+    err = jvmti->GetCapabilities(&caps);
+    if (err != JVMTI_ERROR_NONE) {
         printf("(GetCapabilities) unexpected error: %s (%d)\n",
                TranslateError(err), err);
         return JNI_ERR;

@@ -180,17 +180,10 @@ class CodeCache : AllStatic {
     ClosureIsUnloadingBehaviour _is_unloading_behaviour;
 
   public:
-    UnloadingScope(BoolObjectClosure* is_alive)
-      : _is_unloading_behaviour(is_alive)
-    {
-      IsUnloadingBehaviour::set_current(&_is_unloading_behaviour);
-      increment_unloading_cycle();
-    }
-
-    ~UnloadingScope() {
-      IsUnloadingBehaviour::set_current(NULL);
-    }
+    UnloadingScope(BoolObjectClosure* is_alive);
+    ~UnloadingScope();
   };
+
   static void do_unloading(BoolObjectClosure* is_alive, bool unloading_occurred);
   static uint8_t unloading_cycle() { return _unloading_cycle; }
   static void increment_unloading_cycle();
@@ -334,13 +327,21 @@ class CodeCache : AllStatic {
 
 // Iterator to iterate over nmethods in the CodeCache.
 template <class T, class Filter> class CodeBlobIterator : public StackObj {
+ public:
+  enum LivenessFilter { all_blobs, only_alive, only_alive_and_not_unloading };
+
  private:
   CodeBlob* _code_blob;   // Current CodeBlob
   GrowableArrayIterator<CodeHeap*> _heap;
   GrowableArrayIterator<CodeHeap*> _end;
+  bool _only_alive;
+  bool _only_not_unloading;
 
  public:
-  CodeBlobIterator(T* nm = NULL) : _code_blob(NULL) {
+  CodeBlobIterator(LivenessFilter filter, T* nm = NULL)
+    : _only_alive(filter == only_alive || filter == only_alive_and_not_unloading),
+      _only_not_unloading(filter == only_alive_and_not_unloading)
+  {
     if (Filter::heaps() == NULL) {
       return;
     }
@@ -360,29 +361,35 @@ template <class T, class Filter> class CodeBlobIterator : public StackObj {
   bool next() {
     assert_locked_or_safepoint(CodeCache_lock);
 
-    bool result = next_blob();
-    while (!result && _heap != _end) {
-      // Advance to next code heap of segmented code cache
-      if (++_heap == _end) {
-        break;
+    for (;;) {
+      // Walk through heaps as required
+      if (!next_blob()) {
+        if (_heap == _end) {
+          return false;
+        }
+        ++_heap;
+        continue;
       }
-      result = next_blob();
-    }
 
-    return result;
+      // Filter is_alive as required
+      if (_only_alive && !_code_blob->is_alive()) {
+        continue;
+      }
+
+      // Filter is_unloading as required
+      if (_only_not_unloading) {
+        CompiledMethod* cm = _code_blob->as_compiled_method_or_null();
+        if (cm != NULL && cm->is_unloading()) {
+          continue;
+        }
+      }
+
+      return true;
+    }
   }
 
-  // Advance iterator to next alive blob
-  bool next_alive() {
-    bool result = next();
-    while(result && !_code_blob->is_alive()) {
-      result = next();
-    }
-    return result;
-  }
-
-  bool end()        const   { return _code_blob == NULL; }
-  T* method() const   { return (T*)_code_blob; }
+  bool end()  const { return _code_blob == NULL; }
+  T* method() const { return (T*)_code_blob; }
 
 private:
 
@@ -421,7 +428,6 @@ struct NMethodFilter {
   static bool apply(CodeBlob* cb) { return cb->is_nmethod(); }
   static const GrowableArray<CodeHeap*>* heaps() { return CodeCache::nmethod_heaps(); }
 };
-
 
 typedef CodeBlobIterator<CompiledMethod, CompiledMethodFilter> CompiledMethodIterator;
 typedef CodeBlobIterator<nmethod, NMethodFilter> NMethodIterator;

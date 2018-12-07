@@ -322,10 +322,14 @@ void os::init_system_properties_values() {
   //        1: ...
   //        ...
   //        7: The default directories, normally /lib and /usr/lib.
-#if defined(AMD64) || (defined(_LP64) && defined(SPARC)) || defined(PPC64) || defined(S390)
-  #define DEFAULT_LIBPATH "/usr/lib64:/lib64:/lib:/usr/lib"
+#ifndef OVERRIDE_LIBPATH
+  #if defined(AMD64) || (defined(_LP64) && defined(SPARC)) || defined(PPC64) || defined(S390)
+    #define DEFAULT_LIBPATH "/usr/lib64:/lib64:/lib:/usr/lib"
+  #else
+    #define DEFAULT_LIBPATH "/lib:/usr/lib"
+  #endif
 #else
-  #define DEFAULT_LIBPATH "/lib:/usr/lib"
+  #define DEFAULT_LIBPATH OVERRIDE_LIBPATH
 #endif
 
 // Base path of extensions installed on the system.
@@ -5034,6 +5038,10 @@ void os::pd_init_container_support() {
 
 // this is called _after_ the global arguments have been parsed
 jint os::init_2(void) {
+
+  // This could be set after os::Posix::init() but all platforms
+  // have to set it the same so we have to mirror Solaris.
+  DEBUG_ONLY(os::set_mutex_init_done();)
 
   os::Posix::init_2();
 
