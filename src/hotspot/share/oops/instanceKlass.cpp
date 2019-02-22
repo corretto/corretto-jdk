@@ -53,6 +53,7 @@
 #include "memory/oopFactory.hpp"
 #include "memory/resourceArea.hpp"
 #include "oops/fieldStreams.hpp"
+#include "oops/constantPool.hpp"
 #include "oops/instanceClassLoaderKlass.hpp"
 #include "oops/instanceKlass.inline.hpp"
 #include "oops/instanceMirrorKlass.hpp"
@@ -75,6 +76,7 @@
 #include "services/classLoadingService.hpp"
 #include "services/threadService.hpp"
 #include "utilities/dtrace.hpp"
+#include "utilities/events.hpp"
 #include "utilities/macros.hpp"
 #include "utilities/stringUtils.hpp"
 #ifdef COMPILER1
@@ -2446,6 +2448,13 @@ void InstanceKlass::unload_class(InstanceKlass* ik) {
 
   // notify ClassLoadingService of class unload
   ClassLoadingService::notify_class_unloaded(ik);
+
+  if (log_is_enabled(Info, class, unload)) {
+    ResourceMark rm;
+    log_info(class, unload)("unloading class %s " INTPTR_FORMAT, ik->external_name(), p2i(ik));
+  }
+
+  Events::log_class_unloading(Thread::current(), ik);
 
 #if INCLUDE_JFR
   assert(ik != NULL, "invariant");
