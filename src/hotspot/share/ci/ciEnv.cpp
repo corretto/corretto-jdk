@@ -119,6 +119,9 @@ ciEnv::ciEnv(CompileTask* task, int system_dictionary_modification_counter)
   _system_dictionary_modification_counter = system_dictionary_modification_counter;
   _num_inlined_bytecodes = 0;
   assert(task == NULL || thread->task() == task, "sanity");
+  if (task != NULL) {
+    task->mark_started(os::elapsed_counter());
+  }
   _task = task;
   _log = NULL;
 
@@ -1253,7 +1256,7 @@ void ciEnv::dump_replay_data(int compile_id) {
   static char buffer[O_BUFLEN];
   int ret = jio_snprintf(buffer, O_BUFLEN, "replay_pid%p_compid%d.log", os::current_process_id(), compile_id);
   if (ret > 0) {
-    int fd = open(buffer, O_RDWR | O_CREAT | O_TRUNC, 0666);
+    int fd = os::open(buffer, O_RDWR | O_CREAT | O_TRUNC, 0666);
     if (fd != -1) {
       FILE* replay_data_file = os::open(fd, "w");
       if (replay_data_file != NULL) {
@@ -1271,7 +1274,7 @@ void ciEnv::dump_inline_data(int compile_id) {
   static char buffer[O_BUFLEN];
   int ret = jio_snprintf(buffer, O_BUFLEN, "inline_pid%p_compid%d.log", os::current_process_id(), compile_id);
   if (ret > 0) {
-    int fd = open(buffer, O_RDWR | O_CREAT | O_TRUNC, 0666);
+    int fd = os::open(buffer, O_RDWR | O_CREAT | O_TRUNC, 0666);
     if (fd != -1) {
       FILE* inline_data_file = os::open(fd, "w");
       if (inline_data_file != NULL) {

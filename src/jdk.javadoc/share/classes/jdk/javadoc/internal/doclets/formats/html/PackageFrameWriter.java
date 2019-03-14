@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1998, 2018, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 1998, 2019, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -30,7 +30,6 @@ import java.util.*;
 import javax.lang.model.element.PackageElement;
 import javax.lang.model.element.TypeElement;
 
-import jdk.javadoc.internal.doclets.formats.html.markup.HtmlConstants;
 import jdk.javadoc.internal.doclets.formats.html.markup.HtmlStyle;
 import jdk.javadoc.internal.doclets.formats.html.markup.HtmlTag;
 import jdk.javadoc.internal.doclets.formats.html.markup.HtmlTree;
@@ -89,7 +88,7 @@ public class PackageFrameWriter extends HtmlDocletWriter {
 
     /**
      * Generate a package summary page for the left-hand bottom frame. Construct
-     * the PackageFrameWriter object and then uses it generate the file.
+     * the PackageFrameWriter object and then use it generate the file.
      *
      * @param configuration the current configuration of the doclet.
      * @param packageElement The package for which "pacakge-frame.html" is to be generated.
@@ -102,16 +101,18 @@ public class PackageFrameWriter extends HtmlDocletWriter {
         HtmlTree body = packgen.getBody(false, packgen.getWindowTitle(pkgName));
         Content pkgNameContent = new StringContent(pkgName);
         HtmlTree htmlTree = HtmlTree.MAIN();
-        Content heading = HtmlTree.HEADING(HtmlConstants.TITLE_HEADING, HtmlStyle.bar,
+        Content heading = HtmlTree.HEADING(Headings.PAGE_TITLE_HEADING, HtmlStyle.bar,
                 packgen.getTargetPackageLink(packageElement, "classFrame", pkgNameContent));
-        htmlTree.addContent(heading);
+        htmlTree.add(heading);
         HtmlTree div = new HtmlTree(HtmlTag.DIV);
         div.setStyle(HtmlStyle.indexContainer);
         packgen.addClassListing(div);
-        htmlTree.addContent(div);
-        body.addContent(htmlTree);
+        htmlTree.add(div);
+        body.add(htmlTree);
         packgen.printHtmlDocument(
-                configuration.metakeywords.getMetaKeywords(packageElement), false, body);
+                configuration.metakeywords.getMetaKeywords(packageElement),
+                getDescription("package summary (frame)", packageElement),
+                body);
     }
 
     /**
@@ -175,9 +176,9 @@ public class PackageFrameWriter extends HtmlDocletWriter {
                     continue;
                 }
                 if (!printedHeader) {
-                    Content heading = HtmlTree.HEADING(HtmlConstants.CONTENT_HEADING,
+                    Content heading = HtmlTree.HEADING(Headings.CONTENT_HEADING,
                                                        true, labelContent);
-                    htmlTree.addContent(heading);
+                    htmlTree.add(heading);
                     printedHeader = true;
                 }
                 Content arr_i_name = new StringContent(utils.getSimpleName(typeElement));
@@ -186,10 +187,10 @@ public class PackageFrameWriter extends HtmlDocletWriter {
                 Content link = getLink(new LinkInfoImpl(configuration,
                                                         LinkInfoImpl.Kind.PACKAGE_FRAME, typeElement).label(arr_i_name).target("classFrame"));
                 Content li = HtmlTree.LI(link);
-                ul.addContent(li);
+                ul.add(li);
             }
-            htmlTree.addContent(ul);
-            contentTree.addContent(htmlTree);
+            htmlTree.add(ul);
+            contentTree.add(htmlTree);
         }
     }
 }

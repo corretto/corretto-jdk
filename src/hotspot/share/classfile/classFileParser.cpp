@@ -52,7 +52,7 @@
 #include "oops/klass.inline.hpp"
 #include "oops/klassVtable.hpp"
 #include "oops/metadata.hpp"
-#include "oops/method.hpp"
+#include "oops/method.inline.hpp"
 #include "oops/oop.inline.hpp"
 #include "oops/symbol.hpp"
 #include "prims/jvmtiExport.hpp"
@@ -60,6 +60,7 @@
 #include "runtime/arguments.hpp"
 #include "runtime/handles.inline.hpp"
 #include "runtime/javaCalls.hpp"
+#include "runtime/os.hpp"
 #include "runtime/perfData.hpp"
 #include "runtime/reflection.hpp"
 #include "runtime/safepointVerifiers.hpp"
@@ -1971,46 +1972,6 @@ const ClassFileParser::unsafe_u2* ClassFileParser::parse_localvariable_table(con
     }
   }
   return localvariable_table_start;
-}
-
-
-void ClassFileParser::parse_type_array(u2 array_length,
-                                       u4 code_length,
-                                       u4* const u1_index,
-                                       u4* const u2_index,
-                                       u1* const u1_array,
-                                       u2* const u2_array,
-                                       TRAPS) {
-  const ClassFileStream* const cfs = _stream;
-  u2 index = 0; // index in the array with long/double occupying two slots
-  u4 i1 = *u1_index;
-  u4 i2 = *u2_index + 1;
-  for(int i = 0; i < array_length; i++) {
-    const u1 tag = u1_array[i1++] = cfs->get_u1(CHECK);
-    index++;
-    if (tag == ITEM_Long || tag == ITEM_Double) {
-      index++;
-    } else if (tag == ITEM_Object) {
-      const u2 class_index = u2_array[i2++] = cfs->get_u2(CHECK);
-      guarantee_property(valid_klass_reference_at(class_index),
-                         "Bad class index %u in StackMap in class file %s",
-                         class_index, CHECK);
-    } else if (tag == ITEM_Uninitialized) {
-      const u2 offset = u2_array[i2++] = cfs->get_u2(CHECK);
-      guarantee_property(
-        offset < code_length,
-        "Bad uninitialized type offset %u in StackMap in class file %s",
-        offset, CHECK);
-    } else {
-      guarantee_property(
-        tag <= (u1)ITEM_Uninitialized,
-        "Unknown variable type %u in StackMap in class file %s",
-        tag, CHECK);
-    }
-  }
-  u2_array[*u2_index] = index;
-  *u1_index = i1;
-  *u2_index = i2;
 }
 
 static const u1* parse_stackmap_table(const ClassFileStream* const cfs,
@@ -5743,16 +5704,13 @@ void ClassFileParser::prepend_host_package_name(const InstanceKlass* unsafe_anon
     ClassLoader::package_from_name(unsafe_anonymous_host->name()->as_C_string(), NULL);
 
   if (host_pkg_name != NULL) {
-    size_t host_pkg_len = strlen(host_pkg_name);
+    int host_pkg_len = (int)strlen(host_pkg_name);
     int class_name_len = _class_name->utf8_length();
-    char* new_anon_name =
-      NEW_RESOURCE_ARRAY(char, host_pkg_len + 1 + class_name_len);
-    // Copy host package name and trailing /.
-    strncpy(new_anon_name, host_pkg_name, host_pkg_len);
-    new_anon_name[host_pkg_len] = '/';
-    // Append unsafe anonymous class name. The unsafe anonymous class name can contain odd
-    // characters.  So, do a strncpy instead of using sprintf("%s...").
-    strncpy(new_anon_name + host_pkg_len + 1, (char *)_class_name->base(), class_name_len);
+    int symbol_len = host_pkg_len + 1 + class_name_len;
+    char* new_anon_name = NEW_RESOURCE_ARRAY(char, symbol_len + 1);
+    int n = os::snprintf(new_anon_name, symbol_len + 1, "%s/%.*s",
+                         host_pkg_name, class_name_len, _class_name->base());
+    assert(n == symbol_len, "Unexpected number of characters in string");
 
     // Decrement old _class_name to avoid leaking.
     _class_name->decrement_refcount();
@@ -5761,9 +5719,7 @@ void ClassFileParser::prepend_host_package_name(const InstanceKlass* unsafe_anon
     // The new class name is created with a refcount of one. When installed into the InstanceKlass,
     // it'll be two and when the ClassFileParser destructor runs, it'll go back to one and get deleted
     // when the class is unloaded.
-    _class_name = SymbolTable::new_symbol(new_anon_name,
-                                          (int)host_pkg_len + 1 + class_name_len,
-                                          CHECK);
+    _class_name = SymbolTable::new_symbol(new_anon_name, symbol_len, CHECK);
   }
 }
 

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1997, 2018, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 1997, 2019, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -78,7 +78,7 @@ public class PackageIndexWriter extends AbstractPackageIndexWriter {
     public static void generate(HtmlConfiguration configuration) throws DocFileIOException {
         DocPath filename = DocPaths.overviewSummary(configuration.frames);
         PackageIndexWriter packgen = new PackageIndexWriter(configuration, filename);
-        packgen.buildPackageIndexFile("doclet.Window_Overview_Summary", true);
+        packgen.buildPackageIndexFile("doclet.Window_Overview_Summary", "package index", true);
     }
 
     /**
@@ -129,7 +129,7 @@ public class PackageIndexWriter extends AbstractPackageIndexWriter {
             }
 
             Content div = HtmlTree.DIV(HtmlStyle.contentContainer, table.toContent());
-            main.addContent(div);
+            main.add(div);
 
             if (table.needsScript()) {
                 getMainBodyScript().append(table.getScript());
@@ -151,7 +151,7 @@ public class PackageIndexWriter extends AbstractPackageIndexWriter {
             HtmlTree div = new HtmlTree(HtmlTag.DIV);
             div.setStyle(HtmlStyle.contentContainer);
             addOverviewComment(div);
-            main.addContent(div);
+            main.add(div);
         }
     }
 
@@ -179,7 +179,7 @@ public class PackageIndexWriter extends AbstractPackageIndexWriter {
     protected void addNavigationBarHeader(Content header) {
         addTop(header);
         navBar.setUserHeader(getUserHeaderFooter(true));
-        header.addContent(navBar.getContent(true));
+        header.add(navBar.getContent(true));
     }
 
     /**
@@ -191,7 +191,7 @@ public class PackageIndexWriter extends AbstractPackageIndexWriter {
     @Override
     protected void addNavigationBarFooter(Content footer) {
         navBar.setUserFooter(getUserHeaderFooter(false));
-        footer.addContent(navBar.getContent(false));
+        footer.add(navBar.getContent(false));
         addBottom(footer);
     }
 }
