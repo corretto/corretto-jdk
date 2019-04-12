@@ -198,6 +198,7 @@ public:
 //
 private:
            size_t _initial_size;
+           size_t _minimum_size;
   DEFINE_PAD_MINUS_SIZE(0, DEFAULT_CACHE_LINE_SIZE, sizeof(volatile size_t));
   volatile size_t _used;
   volatile size_t _committed;
@@ -216,6 +217,7 @@ public:
   size_t bytes_allocated_since_gc_start();
   void reset_bytes_allocated_since_gc_start();
 
+  size_t min_capacity()     const;
   size_t max_capacity()     const;
   size_t initial_capacity() const;
   size_t capacity()         const;
@@ -270,16 +272,16 @@ public:
 //
 public:
   enum GCStateBitPos {
-    // Heap has forwarded objects: need RB, ACMP, CAS barriers.
+    // Heap has forwarded objects: needs LRB barriers.
     HAS_FORWARDED_BITPOS   = 0,
 
     // Heap is under marking: needs SATB barriers.
     MARKING_BITPOS    = 1,
 
-    // Heap is under evacuation: needs WB barriers. (Set together with UNSTABLE)
+    // Heap is under evacuation: needs LRB barriers. (Set together with HAS_FORWARDED)
     EVACUATION_BITPOS = 2,
 
-    // Heap is under updating: needs SVRB/SVWB barriers.
+    // Heap is under updating: needs no additional barriers.
     UPDATEREFS_BITPOS = 3,
 
     // Heap is under traversal collection
@@ -505,6 +507,8 @@ private:
   ConcurrentGCTimer*           _gc_timer;
   SoftRefPolicy                _soft_ref_policy;
 
+  // For exporting to SA
+  int                          _log_min_obj_alignment_in_bytes;
 public:
   ShenandoahMonitoringSupport* monitoring_support() { return _monitoring_support;    }
   GCMemoryManager* cycle_memory_manager()           { return &_cycle_memory_manager; }
@@ -584,6 +588,8 @@ public:
 public:
   void register_nmethod(nmethod* nm);
   void unregister_nmethod(nmethod* nm);
+  void flush_nmethod(nmethod* nm) {}
+  void verify_nmethod(nmethod* nm) {}
 
 // ---------- Pinning hooks
 //
@@ -741,8 +747,6 @@ public:
   void deduplicate_string(oop str);
 
   void stop_concurrent_marking();
-
-  void roots_iterate(OopClosure* cl);
 
 private:
   void trash_cset_regions();
