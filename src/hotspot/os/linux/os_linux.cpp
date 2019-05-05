@@ -776,7 +776,7 @@ static void *thread_native_entry(Thread *thread) {
 
   // handshaking with parent thread
   {
-    MutexLockerEx ml(sync, Mutex::_no_safepoint_check_flag);
+    MutexLocker ml(sync, Mutex::_no_safepoint_check_flag);
 
     // notify parent thread
     osthread->set_state(INITIALIZED);
@@ -784,7 +784,7 @@ static void *thread_native_entry(Thread *thread) {
 
     // wait until os::start_thread()
     while (osthread->get_state() == INITIALIZED) {
-      sync->wait(Mutex::_no_safepoint_check_flag);
+      sync->wait_without_safepoint_check();
     }
   }
 
@@ -884,9 +884,9 @@ bool os::create_thread(Thread* thread, ThreadType thr_type,
     // Wait until child thread is either initialized or aborted
     {
       Monitor* sync_with_child = osthread->startThread_lock();
-      MutexLockerEx ml(sync_with_child, Mutex::_no_safepoint_check_flag);
+      MutexLocker ml(sync_with_child, Mutex::_no_safepoint_check_flag);
       while ((state = osthread->get_state()) == ALLOCATED) {
-        sync_with_child->wait(Mutex::_no_safepoint_check_flag);
+        sync_with_child->wait_without_safepoint_check();
       }
     }
   }
@@ -978,7 +978,7 @@ void os::pd_start_thread(Thread* thread) {
   OSThread * osthread = thread->osthread();
   assert(osthread->get_state() != INITIALIZED, "just checking");
   Monitor* sync_with_child = osthread->startThread_lock();
-  MutexLockerEx ml(sync_with_child, Mutex::_no_safepoint_check_flag);
+  MutexLocker ml(sync_with_child, Mutex::_no_safepoint_check_flag);
   sync_with_child->notify();
 }
 
@@ -5236,13 +5236,16 @@ jint os::init_2(void) {
     return JNI_ERR;
   }
 
+#if defined(IA32)
+  // Need to ensure we've determined the process's initial stack to
+  // perform the workaround
+  Linux::capture_initial_stack(JavaThread::stack_size_at_create());
+  workaround_expand_exec_shield_cs_limit();
+#else
   suppress_primordial_thread_resolution = Arguments::created_by_java_launcher();
   if (!suppress_primordial_thread_resolution) {
     Linux::capture_initial_stack(JavaThread::stack_size_at_create());
   }
-
-#if defined(IA32)
-  workaround_expand_exec_shield_cs_limit();
 #endif
 
   Linux::libpthread_init();

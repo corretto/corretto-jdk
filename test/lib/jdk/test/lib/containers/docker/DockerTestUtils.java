@@ -169,24 +169,30 @@ public class DockerTestUtils {
         generateDockerFile(buildDir.resolve("Dockerfile"),
                            DockerfileConfig.getBaseImageName(),
                            DockerfileConfig.getBaseImageVersion());
-
-        // Build the docker
-        execute(DOCKER_COMMAND, "build", "--no-cache", "--tag", imageName, buildDir.toString())
-            .shouldHaveExitValue(0)
-            .shouldContain("Successfully built");
+        try {
+            // Build the docker
+            execute(DOCKER_COMMAND, "build", "--no-cache", "--tag", imageName, buildDir.toString())
+                .shouldHaveExitValue(0)
+                .shouldContain("Successfully built");
+        } catch (Exception e) {
+            // If docker image building fails there is a good chance it happens due to environment and/or
+            // configuration other than product failure. Throw jtreg skipped exception in such case
+            // instead of failing the test.
+            throw new SkippedException("Building docker image failed. Details: \n" + e.getMessage());
+        }
     }
 
 
     /**
-     * Run Java inside the docker image with specified parameters and options.
+     * Build the docker command to run java inside a container
      *
      * @param DockerRunOptions optins for running docker
      *
-     * @return output of the run command
+     * @return command
      * @throws Exception
      */
-    public static OutputAnalyzer dockerRunJava(DockerRunOptions opts) throws Exception {
-        ArrayList<String> cmd = new ArrayList<>();
+    public static List<String> buildJavaCommand(DockerRunOptions opts) throws Exception {
+        List<String> cmd = new ArrayList<>();
 
         cmd.add(DOCKER_COMMAND);
         cmd.add("run");
@@ -207,7 +213,19 @@ public class DockerTestUtils {
         cmd.add(opts.classToRun);
         cmd.addAll(opts.classParams);
 
-        return execute(cmd);
+        return cmd;
+    }
+
+    /**
+     * Run Java inside the docker image with specified parameters and options.
+     *
+     * @param DockerRunOptions optins for running docker
+     *
+     * @return output of the run command
+     * @throws Exception
+     */
+    public static OutputAnalyzer dockerRunJava(DockerRunOptions opts) throws Exception {
+        return execute(buildJavaCommand(opts));
     }
 
 

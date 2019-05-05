@@ -126,7 +126,8 @@
 #define JAVA_13_VERSION                   57
 
 void ClassFileParser::set_class_bad_constant_seen(short bad_constant) {
-  assert((bad_constant == 19 || bad_constant == 20) && _major_version >= JAVA_9_VERSION,
+  assert((bad_constant == JVM_CONSTANT_Module ||
+          bad_constant == JVM_CONSTANT_Package) && _major_version >= JAVA_9_VERSION,
          "Unexpected bad constant pool entry");
   if (_bad_constant_seen == 0) _bad_constant_seen = bad_constant;
 }
@@ -343,8 +344,8 @@ void ClassFileParser::parse_constant_pool_entries(const ClassFileStream* const s
         }
         break;
       }
-      case 19:
-      case 20: {
+      case JVM_CONSTANT_Module:
+      case JVM_CONSTANT_Package: {
         // Record that an error occurred in these two cases but keep parsing so
         // that ACC_Module can be checked for in the access_flags.  Need to
         // throw NoClassDefFoundError in that case.
@@ -5975,9 +5976,9 @@ void ClassFileParser::parse_stream(const ClassFileStream* const stream,
   _minor_version = stream->get_u2_fast();
   _major_version = stream->get_u2_fast();
 
-  if (DumpSharedSpaces && _major_version < JAVA_1_5_VERSION) {
+  if (DumpSharedSpaces && _major_version < JAVA_6_VERSION) {
     ResourceMark rm;
-    warning("Pre JDK 1.5 class not supported by CDS: %u.%u %s",
+    warning("Pre JDK 6 class not supported by CDS: %u.%u %s",
             _major_version,  _minor_version, _class_name->as_C_string());
     Exceptions::fthrow(
       THREAD_AND_LOCATION,
