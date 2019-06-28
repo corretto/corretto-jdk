@@ -385,6 +385,7 @@ $(eval $(call SetupJdkLibrary, BUILD_LIBLCMS, \
         libawt/java2d, \
     HEADERS_FROM_SRC := $(LIBLCMS_HEADERS_FROM_SRC), \
     DISABLED_WARNINGS_gcc := format-nonliteral type-limits \
+        stringop-truncation \
         misleading-indentation undef unused-function, \
     DISABLED_WARNINGS_clang := tautological-compare format-nonliteral undef, \
     DISABLED_WARNINGS_solstudio := E_STATEMENT_NOT_REACHED, \
@@ -506,6 +507,8 @@ else
   LIBFREETYPE_CFLAGS := -I$(BUILD_LIBFREETYPE_HEADER_DIRS)
   ifeq ($(call isTargetOs, windows), true)
     LIBFREETYPE_LIBS := $(SUPPORT_OUTPUTDIR)/native/$(MODULE)/libfreetype/freetype.lib
+    # freetype now requires you to manually define this (see ftconfig.h)
+    BUILD_LIBFREETYPE_CFLAGS += -DDLL_EXPORT
   else
     LIBFREETYPE_LIBS := -lfreetype
   endif
@@ -519,8 +522,8 @@ else
       DISABLED_WARNINGS_solstudio := \
          E_STATEMENT_NOT_REACHED \
          E_END_OF_LOOP_CODE_NOT_REACHED, \
-      DISABLED_WARNINGS_microsoft := 4267 4244 4312 4819, \
-      DISABLED_WARNINGS_gcc := implicit-fallthrough, \
+      DISABLED_WARNINGS_microsoft := 4018 4267 4244 4312 4819, \
+      DISABLED_WARNINGS_gcc := implicit-fallthrough cast-function-type bad-function-cast, \
       LDFLAGS := $(LDFLAGS_JDKLIB) \
           $(call SET_SHARED_LIBRARY_ORIGIN), \
   ))
