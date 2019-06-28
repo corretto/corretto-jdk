@@ -319,6 +319,14 @@ int
 childProcess(void *arg)
 {
     const ChildStuff* p = (const ChildStuff*) arg;
+    int fail_pipe_fd = p->fail[1];
+
+    if (p->sendAlivePing) {
+        /* Child shall signal aliveness to parent at the very first
+         * moment. */
+        int code = CHILD_IS_ALIVE;
+        restartableWrite(fail_pipe_fd, &code, sizeof(code));
+    }
 
     /* Close the parent sides of the pipes.
        Closing pipe fds here is redundant, since closeDescriptors()
@@ -349,8 +357,11 @@ childProcess(void *arg)
             goto WhyCantJohnnyExec;
     }
 
-    if (moveDescriptor(p->fail[1], FAIL_FILENO) == -1)
+    if (moveDescriptor(fail_pipe_fd, FAIL_FILENO) == -1)
         goto WhyCantJohnnyExec;
+
+    /* We moved the fail pipe fd */
+    fail_pipe_fd = FAIL_FILENO;
 
     /* close everything */
     if (closeDescriptors() == 0) { /* failed,  close the old way */
@@ -383,9 +394,9 @@ childProcess(void *arg)
      */
     {
         int errnum = errno;
-        restartableWrite(FAIL_FILENO, &errnum, sizeof(errnum));
+        restartableWrite(fail_pipe_fd, &errnum, sizeof(errnum));
     }
-    close(FAIL_FILENO);
+    close(fail_pipe_fd);
     _exit(-1);
     return 0;  /* Suppress warning "no return value from function" */
 }

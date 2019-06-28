@@ -57,6 +57,7 @@ import java.util.concurrent.locks.ReentrantLock;
 
 import sun.net.ResourceManager;
 import sun.net.ext.ExtendedSocketOptions;
+import sun.net.util.IPAddressUtil;
 
 /**
  * An implementation of DatagramChannels.
@@ -222,6 +223,8 @@ class DatagramChannelImpl
         Objects.requireNonNull(name);
         if (!supportedOptions().contains(name))
             throw new UnsupportedOperationException("'" + name + "' not supported");
+        if (!name.type().isInstance(value))
+            throw new IllegalArgumentException("Invalid value '" + value + "'");
 
         synchronized (stateLock) {
             ensureOpen();
@@ -236,8 +239,6 @@ class DatagramChannelImpl
             }
 
             if (name == StandardSocketOptions.IP_MULTICAST_IF) {
-                if (value == null)
-                    throw new IllegalArgumentException("Cannot set IP_MULTICAST_IF to 'null'");
                 NetworkInterface interf = (NetworkInterface)value;
                 if (family == StandardProtocolFamily.INET6) {
                     int index = interf.getIndex();
@@ -527,14 +528,16 @@ class DatagramChannelImpl
                 } else {
                     // not connected
                     SecurityManager sm = System.getSecurityManager();
+                    InetAddress ia = isa.getAddress();
                     if (sm != null) {
-                        InetAddress ia = isa.getAddress();
                         if (ia.isMulticastAddress()) {
                             sm.checkMulticast(ia);
                         } else {
                             sm.checkConnect(ia.getHostAddress(), isa.getPort());
                         }
                     }
+                    if (ia.isLinkLocalAddress())
+                        isa = IPAddressUtil.toScopedAddress(isa);
                     n = send(fd, src, isa);
                     if (blocking) {
                         while (IOStatus.okayToRetry(n) && isOpen()) {

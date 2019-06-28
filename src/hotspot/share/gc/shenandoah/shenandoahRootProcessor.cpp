@@ -34,7 +34,6 @@
 #include "gc/shenandoah/shenandoahPhaseTimings.hpp"
 #include "gc/shenandoah/shenandoahStringDedup.hpp"
 #include "gc/shenandoah/shenandoahTimingTracker.hpp"
-#include "gc/shenandoah/shenandoahUtils.hpp"
 #include "gc/shenandoah/shenandoahVMOperations.hpp"
 #include "gc/shared/weakProcessor.inline.hpp"
 #include "memory/allocation.inline.hpp"
@@ -61,8 +60,7 @@ ShenandoahSerialRoots::ShenandoahSerialRoots() :
   _object_synchronizer_root(&ObjectSynchronizer::oops_do, ShenandoahPhaseTimings::ObjectSynchronizerRoots),
   _management_root(&Management::oops_do, ShenandoahPhaseTimings::ManagementRoots),
   _system_dictionary_root(&SystemDictionary::oops_do, ShenandoahPhaseTimings::SystemDictionaryRoots),
-  _jvmti_root(&JvmtiExport::oops_do, ShenandoahPhaseTimings::JVMTIRoots),
-  _jni_handle_root(&JNIHandles::oops_do, ShenandoahPhaseTimings::JNIRoots) {
+  _jvmti_root(&JvmtiExport::oops_do, ShenandoahPhaseTimings::JVMTIRoots) {
 }
 
 void ShenandoahSerialRoots::oops_do(OopClosure* cl, uint worker_id) {
@@ -71,7 +69,10 @@ void ShenandoahSerialRoots::oops_do(OopClosure* cl, uint worker_id) {
   _management_root.oops_do(cl, worker_id);
   _system_dictionary_root.oops_do(cl, worker_id);
   _jvmti_root.oops_do(cl, worker_id);
-  _jni_handle_root.oops_do(cl, worker_id);
+}
+
+ShenandoahJNIHandleRoots::ShenandoahJNIHandleRoots() :
+  ShenandoahSerialRoot(&JNIHandles::oops_do, ShenandoahPhaseTimings::JNIRoots) {
 }
 
 ShenandoahThreadRoots::ShenandoahThreadRoots(bool is_par) : _is_par(is_par) {
@@ -161,6 +162,7 @@ void ShenandoahRootEvacuator::roots_do(uint worker_id, OopClosure* oops) {
   AlwaysTrueClosure always_true;
 
   _serial_roots.oops_do(oops, worker_id);
+  _jni_roots.oops_do(oops, worker_id);
 
   _thread_roots.oops_do(oops, NULL, worker_id);
   _cld_roots.clds_do(&clds, &clds, worker_id);
@@ -190,6 +192,7 @@ void ShenandoahRootAdjuster::roots_do(uint worker_id, OopClosure* oops) {
   AlwaysTrueClosure always_true;
 
   _serial_roots.oops_do(oops, worker_id);
+  _jni_roots.oops_do(oops, worker_id);
 
   _thread_roots.oops_do(oops, NULL, worker_id);
   _cld_roots.clds_do(&adjust_cld_closure, NULL, worker_id);

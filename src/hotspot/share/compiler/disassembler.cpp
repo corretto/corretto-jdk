@@ -147,7 +147,10 @@ class decode_env {
 
     if (AbstractDisassembler::show_comment()) {
       if ((_nm != NULL) && _nm->has_code_comment(pc0, pc)) {
-        _nm->print_code_comment_on(st, _post_decode_alignment, pc0, pc);
+        _nm->print_code_comment_on
+               (st,
+                _post_decode_alignment ? _post_decode_alignment : COMMENT_COLUMN,
+                pc0, pc);
         // this calls reloc_string_for which calls oop::print_value_on
       }
       print_hook_comments(pc0, _nm != NULL);
@@ -774,13 +777,14 @@ bool Disassembler::load_library(outputStream* st) {
     // Match "[lib]jvm[^/]*" in jvm_path.
     const char* base = buf;
     const char* p = strrchr(buf, *os::file_separator());
+    if (p != NULL) lib_offset = p - base + 1; // this points to the first char after separator
 #ifdef _WIN32
     p = strstr(p ? p : base, "jvm");
+    if (p != NULL) jvm_offset = p - base;     // this points to 'j' in jvm.
 #else
     p = strstr(p ? p : base, "libjvm");
+    if (p != NULL) jvm_offset = p - base + 3; // this points to 'j' in libjvm.
 #endif
-    if (p != NULL) lib_offset = p - base + 1;
-    if (p != NULL) jvm_offset = p - base;
   }
 #endif
 
@@ -794,11 +798,13 @@ bool Disassembler::load_library(outputStream* st) {
     // 1. <home>/jre/lib/<arch>/<vm>/libhsdis-<arch>.so
     strcpy(&buf[jvm_offset], hsdis_library_name);
     strcat(&buf[jvm_offset], os::dll_file_extension());
+    if (Verbose) st->print_cr("Trying to load: %s", buf);
     _library = os::dll_load(buf, ebuf, sizeof ebuf);
     if (_library == NULL && lib_offset >= 0) {
       // 2. <home>/jre/lib/<arch>/<vm>/hsdis-<arch>.so
       strcpy(&buf[lib_offset], hsdis_library_name);
       strcat(&buf[lib_offset], os::dll_file_extension());
+      if (Verbose) st->print_cr("Trying to load: %s", buf);
       _library = os::dll_load(buf, ebuf, sizeof ebuf);
     }
     if (_library == NULL && lib_offset > 0) {
@@ -809,6 +815,7 @@ bool Disassembler::load_library(outputStream* st) {
         lib_offset = p - buf + 1;
         strcpy(&buf[lib_offset], hsdis_library_name);
         strcat(&buf[lib_offset], os::dll_file_extension());
+        if (Verbose) st->print_cr("Trying to load: %s", buf);
         _library = os::dll_load(buf, ebuf, sizeof ebuf);
       }
     }
@@ -817,6 +824,7 @@ bool Disassembler::load_library(outputStream* st) {
     // 4. hsdis-<arch>.so  (using LD_LIBRARY_PATH)
     strcpy(&buf[0], hsdis_library_name);
     strcat(&buf[0], os::dll_file_extension());
+    if (Verbose) st->print_cr("Trying to load: %s via LD_LIBRARY_PATH or equivalent", buf);
     _library = os::dll_load(buf, ebuf, sizeof ebuf);
   }
 

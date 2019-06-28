@@ -56,10 +56,14 @@ private:
   ShenandoahSerialRoot  _management_root;
   ShenandoahSerialRoot  _system_dictionary_root;
   ShenandoahSerialRoot  _jvmti_root;
-  ShenandoahSerialRoot  _jni_handle_root;
 public:
   ShenandoahSerialRoots();
   void oops_do(OopClosure* cl, uint worker_id);
+};
+
+class ShenandoahJNIHandleRoots : public ShenandoahSerialRoot {
+public:
+  ShenandoahJNIHandleRoots();
 };
 
 class ShenandoahThreadRoots {
@@ -126,6 +130,7 @@ template <typename ITR>
 class ShenandoahRootScanner : public ShenandoahRootProcessor {
 private:
   ShenandoahSerialRoots          _serial_roots;
+  ShenandoahJNIHandleRoots       _jni_roots;
   ShenandoahClassLoaderDataRoots _cld_roots;
   ShenandoahThreadRoots          _thread_roots;
   ShenandoahCodeCacheRoots<ITR>  _code_roots;
@@ -141,6 +146,8 @@ public:
   // roots when class unloading is disabled during this cycle
   void roots_do(uint worker_id, OopClosure* cl);
   void roots_do(uint worker_id, OopClosure* oops, CLDClosure* clds, CodeBlobClosure* code, ThreadClosure* tc = NULL);
+  // For heap object iteration
+  void roots_do_unchecked(OopClosure* cl);
 };
 
 typedef ShenandoahRootScanner<ShenandoahAllCodeRootsIterator> ShenandoahAllRootScanner;
@@ -150,6 +157,7 @@ typedef ShenandoahRootScanner<ShenandoahCsetCodeRootsIterator> ShenandoahCSetRoo
 class ShenandoahRootEvacuator : public ShenandoahRootProcessor {
 private:
   ShenandoahSerialRoots          _serial_roots;
+  ShenandoahJNIHandleRoots       _jni_roots;
   ShenandoahClassLoaderDataRoots _cld_roots;
   ShenandoahThreadRoots          _thread_roots;
   ShenandoahWeakRoots            _weak_roots;
@@ -166,6 +174,7 @@ public:
 class ShenandoahRootUpdater : public ShenandoahRootProcessor {
 private:
   ShenandoahSerialRoots          _serial_roots;
+  ShenandoahJNIHandleRoots       _jni_roots;
   ShenandoahClassLoaderDataRoots _cld_roots;
   ShenandoahThreadRoots          _thread_roots;
   ShenandoahWeakRoots            _weak_roots;
@@ -184,6 +193,7 @@ public:
 class ShenandoahRootAdjuster : public ShenandoahRootProcessor {
 private:
   ShenandoahSerialRoots          _serial_roots;
+  ShenandoahJNIHandleRoots       _jni_roots;
   ShenandoahClassLoaderDataRoots _cld_roots;
   ShenandoahThreadRoots          _thread_roots;
   ShenandoahWeakRoots            _weak_roots;

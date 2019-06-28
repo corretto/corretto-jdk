@@ -654,6 +654,7 @@ Compile::Compile( ciEnv* ci_env, C2Compiler* compiler, ciMethod* target, int osr
                   _trace_opto_output(directive->TraceOptoOutputOption),
 #endif
                   _has_method_handle_invokes(false),
+                  _clinit_barrier_on_entry(false),
                   _comp_arena(mtCompiler),
                   _barrier_set_state(BarrierSet::barrier_set()->barrier_set_c2()->create_barrier_state(comp_arena())),
                   _env(ci_env),
@@ -988,6 +989,7 @@ Compile::Compile( ciEnv* ci_env,
     _trace_opto_output(directive->TraceOptoOutputOption),
 #endif
     _has_method_handle_invokes(false),
+    _clinit_barrier_on_entry(false),
     _comp_arena(mtCompiler),
     _env(ci_env),
     _directive(directive),
@@ -1170,6 +1172,9 @@ void Compile::Init(int aliaslevel) {
     }
   }
 #endif
+  if (VM_Version::supports_fast_class_init_checks() && has_method() && !is_osr_compilation() && method()->needs_clinit_barrier()) {
+    set_clinit_barrier_on_entry(true);
+  }
   if (debug_info()->recording_non_safepoints()) {
     set_node_note_array(new(comp_arena()) GrowableArray<Node_Notes*>
                         (comp_arena(), 8, 0, NULL));
@@ -2206,8 +2211,8 @@ void Compile::Optimize() {
 
 #endif
 
-#ifdef ASSERT
   BarrierSetC2* bs = BarrierSet::barrier_set()->barrier_set_c2();
+#ifdef ASSERT
   bs->verify_gc_barriers(this, BarrierSetC2::BeforeOptimize);
 #endif
 
@@ -2366,7 +2371,6 @@ void Compile::Optimize() {
     igvn = ccp;
     igvn.optimize();
   }
-
   print_method(PHASE_ITER_GVN2, 2);
 
   if (failing())  return;
@@ -2376,12 +2380,6 @@ void Compile::Optimize() {
   if (!optimize_loops(igvn, LoopOptsDefault)) {
     return;
   }
-
-#if INCLUDE_ZGC
-  if (UseZGC) {
-    ZBarrierSetC2::find_dominating_barriers(igvn);
-  }
-#endif
 
   if (failing())  return;
 
@@ -2402,28 +2400,33 @@ void Compile::Optimize() {
   }
 
 #ifdef ASSERT
-  BarrierSetC2* bs = BarrierSet::barrier_set()->barrier_set_c2();
-  bs->verify_gc_barriers(this, BarrierSetC2::BeforeExpand);
+  bs->verify_gc_barriers(this, BarrierSetC2::BeforeLateInsertion);
+#endif
+
+  bs->barrier_insertion_phase(C, igvn);
+  if (failing())  return;
+
+#ifdef ASSERT
+  bs->verify_gc_barriers(this, BarrierSetC2::BeforeMacroExpand);
 #endif
 
   {
     TracePhase tp("macroExpand", &timers[_t_macroExpand]);
     PhaseMacroExpand  mex(igvn);
-    print_method(PHASE_BEFORE_MACRO_EXPANSION, 2);
     if (mex.expand_macro_nodes()) {
       assert(failing(), "must bail out w/ explicit message");
       return;
     }
+    print_method(PHASE_MACRO_EXPANSION, 2);
   }
 
   {
     TracePhase tp("barrierExpand", &timers[_t_barrierExpand]);
-    print_method(PHASE_BEFORE_BARRIER_EXPAND, 2);
-    BarrierSetC2* bs = BarrierSet::barrier_set()->barrier_set_c2();
     if (bs->expand_barriers(this, igvn)) {
       assert(failing(), "must bail out w/ explicit message");
       return;
     }
+    print_method(PHASE_BARRIER_EXPANSION, 2);
   }
 
   if (opaque4_count() > 0) {
@@ -2819,7 +2822,7 @@ void Compile::final_graph_reshaping_impl( Node *n, Final_Reshape_Counts &frc) {
     MemBarNode* mb = n->as_MemBar();
     if (mb->trailing_store() || mb->trailing_load_store()) {
       assert(mb->leading_membar()->trailing_membar() == mb, "bad membar pair");
-      Node* mem = mb->in(MemBarNode::Precedent);
+      Node* mem = BarrierSet::barrier_set()->barrier_set_c2()->step_over_gc_barrier(mb->in(MemBarNode::Precedent));
       assert((mb->trailing_store() && mem->is_Store() && mem->as_Store()->is_release()) ||
              (mb->trailing_load_store() && mem->is_LoadStore()), "missing mem op");
     } else if (mb->leading()) {
@@ -3841,9 +3844,42 @@ void Compile::set_allowed_deopt_reasons() {
   }
 }
 
-bool Compile::is_compiling_clinit_for(ciKlass* k) {
-  ciMethod* root = method(); // the root method of compilation
-  return root->is_static_initializer() && root->holder() == k; // access in the context of clinit
+bool Compile::needs_clinit_barrier(ciMethod* method, ciMethod* accessing_method) {
+  return method->is_static() && needs_clinit_barrier(method->holder(), accessing_method);
+}
+
+bool Compile::needs_clinit_barrier(ciField* field, ciMethod* accessing_method) {
+  return field->is_static() && needs_clinit_barrier(field->holder(), accessing_method);
+}
+
+bool Compile::needs_clinit_barrier(ciInstanceKlass* holder, ciMethod* accessing_method) {
+  if (holder->is_initialized()) {
+    return false;
+  }
+  if (holder->is_being_initialized()) {
+    if (accessing_method->holder() == holder) {
+      // Access inside a class. The barrier can be elided when access happens in <clinit>,
+      // <init>, or a static method. In all those cases, there was an initialization
+      // barrier on the holder klass passed.
+      if (accessing_method->is_static_initializer() ||
+          accessing_method->is_object_initializer() ||
+          accessing_method->is_static()) {
+        return false;
+      }
+    } else if (accessing_method->holder()->is_subclass_of(holder)) {
+      // Access from a subclass. The barrier can be elided only when access happens in <clinit>.
+      // In case of <init> or a static method, the barrier is on the subclass is not enough:
+      // child class can become fully initialized while its parent class is still being initialized.
+      if (accessing_method->is_static_initializer()) {
+        return false;
+      }
+    }
+    ciMethod* root = method(); // the root method of compilation
+    if (root != accessing_method) {
+      return needs_clinit_barrier(holder, root); // check access in the context of compilation root
+    }
+  }
+  return true;
 }
 
 #ifndef PRODUCT

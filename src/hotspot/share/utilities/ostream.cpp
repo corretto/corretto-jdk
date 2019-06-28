@@ -312,6 +312,7 @@ stringStream::stringStream(size_t initial_size) : outputStream() {
   buffer        = NEW_C_HEAP_ARRAY(char, buffer_length, mtInternal);
   buffer_pos    = 0;
   buffer_fixed  = false;
+  zero_terminate();
 }
 
 // useful for output to fixed chunks of memory, such as performance counters
@@ -320,6 +321,7 @@ stringStream::stringStream(char* fixed_buffer, size_t fixed_buffer_size) : outpu
   buffer        = fixed_buffer;
   buffer_pos    = 0;
   buffer_fixed  = true;
+  zero_terminate();
 }
 
 void stringStream::write(const char* s, size_t len) {
@@ -343,9 +345,9 @@ void stringStream::write(const char* s, size_t len) {
   // invariant: buffer is always null-terminated
   guarantee(buffer_pos + write_len + 1 <= buffer_length, "stringStream oob");
   if (write_len > 0) {
-    buffer[buffer_pos + write_len] = 0;
     memcpy(buffer + buffer_pos, s, write_len);
     buffer_pos += write_len;
+    zero_terminate();
   }
 
   // Note that the following does not depend on write_len.
@@ -354,7 +356,18 @@ void stringStream::write(const char* s, size_t len) {
   update_position(s, len);
 }
 
-char* stringStream::as_string() {
+void stringStream::zero_terminate() {
+  assert(buffer != NULL &&
+         buffer_pos < buffer_length, "sanity");
+  buffer[buffer_pos] = '\0';
+}
+
+void stringStream::reset() {
+  buffer_pos = 0; _precount = 0; _position = 0;
+  zero_terminate();
+}
+
+char* stringStream::as_string() const {
   char* copy = NEW_RESOURCE_ARRAY(char, buffer_pos + 1);
   strncpy(copy, buffer, buffer_pos);
   copy[buffer_pos] = 0;  // terminating null
@@ -939,6 +952,7 @@ bufferedStream::bufferedStream(size_t initial_size, size_t bufmax) : outputStrea
   buffer_pos    = 0;
   buffer_fixed  = false;
   buffer_max    = bufmax;
+  truncated     = false;
 }
 
 bufferedStream::bufferedStream(char* fixed_buffer, size_t fixed_buffer_size, size_t bufmax) : outputStream() {
@@ -947,12 +961,17 @@ bufferedStream::bufferedStream(char* fixed_buffer, size_t fixed_buffer_size, siz
   buffer_pos    = 0;
   buffer_fixed  = true;
   buffer_max    = bufmax;
+  truncated     = false;
 }
 
 void bufferedStream::write(const char* s, size_t len) {
 
+  if (truncated) {
+    return;
+  }
+
   if(buffer_pos + len > buffer_max) {
-    flush();
+    flush(); // Note: may be a noop.
   }
 
   size_t end = buffer_pos + len;
@@ -960,19 +979,42 @@ void bufferedStream::write(const char* s, size_t len) {
     if (buffer_fixed) {
       // if buffer cannot resize, silently truncate
       len = buffer_length - buffer_pos - 1;
+      truncated = true;
     } else {
       // For small overruns, double the buffer.  For larger ones,
       // increase to the requested size.
       if (end < buffer_length * 2) {
         end = buffer_length * 2;
       }
-      buffer = REALLOC_C_HEAP_ARRAY(char, buffer, end, mtInternal);
-      buffer_length = end;
+      // Impose a cap beyond which the buffer cannot grow - a size which
+      // in all probability indicates a real error, e.g. faulty printing
+      // code looping, while not affecting cases of just-very-large-but-its-normal
+      // output.
+      const size_t reasonable_cap = MAX2(100 * M, buffer_max * 2);
+      if (end > reasonable_cap) {
+        // In debug VM, assert right away.
+        assert(false, "Exceeded max buffer size for this string.");
+        // Release VM: silently truncate. We do this since these kind of errors
+        // are both difficult to predict with testing (depending on logging content)
+        // and usually not serious enough to kill a production VM for it.
+        end = reasonable_cap;
+        size_t remaining = end - buffer_pos;
+        if (len >= remaining) {
+          len = remaining - 1;
+          truncated = true;
+        }
+      }
+      if (buffer_length < end) {
+        buffer = REALLOC_C_HEAP_ARRAY(char, buffer, end, mtInternal);
+        buffer_length = end;
+      }
     }
   }
-  memcpy(buffer + buffer_pos, s, len);
-  buffer_pos += len;
-  update_position(s, len);
+  if (len > 0) {
+    memcpy(buffer + buffer_pos, s, len);
+    buffer_pos += len;
+    update_position(s, len);
+  }
 }
 
 char* bufferedStream::as_string() {

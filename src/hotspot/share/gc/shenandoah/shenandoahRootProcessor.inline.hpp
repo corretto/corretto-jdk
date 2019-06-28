@@ -27,6 +27,7 @@
 #include "gc/shenandoah/shenandoahHeuristics.hpp"
 #include "gc/shenandoah/shenandoahRootProcessor.hpp"
 #include "gc/shenandoah/shenandoahTimingTracker.hpp"
+#include "gc/shenandoah/shenandoahUtils.hpp"
 #include "memory/resourceArea.hpp"
 
 template <typename IsAlive, typename KeepAlive>
@@ -90,13 +91,15 @@ void ShenandoahRootScanner<ITR>::strong_roots_do(uint worker_id, OopClosure* oop
 
 template <typename ITR>
 void ShenandoahRootScanner<ITR>::roots_do(uint worker_id, OopClosure* oops, CLDClosure* clds, CodeBlobClosure* code, ThreadClosure *tc) {
-  assert(!ShenandoahHeap::heap()->unload_classes() ||
+  assert(!ShenandoahSafepoint::is_at_shenandoah_safepoint() ||
+         !ShenandoahHeap::heap()->unload_classes() ||
           ShenandoahHeap::heap()->heuristics()->can_do_traversal_gc(),
-          "No class unloading or traversal GC");
+          "Expect class unloading or traversal when Shenandoah cycle is running");
   ShenandoahParallelOopsDoThreadClosure tc_cl(oops, code, tc);
   ResourceMark rm;
 
   _serial_roots.oops_do(oops, worker_id);
+  _jni_roots.oops_do(oops, worker_id);
   _cld_roots.clds_do(clds, clds, worker_id);
   _thread_roots.threads_do(&tc_cl, worker_id);
 
@@ -109,12 +112,27 @@ void ShenandoahRootScanner<ITR>::roots_do(uint worker_id, OopClosure* oops, CLDC
 }
 
 template <typename ITR>
+void ShenandoahRootScanner<ITR>::roots_do_unchecked(OopClosure* oops) {
+  CLDToOopClosure clds(oops, ClassLoaderData::_claim_strong);
+  MarkingCodeBlobClosure code(oops, !CodeBlobToOopClosure::FixRelocations);
+  ShenandoahParallelOopsDoThreadClosure tc_cl(oops, &code, NULL);
+  ResourceMark rm;
+
+  _serial_roots.oops_do(oops, 0);
+  _jni_roots.oops_do(oops, 0);
+  _cld_roots.clds_do(&clds, &clds, 0);
+  _thread_roots.threads_do(&tc_cl, 0);
+  _code_roots.code_blobs_do(&code, 0);
+}
+
+template <typename ITR>
 void ShenandoahRootScanner<ITR>::strong_roots_do(uint worker_id, OopClosure* oops, CLDClosure* clds, CodeBlobClosure* code, ThreadClosure* tc) {
   assert(ShenandoahHeap::heap()->unload_classes(), "Should be used during class unloading");
   ShenandoahParallelOopsDoThreadClosure tc_cl(oops, code, tc);
   ResourceMark rm;
 
   _serial_roots.oops_do(oops, worker_id);
+  _jni_roots.oops_do(oops, worker_id);
   _cld_roots.clds_do(clds, NULL, worker_id);
   _thread_roots.threads_do(&tc_cl, worker_id);
 }
@@ -126,6 +144,7 @@ void ShenandoahRootUpdater::roots_do(uint worker_id, IsAlive* is_alive, KeepAliv
   CLDToOopClosure* weak_clds = ShenandoahHeap::heap()->unload_classes() ? NULL : &clds;
 
   _serial_roots.oops_do(keep_alive, worker_id);
+  _jni_roots.oops_do(keep_alive, worker_id);
 
   _thread_roots.oops_do(keep_alive, NULL, worker_id);
   _cld_roots.clds_do(&clds, weak_clds, worker_id);

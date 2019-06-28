@@ -1152,6 +1152,11 @@ class JavaThread: public Thread {
  public:
   static jlong* _jvmci_old_thread_counters;
   static void collect_counters(jlong* array, int length);
+
+  bool resize_counters(int current_size, int new_size);
+
+  static bool resize_all_jvmci_counters(int new_size);
+
  private:
 #endif // INCLUDE_JVMCI
 
@@ -1918,7 +1923,7 @@ class JavaThread: public Thread {
   void deoptimize();
   void make_zombies();
 
-  void deoptimized_wrt_marked_nmethods();
+  void deoptimize_marked_methods(bool in_handshake);
 
  public:
   // Returns the running thread as a JavaThread

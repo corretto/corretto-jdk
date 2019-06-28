@@ -267,7 +267,7 @@ void SymbolTable::symbols_do(SymbolClosure *cl) {
   // all symbols from the dynamic table
   SymbolsDo sd(cl);
   if (!_local_table->try_scan(Thread::current(), sd)) {
-    log_info(stringtable)("symbols_do unavailable at this moment");
+    log_info(symboltable)("symbols_do unavailable at this moment");
   }
 }
 
@@ -557,7 +557,7 @@ void SymbolTable::verify() {
   Thread* thr = Thread::current();
   VerifySymbols vs;
   if (!_local_table->try_scan(thr, vs)) {
-    log_info(stringtable)("verify unavailable at this moment");
+    log_info(symboltable)("verify unavailable at this moment");
   }
 }
 
@@ -623,13 +623,11 @@ size_t SymbolTable::estimate_size_for_archive() {
 }
 
 void SymbolTable::write_to_archive(bool is_static_archive) {
-  _shared_table.reset();
-  _dynamic_shared_table.reset();
-
   CompactHashtableWriter writer(int(_items_count),
                                 &MetaspaceShared::stats()->symbol);
   copy_shared_symbol_table(&writer);
   if (is_static_archive) {
+    _shared_table.reset();
     writer.dump(&_shared_table, "symbol");
 
     // Verify table is correct
@@ -639,6 +637,7 @@ void SymbolTable::write_to_archive(bool is_static_archive) {
     unsigned int hash = hash_symbol(name, len, _alt_hash);
     assert(sym == _shared_table.lookup(name, hash, len), "sanity");
   } else {
+    _dynamic_shared_table.reset();
     writer.dump(&_dynamic_shared_table, "symbol");
   }
 }
@@ -764,8 +763,9 @@ bool SymbolTable::do_rehash() {
     return false;
   }
 
-  // We use max size
-  SymbolTableHash* new_table = new SymbolTableHash(END_SIZE, END_SIZE, REHASH_LEN);
+  // We use current size
+  size_t new_size = _local_table->get_size_log2(Thread::current());
+  SymbolTableHash* new_table = new SymbolTableHash(new_size, END_SIZE, REHASH_LEN);
   // Use alt hash from now on
   _alt_hash = true;
   if (!_local_table->try_move_nodes_to(Thread::current(), new_table)) {

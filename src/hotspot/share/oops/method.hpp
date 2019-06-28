@@ -463,7 +463,17 @@ class Method : public Metadata {
   address verified_code_entry();
   bool check_code() const;      // Not inline to avoid circular ref
   CompiledMethod* volatile code() const;
-  void clear_code(bool acquire_lock = true);    // Clear out any compiled code
+
+  // Locks CompiledMethod_lock if not held.
+  void unlink_code(CompiledMethod *compare);
+  // Locks CompiledMethod_lock if not held.
+  void unlink_code();
+
+private:
+  // Either called with CompiledMethod_lock held or from constructor.
+  void clear_code();
+
+public:
   static void set_code(const methodHandle& mh, CompiledMethod* code);
   void set_adapter_entry(AdapterHandlerEntry* adapter) {
     constMethod()->set_adapter_entry(adapter);
@@ -688,6 +698,8 @@ class Method : public Metadata {
 #ifdef TIERED
   bool has_aot_code() const                      { return aot_code() != NULL; }
 #endif
+
+  bool needs_clinit_barrier() const;
 
   // sizing
   static int header_size()                       {
@@ -933,14 +945,14 @@ class Method : public Metadata {
   // whether it is not compilable for another reason like having a
   // breakpoint set in it.
   bool  is_not_compilable(int comp_level = CompLevel_any) const;
-  void set_not_compilable(int comp_level = CompLevel_all, bool report = true, const char* reason = NULL);
-  void set_not_compilable_quietly(int comp_level = CompLevel_all) {
-    set_not_compilable(comp_level, false);
+  void set_not_compilable(const char* reason, int comp_level = CompLevel_all, bool report = true);
+  void set_not_compilable_quietly(const char* reason, int comp_level = CompLevel_all) {
+    set_not_compilable(reason, comp_level, false);
   }
   bool  is_not_osr_compilable(int comp_level = CompLevel_any) const;
-  void set_not_osr_compilable(int comp_level = CompLevel_all, bool report = true, const char* reason = NULL);
-  void set_not_osr_compilable_quietly(int comp_level = CompLevel_all) {
-    set_not_osr_compilable(comp_level, false);
+  void set_not_osr_compilable(const char* reason, int comp_level = CompLevel_all, bool report = true);
+  void set_not_osr_compilable_quietly(const char* reason, int comp_level = CompLevel_all) {
+    set_not_osr_compilable(reason, comp_level, false);
   }
   bool is_always_compilable() const;
 

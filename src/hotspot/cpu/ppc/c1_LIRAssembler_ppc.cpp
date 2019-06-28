@@ -79,6 +79,21 @@ int LIR_Assembler::check_icache() {
   return offset;
 }
 
+void LIR_Assembler::clinit_barrier(ciMethod* method) {
+  assert(!method->holder()->is_not_initialized(), "initialization should have been started");
+
+  Label L_skip_barrier;
+  Register klass = R20;
+
+  metadata2reg(method->holder()->constant_encoding(), klass);
+  __ clinit_barrier(klass, R16_thread, &L_skip_barrier /*L_fast_path*/);
+
+  __ load_const_optimized(klass, SharedRuntime::get_handle_wrong_method_stub(), R0);
+  __ mtctr(klass);
+  __ bctr();
+
+  __ bind(L_skip_barrier);
+}
 
 void LIR_Assembler::osr_entry() {
   // On-stack-replacement entry sequence:

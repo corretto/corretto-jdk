@@ -518,7 +518,7 @@ WB_ENTRY(jlong, WB_DramReservedEnd(JNIEnv* env, jobject o))
       uint end_region = HeterogeneousHeapRegionManager::manager()->end_index_of_dram();
       return (jlong)(g1h->base() + (end_region + 1) * HeapRegion::GrainBytes - 1);
     } else {
-      return (jlong)g1h->base() + G1Arguments::heap_reserved_size_bytes();
+      return (jlong)g1h->base() + G1Arguments::heap_max_size_bytes();
     }
   }
 #endif // INCLUDE_G1GC
@@ -822,10 +822,8 @@ WB_ENTRY(jint, WB_DeoptimizeFrames(JNIEnv* env, jobject o, jboolean make_not_ent
 WB_END
 
 WB_ENTRY(void, WB_DeoptimizeAll(JNIEnv* env, jobject o))
-  MutexLocker mu(Compile_lock);
   CodeCache::mark_all_nmethods_for_deoptimization();
-  VM_Deoptimize op;
-  VMThread::execute(&op);
+  Deoptimization::deoptimize_all_marked();
 WB_END
 
 WB_ENTRY(jint, WB_DeoptimizeMethod(JNIEnv* env, jobject o, jobject method, jboolean is_osr))
@@ -842,8 +840,7 @@ WB_ENTRY(jint, WB_DeoptimizeMethod(JNIEnv* env, jobject o, jobject method, jbool
   }
   result += CodeCache::mark_for_deoptimization(mh());
   if (result > 0) {
-    VM_Deoptimize op;
-    VMThread::execute(&op);
+    Deoptimization::deoptimize_all_marked();
   }
   return result;
 WB_END
@@ -922,9 +919,9 @@ WB_ENTRY(void, WB_MakeMethodNotCompilable(JNIEnv* env, jobject o, jobject method
   CHECK_JNI_EXCEPTION(env);
   methodHandle mh(THREAD, Method::checked_resolve_jmethod_id(jmid));
   if (is_osr) {
-    mh->set_not_osr_compilable(comp_level, true /* report */, "WhiteBox");
+    mh->set_not_osr_compilable("WhiteBox", comp_level);
   } else {
-    mh->set_not_compilable(comp_level, true /* report */, "WhiteBox");
+    mh->set_not_compilable("WhiteBox", comp_level);
   }
 WB_END
 

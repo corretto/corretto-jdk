@@ -35,7 +35,6 @@
 #include "gc/shenandoah/shenandoahCollectionSet.hpp"
 #include "gc/shenandoah/shenandoahCollectorPolicy.hpp"
 #include "gc/shenandoah/shenandoahFreeSet.hpp"
-#include "gc/shenandoah/shenandoahForwarding.hpp"
 #include "gc/shenandoah/shenandoahPhaseTimings.hpp"
 #include "gc/shenandoah/shenandoahHeap.inline.hpp"
 #include "gc/shenandoah/shenandoahHeapRegionSet.inline.hpp"
@@ -403,7 +402,7 @@ void ShenandoahTraversalGC::init_traversal_collection() {
     assert(_task_queues->is_empty(), "queues must be empty before traversal GC");
     TASKQUEUE_STATS_ONLY(_task_queues->reset_taskqueue_stats());
 
-#if defined(COMPILER2) || INCLUDE_JVMCI
+#if COMPILER2_OR_JVMCI
     DerivedPointerTable::clear();
 #endif
 
@@ -415,7 +414,7 @@ void ShenandoahTraversalGC::init_traversal_collection() {
       _heap->workers()->run_task(&traversal_task);
     }
 
-#if defined(COMPILER2) || INCLUDE_JVMCI
+#if COMPILER2_OR_JVMCI
     DerivedPointerTable::update_pointers();
 #endif
   }
@@ -572,7 +571,7 @@ void ShenandoahTraversalGC::final_traversal_collection() {
   _heap->make_parsable(true);
 
   if (!_heap->cancelled_gc()) {
-#if defined(COMPILER2) || INCLUDE_JVMCI
+#if COMPILER2_OR_JVMCI
     DerivedPointerTable::clear();
 #endif
     ShenandoahGCPhase phase_work(ShenandoahPhaseTimings::final_traversal_gc_work);
@@ -586,7 +585,7 @@ void ShenandoahTraversalGC::final_traversal_collection() {
     ShenandoahTaskTerminator terminator(nworkers, task_queues());
     ShenandoahFinalTraversalCollectionTask task(&rp, &terminator);
     _heap->workers()->run_task(&task);
-#if defined(COMPILER2) || INCLUDE_JVMCI
+#if COMPILER2_OR_JVMCI
     DerivedPointerTable::update_pointers();
 #endif
   }
@@ -633,7 +632,7 @@ void ShenandoahTraversalGC::final_traversal_collection() {
         bool candidate = traversal_regions->is_in(r) && !r->has_live() && not_allocated;
         if (r->is_humongous_start() && candidate) {
           // Trash humongous.
-          HeapWord* humongous_obj = r->bottom() + ShenandoahForwarding::word_size();
+          HeapWord* humongous_obj = r->bottom();
           assert(!ctx->is_marked(oop(humongous_obj)), "must not be marked");
           r->make_trash_immediate();
           while (i + 1 < num_regions && _heap->get_region(i + 1)->is_humongous_continuation()) {
@@ -707,13 +706,13 @@ public:
 };
 
 void ShenandoahTraversalGC::fixup_roots() {
-#if defined(COMPILER2) || INCLUDE_JVMCI
+#if COMPILER2_OR_JVMCI
   DerivedPointerTable::clear();
 #endif
   ShenandoahRootUpdater rp(_heap->workers()->active_workers(), ShenandoahPhaseTimings::final_traversal_update_roots, true /* update code cache */);
   ShenandoahTraversalFixRootsTask update_roots_task(&rp);
   _heap->workers()->run_task(&update_roots_task);
-#if defined(COMPILER2) || INCLUDE_JVMCI
+#if COMPILER2_OR_JVMCI
   DerivedPointerTable::update_pointers();
 #endif
 }
