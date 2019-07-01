@@ -2648,6 +2648,8 @@ public class Basic {
     // A Policy class designed to make permissions fiddling very easy.
     //----------------------------------------------------------------
     private static class Policy extends java.security.Policy {
+        static final java.security.Policy DEFAULT_POLICY = java.security.Policy.getPolicy();
+
         private Permissions perms;
 
         public void setPermissions(Permission...permissions) {
@@ -2667,7 +2669,7 @@ public class Basic {
         }
 
         public boolean implies(ProtectionDomain pd, Permission p) {
-            return perms.implies(p);
+            return perms.implies(p) || DEFAULT_POLICY.implies(pd, p);
         }
 
         public void refresh() {}
