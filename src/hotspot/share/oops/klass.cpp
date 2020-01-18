@@ -57,10 +57,6 @@ void Klass::set_java_mirror(Handle m) {
   _java_mirror = class_loader_data()->add_handle(m);
 }
 
-oop Klass::java_mirror() const {
-  return _java_mirror.resolve();
-}
-
 oop Klass::java_mirror_no_keepalive() const {
   return _java_mirror.peek();
 }
@@ -568,12 +564,6 @@ void Klass::restore_unshareable_info(ClassLoaderData* loader_data, Handle protec
     // Restore class_loader_data to the null class loader data
     set_class_loader_data(loader_data);
 
-    // Workaround for suspected bug.  Make sure other threads see this assignment.
-    // This shouldn't be necessary but the compiler thread seems to be behind
-    // the times, even though this thread takes MethodCompileQueue_lock and the thread
-    // that doesn't see this value also takes that lock.
-    OrderAccess::fence();
-
     // Add to null class loader list first before creating the mirror
     // (same order as class file parsing)
     loader_data->add_class(this);
@@ -680,8 +670,6 @@ void Klass::check_array_allocation_length(int length, int max_length, TRAPS) {
     THROW_MSG(vmSymbols::java_lang_NegativeArraySizeException(), err_msg("%d", length));
   }
 }
-
-oop Klass::class_loader() const { return class_loader_data()->class_loader(); }
 
 // In product mode, this function doesn't have virtual function calls so
 // there might be some performance advantage to handling InstanceKlass here.
@@ -826,14 +814,6 @@ bool Klass::is_valid(Klass* k) {
   return ClassLoaderDataGraph::is_valid(k->class_loader_data());
 }
 
-klassVtable Klass::vtable() const {
-  return klassVtable(const_cast<Klass*>(this), start_of_vtable(), vtable_length() / vtableEntry::size());
-}
-
-vtableEntry* Klass::start_of_vtable() const {
-  return (vtableEntry*) ((address)this + in_bytes(vtable_start_offset()));
-}
-
 Method* Klass::method_at_vtable(int index)  {
 #ifndef PRODUCT
   assert(index >= 0, "valid vtable index");
@@ -844,9 +824,6 @@ Method* Klass::method_at_vtable(int index)  {
   return start_of_vtable()[index].method();
 }
 
-ByteSize Klass::vtable_start_offset() {
-  return in_ByteSize(InstanceKlass::header_size() * wordSize);
-}
 
 #ifndef PRODUCT
 

@@ -78,7 +78,7 @@ import org.graalvm.compiler.phases.util.Providers;
 import org.graalvm.compiler.runtime.RuntimeProvider;
 import org.graalvm.compiler.serviceprovider.JavaVersionUtil;
 import org.graalvm.compiler.test.AddExports;
-import org.graalvm.compiler.test.ModuleSupport;
+import org.graalvm.compiler.api.test.ModuleSupport;
 import jdk.internal.vm.compiler.word.LocationIdentity;
 import org.junit.Assert;
 import org.junit.Assume;
@@ -432,6 +432,16 @@ public class CheckGraalInvariants extends GraalCompilerTest {
             try {
                 Class<?> c = Class.forName(className, true, CheckGraalInvariants.class.getClassLoader());
                 classes.add(c);
+            } catch (UnsupportedClassVersionError e) {
+                // graal-test.jar can contain classes compiled for different Java versions
+            } catch (NoClassDefFoundError e) {
+                if (!e.getMessage().contains("Could not initialize class")) {
+                    throw e;
+                } else {
+                    // A second or later attempt to initialize a class
+                    // results in this confusing error where the
+                    // original cause of initialization failure is lost
+                }
             } catch (Throwable t) {
                 tool.handleClassLoadingException(t);
             }
