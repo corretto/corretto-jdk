@@ -110,8 +110,10 @@ public class TestG1ParallelPhases {
             "StringDedupQueueFixup",
             "StringDedupTableFixup",
             "RedirtyCards",
+            "ParFreeCSet",
             "NonYoungFreeCSet",
-            "YoungFreeCSet"
+            "YoungFreeCSet",
+            "RebuildFreeList"
         );
 
         // Some GC phases may or may not occur depending on environment. Filter them out
@@ -176,6 +178,9 @@ class Provoker {
     public static void provokeMixedGC(int g1HeapRegionSize) {
         final var arraySize = 20_000;
         var liveOldObjects = new ArrayList<byte[]>();
+
+        // Make sure the heap is in a known state.
+        getWhiteBox().fullGC();
         allocateOldObjects(liveOldObjects, g1HeapRegionSize, arraySize);
         waitTillCMCFinished(10);
         getWhiteBox().g1StartConcMarkCycle();

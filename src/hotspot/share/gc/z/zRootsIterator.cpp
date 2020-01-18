@@ -39,6 +39,7 @@
 #include "gc/z/zRootsIterator.hpp"
 #include "gc/z/zStat.hpp"
 #include "gc/z/zThreadLocalData.hpp"
+#include "memory/iterator.hpp"
 #include "memory/resourceArea.hpp"
 #include "memory/universe.hpp"
 #include "prims/jvmtiExport.hpp"
@@ -91,7 +92,7 @@ ZSerialOopsDo<T, F>::ZSerialOopsDo(T* iter) :
 
 template <typename T, void (T::*F)(ZRootsIteratorClosure*)>
 void ZSerialOopsDo<T, F>::oops_do(ZRootsIteratorClosure* cl) {
-  if (!_claimed && Atomic::cmpxchg(true, &_claimed, false) == false) {
+  if (!_claimed && Atomic::cmpxchg(&_claimed, false, true) == false) {
     (_iter->*F)(cl);
   }
 }
@@ -118,7 +119,7 @@ ZSerialWeakOopsDo<T, F>::ZSerialWeakOopsDo(T* iter) :
 
 template <typename T, void (T::*F)(BoolObjectClosure*, ZRootsIteratorClosure*)>
 void ZSerialWeakOopsDo<T, F>::weak_oops_do(BoolObjectClosure* is_alive, ZRootsIteratorClosure* cl) {
-  if (!_claimed && Atomic::cmpxchg(true, &_claimed, false) == false) {
+  if (!_claimed && Atomic::cmpxchg(&_claimed, false, true) == false) {
     (_iter->*F)(is_alive, cl);
   }
 }
@@ -138,27 +139,32 @@ void ZParallelWeakOopsDo<T, F>::weak_oops_do(BoolObjectClosure* is_alive, ZRoots
   }
 }
 
-class ZRootsIteratorCodeBlobClosure : public CodeBlobToOopClosure {
+class ZRootsIteratorCodeBlobClosure : public CodeBlobClosure {
 private:
-  BarrierSetNMethod* _bs;
+  ZRootsIteratorClosure* const _cl;
+  const bool                   _should_disarm_nmethods;
 
 public:
-  ZRootsIteratorCodeBlobClosure(OopClosure* cl) :
-    CodeBlobToOopClosure(cl, true /* fix_relocations */),
-    _bs(BarrierSet::barrier_set()->barrier_set_nmethod()) {}
+  ZRootsIteratorCodeBlobClosure(ZRootsIteratorClosure* cl) :
+      _cl(cl),
+      _should_disarm_nmethods(cl->should_disarm_nmethods()) {}
 
   virtual void do_code_blob(CodeBlob* cb) {
     nmethod* const nm = cb->as_nmethod_or_null();
     if (nm != NULL && nm->oops_do_try_claim()) {
-      CodeBlobToOopClosure::do_code_blob(cb);
-      _bs->disarm(nm);
+      ZNMethod::nmethod_oops_do(nm, _cl);
+      assert(!ZNMethod::supports_entry_barrier(nm) ||
+             ZNMethod::is_armed(nm) == _should_disarm_nmethods, "Invalid state");
+      if (_should_disarm_nmethods) {
+        ZNMethod::disarm(nm);
+      }
     }
   }
 };
 
 class ZRootsIteratorThreadClosure : public ThreadClosure {
 private:
-  ZRootsIteratorClosure* _cl;
+  ZRootsIteratorClosure* const _cl;
 
 public:
   ZRootsIteratorThreadClosure(ZRootsIteratorClosure* cl) :

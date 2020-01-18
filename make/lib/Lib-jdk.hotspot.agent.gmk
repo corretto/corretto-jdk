@@ -57,7 +57,7 @@ SA_CFLAGS += -DLIBC=\"$(OPENJDK_TARGET_LIBC)\"
 
 SA_TOOLCHAIN := $(TOOLCHAIN_DEFAULT)
 ifeq ($(call isTargetOs, linux), true)
-  SA_TOOLCHAIN := TOOLCHAIN_BUILD_LINK_CXX
+  SA_TOOLCHAIN := TOOLCHAIN_LINK_CXX
 endif
 
 ################################################################################

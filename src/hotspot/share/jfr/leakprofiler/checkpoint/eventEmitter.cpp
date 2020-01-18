@@ -30,6 +30,7 @@
 #include "jfr/leakprofiler/checkpoint/objectSampleCheckpoint.hpp"
 #include "jfr/leakprofiler/sampling/objectSample.hpp"
 #include "jfr/leakprofiler/sampling/objectSampler.hpp"
+#include "jfr/leakprofiler/utilities/unifiedOopRef.inline.hpp"
 #include "logging/log.hpp"
 #include "memory/resourceArea.hpp"
 #include "oops/markWord.hpp"
@@ -109,17 +110,16 @@ void EventEmitter::write_event(const ObjectSample* sample, EdgeStore* edge_store
   assert(edge_store != NULL, "invariant");
   assert(_jfr_thread_local != NULL, "invariant");
 
-  const oop* object_addr = sample->object_addr();
   traceid gc_root_id = 0;
   const Edge* edge = NULL;
   if (SafepointSynchronize::is_at_safepoint()) {
-    edge = (const Edge*)(*object_addr)->mark().to_pointer();
+    edge = (const Edge*)(sample->object())->mark().to_pointer();
   }
   if (edge == NULL) {
     // In order to dump out a representation of the event
     // even though it was not reachable / too long to reach,
     // we need to register a top level edge for this object.
-    edge = edge_store->put(object_addr);
+    edge = edge_store->put(UnifiedOopRef::encode_in_native(sample->object_addr()));
   } else {
     gc_root_id = edge_store->gc_root_id(edge);
   }
@@ -128,10 +128,13 @@ void EventEmitter::write_event(const ObjectSample* sample, EdgeStore* edge_store
   const traceid object_id = edge_store->get_id(edge);
   assert(object_id != 0, "invariant");
 
+  Tickspan object_age = Ticks(_start_time.value()) - sample->allocation_time();
+
   EventOldObjectSample e(UNTIMED);
   e.set_starttime(_start_time);
   e.set_endtime(_end_time);
   e.set_allocationTime(sample->allocation_time());
+  e.set_objectAge(object_age);
   e.set_lastKnownHeapUsage(sample->heap_used_at_last_gc());
   e.set_object(object_id);
   e.set_arrayElements(array_size(edge->pointee()));
