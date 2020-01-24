@@ -448,7 +448,7 @@ var getJibProfilesProfiles = function (input, common, data) {
             target_cpu: "x64",
             dependencies: ["devkit", "cups"],
             configure_args: concat(common.configure_args_64bit,
-                "--with-zlib=system", "--enable-dtrace"),
+                "--with-zlib=system", "--enable-dtrace", "--enable-deprecated-ports=yes"),
         },
 
         "solaris-sparcv9": {
@@ -456,7 +456,7 @@ var getJibProfilesProfiles = function (input, common, data) {
             target_cpu: "sparcv9",
             dependencies: ["devkit", "cups"],
             configure_args: concat(common.configure_args_64bit,
-                "--with-zlib=system", "--enable-dtrace"),
+                "--with-zlib=system", "--enable-dtrace", "--enable-deprecated-ports=yes"),
         },
 
         "windows-x64": {
