@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1997, 2019, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 1997, 2020, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -68,7 +68,6 @@
 #include "runtime/fieldDescriptor.inline.hpp"
 #include "runtime/flags/jvmFlagConstraintList.hpp"
 #include "runtime/flags/jvmFlagRangeList.hpp"
-#include "runtime/flags/jvmFlagWriteableList.hpp"
 #include "runtime/deoptimization.hpp"
 #include "runtime/frame.inline.hpp"
 #include "runtime/handles.inline.hpp"
@@ -1707,6 +1706,7 @@ void JavaThread::initialize() {
   _SleepEvent = ParkEvent::Allocate(this);
   // Setup safepoint state info for this thread
   ThreadSafepointState::create(this);
+  _handshake.set_thread(this);
 
   debug_only(_java_call_counter = 0);
 
@@ -3817,8 +3817,6 @@ jint Threads::create_vm(JavaVMInitArgs* args, bool* canTryAgain) {
   if (!constraint_result) {
     return JNI_EINVAL;
   }
-
-  JVMFlagWriteableList::mark_startup();
 
   if (PauseAtStartup) {
     os::pause();
