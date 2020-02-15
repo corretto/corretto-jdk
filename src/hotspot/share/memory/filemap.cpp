@@ -210,6 +210,8 @@ void FileMapHeader::populate(FileMapInfo* mapinfo, size_t alignment) {
   _narrow_oop_mode = CompressedOops::mode();
   _narrow_oop_base = CompressedOops::base();
   _narrow_oop_shift = CompressedOops::shift();
+  _compressed_oops = UseCompressedOops;
+  _compressed_class_ptrs = UseCompressedClassPointers;
   _max_heap_size = MaxHeapSize;
   _narrow_klass_shift = CompressedKlassPointers::shift();
   if (HeapShared::is_heap_object_archiving_allowed()) {
@@ -1355,7 +1357,7 @@ bool FileMapInfo::remap_shared_readonly_as_readwrite() {
 }
 
 // Memory map a region in the address space.
-static const char* shared_region_name[] = { "MiscData", "ReadWrite", "ReadOnly", "MiscCode", "Bitmap",
+static const char* shared_region_name[] = { "MiscCode", "ReadWrite", "ReadOnly", "Bitmap",
                                             "String1", "String2", "OpenArchive1", "OpenArchive2" };
 
 MapArchiveResult FileMapInfo::map_regions(int regions[], int num_regions, char* mapped_base_address, ReservedSpace rs) {
@@ -1559,9 +1561,9 @@ address FileMapInfo::decode_start_address(FileMapRegion* spc, bool with_current_
   assert(offset == (size_t)(uint32_t)offset, "must be 32-bit only");
   uint n = (uint)offset;
   if (with_current_oop_encoding_mode) {
-    return (address)CompressedOops::decode_not_null(n);
+    return cast_from_oop<address>(CompressedOops::decode_not_null(n));
   } else {
-    return (address)HeapShared::decode_from_archive(n);
+    return cast_from_oop<address>(HeapShared::decode_from_archive(n));
   }
 }
 
@@ -1972,12 +1974,13 @@ char* FileMapInfo::region_addr(int idx) {
   }
 }
 
+// The 3 core spaces are MC->RW->RO
 FileMapRegion* FileMapInfo::first_core_space() const {
-  return is_static() ? space_at(MetaspaceShared::mc) : space_at(MetaspaceShared::rw);
+  return space_at(MetaspaceShared::mc);
 }
 
 FileMapRegion* FileMapInfo::last_core_space() const {
-  return is_static() ? space_at(MetaspaceShared::md) : space_at(MetaspaceShared::mc);
+  return space_at(MetaspaceShared::ro);
 }
 
 int FileMapHeader::compute_crc() {
@@ -2040,6 +2043,14 @@ bool FileMapHeader::validate() {
             "for testing purposes only and should not be used in a production environment");
   }
 
+  log_info(cds)("Archive was created with UseCompressedOops = %d, UseCompressedClassPointers = %d",
+                          compressed_oops(), compressed_class_pointers());
+  if (compressed_oops() != UseCompressedOops || compressed_class_pointers() != UseCompressedClassPointers) {
+    FileMapInfo::fail_continue("Unable to use shared archive.\nThe saved state of UseCompressedOops and UseCompressedClassPointers is "
+                               "different from runtime, CDS will be disabled.");
+    return false;
+  }
+
   return true;
 }
 
@@ -2051,8 +2062,7 @@ bool FileMapInfo::validate_header() {
 bool FileMapInfo::is_in_shared_region(const void* p, int idx) {
   assert(idx == MetaspaceShared::ro ||
          idx == MetaspaceShared::rw ||
-         idx == MetaspaceShared::mc ||
-         idx == MetaspaceShared::md, "invalid region index");
+         idx == MetaspaceShared::mc, "invalid region index");
   char* base = region_addr(idx);
   if (p >= base && p < base + space_at(idx)->used()) {
     return true;

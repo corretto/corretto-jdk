@@ -1110,6 +1110,7 @@ private:
   // Convert with Truncation Scalar Double-Precision Floating-Point Value to Doubleword Integer
   void cvttsd2sil(Register dst, Address src);
   void cvttsd2sil(Register dst, XMMRegister src);
+  void cvttsd2siq(Register dst, Address src);
   void cvttsd2siq(Register dst, XMMRegister src);
 
   // Convert with Truncation Scalar Single-Precision Floating-Point Value to Doubleword Integer
@@ -1137,6 +1138,7 @@ private:
 
   void emms();
 
+#ifndef _LP64
   void fabs();
 
   void fadd(int i);
@@ -1270,16 +1272,17 @@ private:
 
   void fxch(int i = 1);
 
+  void fyl2x();
+  void frndint();
+  void f2xm1();
+  void fldl2e();
+#endif // !_LP64
+
   void fxrstor(Address src);
   void xrstor(Address src);
 
   void fxsave(Address dst);
   void xsave(Address dst);
-
-  void fyl2x();
-  void frndint();
-  void f2xm1();
-  void fldl2e();
 
   void hlt();
 
@@ -2214,10 +2217,10 @@ private:
   void evbroadcasti64x2(XMMRegister dst, Address src, int vector_len);
 
   // scalar single/double precision replicate
-  void vpbroadcastss(XMMRegister dst, XMMRegister src, int vector_len);
-  void vpbroadcastss(XMMRegister dst, Address src, int vector_len);
-  void vpbroadcastsd(XMMRegister dst, XMMRegister src, int vector_len);
-  void vpbroadcastsd(XMMRegister dst, Address src, int vector_len);
+  void vbroadcastss(XMMRegister dst, XMMRegister src, int vector_len);
+  void vbroadcastss(XMMRegister dst, Address src, int vector_len);
+  void vbroadcastsd(XMMRegister dst, XMMRegister src, int vector_len);
+  void vbroadcastsd(XMMRegister dst, Address src, int vector_len);
 
   // gpr sourced byte/word/dword/qword replicate
   void evpbroadcastb(XMMRegister dst, Register src, int vector_len);

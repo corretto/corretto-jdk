@@ -526,7 +526,6 @@ class Thread: public ThreadShadow {
     os::set_native_thread_name(name);
   }
 
-  ObjectMonitor** om_in_use_list_addr()          { return (ObjectMonitor **)&om_in_use_list; }
   Monitor* SR_lock() const                       { return _SR_lock; }
 
   bool has_async_exception() const { return (_suspend_flags & _has_async_exception) != 0; }
@@ -1318,7 +1317,7 @@ class JavaThread: public Thread {
   HandshakeState _handshake;
  public:
   void set_handshake_operation(HandshakeOperation* op) {
-    _handshake.set_operation(op);
+    _handshake.set_operation(this, op);
   }
 
   bool has_handshake() const {
@@ -1326,16 +1325,16 @@ class JavaThread: public Thread {
   }
 
   void handshake_process_by_self() {
-    _handshake.process_by_self();
+    _handshake.process_by_self(this);
   }
 
-  bool handshake_try_process(HandshakeOperation* op) {
-    return _handshake.try_process(op);
+  bool handshake_try_process_by_vmThread() {
+    return _handshake.try_process_by_vmThread(this);
   }
 
 #ifdef ASSERT
-  Thread* get_active_handshaker() const {
-    return _handshake.get_active_handshaker();
+  bool is_vmthread_processing_handshake() const {
+    return _handshake.is_vmthread_processing_handshake();
   }
 #endif
 
