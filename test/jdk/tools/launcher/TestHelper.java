@@ -91,9 +91,11 @@ public class TestHelper {
             System.getProperty("os.name", "unknown").startsWith("Linux");
     static final boolean isAIX =
             System.getProperty("os.name", "unknown").startsWith("AIX");
+    static final boolean isMusl = isMuslLibc();
     static final String LIBJVM = isWindows
                         ? "jvm.dll"
                         : "libjvm" + (isMacOSX ? ".dylib" : ".so");
+    static final boolean isExpandedSharedLibraryPath = isAIX || isMusl;
 
     static final boolean isSparc = System.getProperty("os.arch").startsWith("sparc");
 
@@ -532,6 +534,27 @@ public class TestHelper {
             "}"
         };
         createFile(new File(launcherTestDir, "Main.java"), Arrays.asList(moduleCode));
+    }
+
+    /**
+     * Check if we run with musl libc.
+     *
+     * @return true if we run with musl libc.
+     */
+    private static boolean isMuslLibc() {
+        try {
+            ProcessBuilder pb = new ProcessBuilder("ldd", "--version");
+            pb.redirectErrorStream(true);
+            final Process p = pb.start();
+            try (BufferedReader br = new BufferedReader(new InputStreamReader(p.getInputStream()))) {
+                return br.lines()
+                        .findFirst()
+                        .filter(line -> line.contains("musl"))
+                        .isPresent();
+            }
+        } catch (Exception ignore) {
+        }
+        return false;
     }
 
     /*

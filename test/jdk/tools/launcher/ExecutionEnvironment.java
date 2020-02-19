@@ -135,16 +135,22 @@ public class ExecutionEnvironment extends TestHelper {
             flagError(tr, "Error: No output at all. Did the test execute ?");
         }
 
+        boolean isExpandedLibPath = TestHelper.isExpandedSharedLibraryPath;
+
         for (String x : LD_PATH_STRINGS) {
             if (!tr.contains(x)) {
-                if (TestHelper.isAIX && x.startsWith(LD_LIBRARY_PATH)) {
+                if (isExpandedLibPath && x.startsWith(LD_LIBRARY_PATH)) {
                     // AIX does not support the '-rpath' linker options so the
                     // launchers have to prepend the jdk library path to 'LIBPATH'.
-                    String aixLibPath = LD_LIBRARY_PATH + "=" +
-                        System.getenv(LD_LIBRARY_PATH) +
-                        System.getProperty("path.separator") + LD_LIBRARY_PATH_VALUE;
-                    if (!tr.matches(aixLibPath)) {
-                        flagError(tr, "FAIL: did not get <" + aixLibPath + ">");
+                    // The musl library loader requires LD_LIBRARY_PATH to be set in
+                    // order to correctly resolve the dependency libjava.so has on libjvm.so.
+                    String expandedLibPath = String.format("%s=%s%c%s",
+                            LD_LIBRARY_PATH,
+                            System.getenv(LD_LIBRARY_PATH),
+                            File.pathSeparatorChar,
+                            LD_LIBRARY_PATH_VALUE);
+                    if (!tr.matches(expandedLibPath)) {
+                        flagError(tr, "FAIL: did not get <" + expandedLibPath + ">");
                     }
                 }
                 else {
