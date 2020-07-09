@@ -140,8 +140,6 @@ public abstract class AbstractMemberWriter implements MemberSummaryWriter {
      */
     protected abstract Table createSummaryTable();
 
-
-
     /**
      * Add inherited summary label for the member.
      *
@@ -197,17 +195,6 @@ public abstract class AbstractMemberWriter implements MemberSummaryWriter {
      * @return a content tree representing the link
      */
     protected abstract Content getDeprecatedLink(Element member);
-
-    protected CharSequence makeSpace(int len) {
-        if (len <= 0) {
-            return "";
-        }
-        StringBuilder sb = new StringBuilder(len);
-        for (int i = 0; i < len; i++) {
-            sb.append(' ');
-        }
-        return sb;
-    }
 
     /**
      * Add the modifier and type for the member in the member summary.
@@ -373,7 +360,7 @@ public abstract class AbstractMemberWriter implements MemberSummaryWriter {
                 writer.addSummaryLinkComment(this, element, desc);
                 useTable.addRow(summaryType, typeContent, desc);
             }
-            contentTree.add(useTable.toContent());
+            contentTree.add(useTable);
         }
     }
 
@@ -466,7 +453,7 @@ public abstract class AbstractMemberWriter implements MemberSummaryWriter {
         if (table.needsScript()) {
             writer.getMainBodyScript().append(table.getScript());
         }
-        return table.toContent();
+        return table;
     }
 
     /**
@@ -704,7 +691,7 @@ public abstract class AbstractMemberWriter implements MemberSummaryWriter {
 
             // Exceptions
             if (exceptions != null && !exceptions.isEmpty()) {
-                CharSequence indent = makeSpace(indentSize + 1 - 7);
+                CharSequence indent = " ".repeat(Math.max(0, indentSize + 1 - 7));
                 htmltree.add(DocletConstants.NL);
                 htmltree.add(indent);
                 htmltree.add("throws ");

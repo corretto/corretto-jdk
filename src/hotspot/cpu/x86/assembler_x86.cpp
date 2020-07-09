@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1997, 2019, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 1997, 2020, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -480,7 +480,7 @@ void Assembler::emit_operand(Register reg, Register base, Register index,
                              Address::ScaleFactor scale, int disp,
                              RelocationHolder const& rspec,
                              int rip_relative_correction) {
-  relocInfo::relocType rtype = (relocInfo::relocType) rspec.type();
+  relocInfo::relocType rtype = rspec.type();
 
   // Encode the registers as needed in the fields they are used in
 
@@ -7160,7 +7160,7 @@ void Assembler::evbroadcasti64x2(XMMRegister dst, Address src, int vector_len) {
 
 // duplicate single precision data from src into programmed locations in dest : requires AVX512VL
 void Assembler::vbroadcastss(XMMRegister dst, XMMRegister src, int vector_len) {
-  assert(VM_Version::supports_avx(), "");
+  assert(VM_Version::supports_avx2(), "");
   InstructionAttr attributes(vector_len, /* vex_w */ false, /* legacy_mode */ false, /* no_mask_reg */ true, /* uses_vl */ true);
   int encode = vex_prefix_and_encode(dst->encoding(), 0, src->encoding(), VEX_SIMD_66, VEX_OPCODE_0F_38, &attributes);
   emit_int8(0x18);
@@ -7181,7 +7181,8 @@ void Assembler::vbroadcastss(XMMRegister dst, Address src, int vector_len) {
 
 // duplicate double precision data from src into programmed locations in dest : requires AVX512VL
 void Assembler::vbroadcastsd(XMMRegister dst, XMMRegister src, int vector_len) {
-  assert(VM_Version::supports_avx(), "");
+  assert(VM_Version::supports_avx2(), "");
+  assert(vector_len == AVX_256bit || vector_len == AVX_512bit, "");
   InstructionAttr attributes(vector_len, /* vex_w */ VM_Version::supports_evex(), /* legacy_mode */ false, /* no_mask_reg */ true, /* uses_vl */ true);
   attributes.set_rex_vex_w_reverted();
   int encode = vex_prefix_and_encode(dst->encoding(), 0, src->encoding(), VEX_SIMD_66, VEX_OPCODE_0F_38, &attributes);
@@ -7191,6 +7192,7 @@ void Assembler::vbroadcastsd(XMMRegister dst, XMMRegister src, int vector_len) {
 
 void Assembler::vbroadcastsd(XMMRegister dst, Address src, int vector_len) {
   assert(VM_Version::supports_avx(), "");
+  assert(vector_len == AVX_256bit || vector_len == AVX_512bit, "");
   assert(dst != xnoreg, "sanity");
   InstructionMark im(this);
   InstructionAttr attributes(vector_len, /* vex_w */ VM_Version::supports_evex(), /* legacy_mode */ false, /* no_mask_reg */ true, /* uses_vl */ true);
@@ -8170,29 +8172,31 @@ void Assembler::set_byte_if_not_zero(Register dst) {
 
 bool Assembler::reachable(AddressLiteral adr) {
   int64_t disp;
+  relocInfo::relocType relocType = adr.reloc();
+
   // None will force a 64bit literal to the code stream. Likely a placeholder
   // for something that will be patched later and we need to certain it will
   // always be reachable.
-  if (adr.reloc() == relocInfo::none) {
+  if (relocType == relocInfo::none) {
     return false;
   }
-  if (adr.reloc() == relocInfo::internal_word_type) {
+  if (relocType == relocInfo::internal_word_type) {
     // This should be rip relative and easily reachable.
     return true;
   }
-  if (adr.reloc() == relocInfo::virtual_call_type ||
-      adr.reloc() == relocInfo::opt_virtual_call_type ||
-      adr.reloc() == relocInfo::static_call_type ||
-      adr.reloc() == relocInfo::static_stub_type ) {
+  if (relocType == relocInfo::virtual_call_type ||
+      relocType == relocInfo::opt_virtual_call_type ||
+      relocType == relocInfo::static_call_type ||
+      relocType == relocInfo::static_stub_type ) {
     // This should be rip relative within the code cache and easily
     // reachable until we get huge code caches. (At which point
     // ic code is going to have issues).
     return true;
   }
-  if (adr.reloc() != relocInfo::external_word_type &&
-      adr.reloc() != relocInfo::poll_return_type &&  // these are really external_word but need special
-      adr.reloc() != relocInfo::poll_type &&         // relocs to identify them
-      adr.reloc() != relocInfo::runtime_call_type ) {
+  if (relocType != relocInfo::external_word_type &&
+      relocType != relocInfo::poll_return_type &&  // these are really external_word but need special
+      relocType != relocInfo::poll_type &&         // relocs to identify them
+      relocType != relocInfo::runtime_call_type ) {
     return false;
   }
 

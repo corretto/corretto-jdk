@@ -35,6 +35,7 @@
 #include "compiler/compilationPolicy.hpp"
 #include "compiler/methodMatcher.hpp"
 #include "compiler/directivesParser.hpp"
+#include "gc/shared/concurrentGCBreakpoints.hpp"
 #include "gc/shared/gcConfig.hpp"
 #include "gc/shared/genArguments.hpp"
 #include "gc/shared/genCollectedHeap.hpp"
@@ -394,15 +395,27 @@ WB_ENTRY(jlong, WB_GetHeapAlignment(JNIEnv* env, jobject o))
   return (jlong)HeapAlignment;
 WB_END
 
-WB_ENTRY(jboolean, WB_SupportsConcurrentGCPhaseControl(JNIEnv* env, jobject o))
-  return Universe::heap()->supports_concurrent_phase_control();
+WB_ENTRY(jboolean, WB_SupportsConcurrentGCBreakpoints(JNIEnv* env, jobject o))
+  return Universe::heap()->supports_concurrent_gc_breakpoints();
 WB_END
 
-WB_ENTRY(jboolean, WB_RequestConcurrentGCPhase(JNIEnv* env, jobject o, jstring name))
-  Handle h_name(THREAD, JNIHandles::resolve(name));
+WB_ENTRY(void, WB_ConcurrentGCAcquireControl(JNIEnv* env, jobject o))
+  ConcurrentGCBreakpoints::acquire_control();
+WB_END
+
+WB_ENTRY(void, WB_ConcurrentGCReleaseControl(JNIEnv* env, jobject o))
+  ConcurrentGCBreakpoints::release_control();
+WB_END
+
+WB_ENTRY(void, WB_ConcurrentGCRunToIdle(JNIEnv* env, jobject o))
+  ConcurrentGCBreakpoints::run_to_idle();
+WB_END
+
+WB_ENTRY(jboolean, WB_ConcurrentGCRunTo(JNIEnv* env, jobject o, jobject at))
+  Handle h_name(THREAD, JNIHandles::resolve(at));
   ResourceMark rm;
   const char* c_name = java_lang_String::as_utf8_string(h_name());
-  return Universe::heap()->request_concurrent_phase(c_name);
+  return ConcurrentGCBreakpoints::run_to(c_name);
 WB_END
 
 #if INCLUDE_G1GC
@@ -821,6 +834,10 @@ static jmethodID reflected_method_to_jmid(JavaThread* thread, JNIEnv* env, jobje
   return env->FromReflectedMethod(method);
 }
 
+static CompLevel highestCompLevel() {
+  return TieredCompilation ? MIN2((CompLevel) TieredStopAtLevel, CompLevel_highest_tier) : CompLevel_highest_tier;
+}
+
 // Deoptimizes all compiled frames and makes nmethods not entrant if it's requested
 class VM_WhiteBoxDeoptimizeFrames : public VM_WhiteBoxOperation {
  private:
@@ -834,11 +851,10 @@ class VM_WhiteBoxDeoptimizeFrames : public VM_WhiteBoxOperation {
   void doit() {
     for (JavaThreadIteratorWithHandle jtiwh; JavaThread *t = jtiwh.next(); ) {
       if (t->has_last_Java_frame()) {
-        for (StackFrameStream fst(t, UseBiasedLocking); !fst.is_done(); fst.next()) {
+        for (StackFrameStream fst(t, false); !fst.is_done(); fst.next()) {
           frame* f = fst.current();
           if (f->can_be_deoptimized() && !f->is_deoptimized_frame()) {
-            RegisterMap* reg_map = fst.register_map();
-            Deoptimization::deoptimize(t, *f, reg_map);
+            Deoptimization::deoptimize(t, *f);
             if (_make_not_entrant) {
                 CompiledMethod* cm = CodeCache::find_compiled(f->pc());
                 assert(cm != NULL, "sanity check");
@@ -895,7 +911,7 @@ WB_ENTRY(jboolean, WB_IsMethodCompiled(JNIEnv* env, jobject o, jobject method, j
 WB_END
 
 WB_ENTRY(jboolean, WB_IsMethodCompilable(JNIEnv* env, jobject o, jobject method, jint comp_level, jboolean is_osr))
-  if (method == NULL || comp_level > MIN2((CompLevel) TieredStopAtLevel, CompLevel_highest_tier)) {
+  if (method == NULL || comp_level > highestCompLevel()) {
     return false;
   }
   jmethodID jmid = reflected_method_to_jmid(thread, env, method);
@@ -918,7 +934,7 @@ WB_ENTRY(jboolean, WB_IsMethodQueuedForCompilation(JNIEnv* env, jobject o, jobje
 WB_END
 
 WB_ENTRY(jboolean, WB_IsIntrinsicAvailable(JNIEnv* env, jobject o, jobject method, jobject compilation_context, jint compLevel))
-  if (compLevel < CompLevel_none || compLevel > MIN2((CompLevel) TieredStopAtLevel, CompLevel_highest_tier)) {
+  if (compLevel < CompLevel_none || compLevel > highestCompLevel()) {
     return false; // Intrinsic is not available on a non-existent compilation level.
   }
   jmethodID method_id, compilation_context_id;
@@ -1004,7 +1020,7 @@ bool WhiteBox::compile_method(Method* method, int comp_level, int bci, Thread* T
     tty->print_cr("WB error: request to compile NULL method");
     return false;
   }
-  if (comp_level > MIN2((CompLevel) TieredStopAtLevel, CompLevel_highest_tier)) {
+  if (comp_level > highestCompLevel()) {
     tty->print_cr("WB error: invalid compilation level %d", comp_level);
     return false;
   }
@@ -1131,8 +1147,8 @@ WB_ENTRY(void, WB_MarkMethodProfiled(JNIEnv* env, jobject o, jobject method))
   InvocationCounter* icnt = mdo->invocation_counter();
   InvocationCounter* bcnt = mdo->backedge_counter();
   // set i-counter according to TieredThresholdPolicy::is_method_profiled
-  icnt->set(InvocationCounter::wait_for_compile, Tier4MinInvocationThreshold);
-  bcnt->set(InvocationCounter::wait_for_compile, Tier4CompileThreshold);
+  icnt->set(Tier4MinInvocationThreshold);
+  bcnt->set(Tier4CompileThreshold);
 WB_END
 
 WB_ENTRY(void, WB_ClearMethodState(JNIEnv* env, jobject o, jobject method))
@@ -2437,9 +2453,12 @@ static JNINativeMethod methods[] = {
   {CC"isGCSupported",             CC"(I)Z",           (void*)&WB_IsGCSupported},
   {CC"isGCSelected",              CC"(I)Z",           (void*)&WB_IsGCSelected},
   {CC"isGCSelectedErgonomically", CC"()Z",            (void*)&WB_IsGCSelectedErgonomically},
-  {CC"supportsConcurrentGCPhaseControl", CC"()Z",     (void*)&WB_SupportsConcurrentGCPhaseControl},
-  {CC"requestConcurrentGCPhase0", CC"(Ljava/lang/String;)Z",
-                                                      (void*)&WB_RequestConcurrentGCPhase},
+  {CC"supportsConcurrentGCBreakpoints", CC"()Z",      (void*)&WB_SupportsConcurrentGCBreakpoints},
+  {CC"concurrentGCAcquireControl0", CC"()V",          (void*)&WB_ConcurrentGCAcquireControl},
+  {CC"concurrentGCReleaseControl0", CC"()V",          (void*)&WB_ConcurrentGCReleaseControl},
+  {CC"concurrentGCRunToIdle0",    CC"()V",            (void*)&WB_ConcurrentGCRunToIdle},
+  {CC"concurrentGCRunTo0",        CC"(Ljava/lang/String;)Z",
+                                                      (void*)&WB_ConcurrentGCRunTo},
   {CC"checkLibSpecifiesNoexecstack", CC"(Ljava/lang/String;)Z",
                                                       (void*)&WB_CheckLibSpecifiesNoexecstack},
   {CC"isContainerized",           CC"()Z",            (void*)&WB_IsContainerized },

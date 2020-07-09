@@ -245,8 +245,7 @@ public class SourceToHTMLConverter {
                 .setGenerator(HtmlDocletWriter.getGenerator(getClass()))
                 .addDefaultScript(false)
                 .setStylesheets(configuration.getMainStylesheet(), configuration.getAdditionalStylesheets());
-        Content htmlTree = HtmlTree.HTML(configuration.getLocale().getLanguage(),
-                head.toContent(), body);
+        Content htmlTree = HtmlTree.HTML(configuration.getLocale().getLanguage(), head, body);
         HtmlDocument htmlDocument = new HtmlDocument(htmlTree);
         messages.notice("doclet.Generating_0", path.getPath());
         htmlDocument.write(DocFile.createFileForOutput(configuration, path));
@@ -273,16 +272,13 @@ public class SourceToHTMLConverter {
     }
 
     protected void addStylesheets(Content tree) {
-        List<String> stylesheets = options.additionalStylesheets();
-        if (!stylesheets.isEmpty()) {
-            stylesheets.forEach((ssheet) -> {
-                DocFile file = DocFile.createFileForInput(configuration, ssheet);
-                DocPath ssheetPath = DocPath.create(file.getName());
-                HtmlTree slink = HtmlTree.LINK("stylesheet", "text/css", relativePath.resolve(ssheetPath).getPath(),
-                        "Style");
-                tree.add(slink);
-            });
-        }
+        options.additionalStylesheets().forEach(css -> {
+            DocFile file = DocFile.createFileForInput(configuration, css);
+            DocPath cssPath = DocPath.create(file.getName());
+            HtmlTree slink = HtmlTree.LINK("stylesheet", "text/css", relativePath.resolve(cssPath).getPath(),
+                                           "Style");
+            tree.add(slink);
+        });
     }
 
     /**
