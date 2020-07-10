@@ -1077,7 +1077,7 @@ public final class ProcessBuilder
      * Start a new Process using an explicit array of redirects.
      * See {@link #start} for details of starting each Process.
      *
-     * @param redirect array of redirects for stdin, stdout, stderr
+     * @param redirects array of redirects for stdin, stdout, stderr
      * @return the new Process
      * @throws IOException if an I/O error occurs
      */
@@ -1217,9 +1217,9 @@ public final class ProcessBuilder
      * String directory = "/home/duke/src";
      * ProcessBuilder[] builders = {
      *              new ProcessBuilder("find", directory, "-type", "f"),
-                    new ProcessBuilder("xargs", "grep", "-h", "^import "),
-                    new ProcessBuilder("awk", "{print $2;}"),
-                    new ProcessBuilder("sort", "-u")};
+     *              new ProcessBuilder("xargs", "grep", "-h", "^import "),
+     *              new ProcessBuilder("awk", "{print $2;}"),
+     *              new ProcessBuilder("sort", "-u")};
      * List<Process> processes = ProcessBuilder.startPipeline(
      *         Arrays.asList(builders));
      * Process last = processes.get(processes.size()-1);

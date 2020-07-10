@@ -56,6 +56,7 @@
 #include "runtime/orderAccess.hpp"
 #include "runtime/osThread.hpp"
 #include "runtime/perfMemory.hpp"
+#include "runtime/safepointMechanism.hpp"
 #include "runtime/sharedRuntime.hpp"
 #include "runtime/statSampler.hpp"
 #include "runtime/stubRoutines.hpp"
@@ -2531,7 +2532,7 @@ LONG WINAPI topLevelExceptionFilter(struct _EXCEPTION_POINTERS* exceptionInfo) {
         // the rest are checked explicitly now.
         CodeBlob* cb = CodeCache::find_blob(pc);
         if (cb != NULL) {
-          if (os::is_poll_address(addr)) {
+          if (SafepointMechanism::is_poll_address(addr)) {
             address stub = SharedRuntime::get_poll_stub(pc);
             return Handle_Exception(exceptionInfo, stub);
           }
@@ -3176,8 +3177,8 @@ bool os::can_execute_large_page_memory() {
   return true;
 }
 
-char* os::reserve_memory_special(size_t bytes, size_t alignment, char* addr,
-                                 bool exec) {
+char* os::pd_reserve_memory_special(size_t bytes, size_t alignment, char* addr,
+                                    bool exec) {
   assert(UseLargePages, "only for large pages");
 
   if (!is_aligned(bytes, os::large_page_size()) || alignment > os::large_page_size()) {
@@ -3214,17 +3215,14 @@ char* os::reserve_memory_special(size_t bytes, size_t alignment, char* addr,
     // normal policy just allocate it all at once
     DWORD flag = MEM_RESERVE | MEM_COMMIT | MEM_LARGE_PAGES;
     char * res = (char *)VirtualAlloc(addr, bytes, flag, prot);
-    if (res != NULL) {
-      MemTracker::record_virtual_memory_reserve_and_commit((address)res, bytes, CALLER_PC);
-    }
 
     return res;
   }
 }
 
-bool os::release_memory_special(char* base, size_t bytes) {
+bool os::pd_release_memory_special(char* base, size_t bytes) {
   assert(base != NULL, "Sanity check");
-  return release_memory(base, bytes);
+  return pd_release_memory(base, bytes);
 }
 
 void os::print_statistics() {
@@ -4118,24 +4116,6 @@ jint os::init_2(void) {
   return JNI_OK;
 }
 
-// Mark the polling page as unreadable
-void os::make_polling_page_unreadable(void) {
-  DWORD old_status;
-  if (!VirtualProtect((char *)_polling_page, os::vm_page_size(),
-                      PAGE_NOACCESS, &old_status)) {
-    fatal("Could not disable polling page");
-  }
-}
-
-// Mark the polling page as readable
-void os::make_polling_page_readable(void) {
-  DWORD old_status;
-  if (!VirtualProtect((char *)_polling_page, os::vm_page_size(),
-                      PAGE_READONLY, &old_status)) {
-    fatal("Could not enable polling page");
-  }
-}
-
 // combine the high and low DWORD into a ULONGLONG
 static ULONGLONG make_double_word(DWORD high_word, DWORD low_word) {
   ULONGLONG value = high_word;
@@ -4163,7 +4143,7 @@ static void file_attribute_data_to_stat(struct stat* sbuf, WIN32_FILE_ATTRIBUTE_
 
 static errno_t convert_to_unicode(char const* char_path, LPWSTR* unicode_path) {
   // Get required buffer size to convert to Unicode
-  int unicode_path_len = MultiByteToWideChar(CP_THREAD_ACP,
+  int unicode_path_len = MultiByteToWideChar(CP_ACP,
                                              MB_ERR_INVALID_CHARS,
                                              char_path, -1,
                                              NULL, 0);
@@ -4173,7 +4153,7 @@ static errno_t convert_to_unicode(char const* char_path, LPWSTR* unicode_path) {
 
   *unicode_path = NEW_C_HEAP_ARRAY(WCHAR, unicode_path_len, mtInternal);
 
-  int result = MultiByteToWideChar(CP_THREAD_ACP,
+  int result = MultiByteToWideChar(CP_ACP,
                                    MB_ERR_INVALID_CHARS,
                                    char_path, -1,
                                    *unicode_path, unicode_path_len);

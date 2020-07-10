@@ -39,7 +39,7 @@ import jdk.javadoc.internal.doclets.formats.html.markup.BodyContents;
 import jdk.javadoc.internal.doclets.formats.html.markup.ContentBuilder;
 import jdk.javadoc.internal.doclets.formats.html.markup.Entity;
 import jdk.javadoc.internal.doclets.formats.html.markup.HtmlStyle;
-import jdk.javadoc.internal.doclets.formats.html.markup.HtmlTag;
+import jdk.javadoc.internal.doclets.formats.html.markup.TagName;
 import jdk.javadoc.internal.doclets.formats.html.markup.HtmlTree;
 import jdk.javadoc.internal.doclets.formats.html.markup.StringContent;
 import jdk.javadoc.internal.doclets.toolkit.Content;
@@ -135,14 +135,10 @@ public class SplitIndexWriter extends AbstractIndexWriter {
                         contents.getContent("doclet.Index"))));
         Content mainContent = new ContentBuilder();
         addLinksForIndexes(mainContent);
-        if (tagSearchIndexMap.get(unicode) == null) {
-            addContents(unicode, indexBuilder.getMemberList(unicode), mainContent);
-        } else if (indexBuilder.getMemberList(unicode) == null) {
-            addSearchContents(unicode, tagSearchIndexMap.get(unicode), mainContent);
-        } else {
-            addContents(unicode, indexBuilder.getMemberList(unicode),
-                        tagSearchIndexMap.get(unicode), mainContent);
+        if (tagSearchIndexMap.get(unicode) != null) {
+            indexBuilder.addSearchTags(unicode, tagSearchIndexMap.get(unicode));
         }
+        addContents(unicode, indexBuilder.getMemberList(unicode), mainContent);
         addLinksForIndexes(mainContent);
         main.add(mainContent);
         HtmlTree footer = HtmlTree.FOOTER();
@@ -169,7 +165,7 @@ public class SplitIndexWriter extends AbstractIndexWriter {
                     new StringContent(indexElements.get(i).toString())));
             contentTree.add(Entity.NO_BREAK_SPACE);
         }
-        contentTree.add(new HtmlTree(HtmlTag.BR));
+        contentTree.add(new HtmlTree(TagName.BR));
         contentTree.add(links.createLink(pathToRoot.resolve(DocPaths.ALLCLASSES_INDEX),
                                          contents.allClassesLabel));
         if (!configuration.packages.isEmpty()) {

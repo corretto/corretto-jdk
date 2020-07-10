@@ -141,6 +141,13 @@ public class EventNames {
     public final static String AllocationRequiringGC = PREFIX + "AllocationRequiringGC";
     public final static String GCPhaseParallel = PREFIX + "GCPhaseParallel";
     public final static String GCPhaseConcurrent = PREFIX + "GCPhaseConcurrent";
+    public final static String GCPhaseConcurrentLevel1 = PREFIX + "GCPhaseConcurrentLevel1";
+    public final static String ZAllocationStall = PREFIX + "ZAllocationStall";
+    public final static String ZPageAllocation = PREFIX + "ZPageAllocation";
+    public final static String ZPageCacheFlush = PREFIX + "ZPageCacheFlush";
+    public final static String ZRelocationSet = PREFIX + "ZRelocationSet";
+    public final static String ZRelocationSetGroup = PREFIX + "ZRelocationSetGroup";
+    public final static String ZUncommit = PREFIX + "ZUncommit";
 
     // Compiler
     public final static String Compilation = PREFIX + "Compilation";
@@ -188,6 +195,7 @@ public class EventNames {
     public final static String X509Certificate = PREFIX + "X509Certificate";
     public final static String X509Validation = PREFIX + "X509Validation";
     public final static String SecurityProperty = PREFIX + "SecurityPropertyModification";
+    public final static String DirectBufferStatistics = PREFIX + "DirectBufferStatistics";
 
     // Flight Recorder
     public final static String DumpReason = PREFIX + "DumpReason";

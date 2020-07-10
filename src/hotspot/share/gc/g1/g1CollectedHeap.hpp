@@ -409,7 +409,7 @@ private:
   // Initialize a contiguous set of free regions of length num_regions
   // and starting at index first so that they appear as a single
   // humongous region.
-  HeapWord* humongous_obj_allocate_initialize_regions(uint first,
+  HeapWord* humongous_obj_allocate_initialize_regions(HeapRegion* first_hr,
                                                       uint num_regions,
                                                       size_t word_size);
 
@@ -1465,8 +1465,6 @@ public:
 
   // Used to print information about locations in the hs_err file.
   virtual bool print_location(outputStream* st, void* addr) const;
-
-  size_t pending_card_num();
 };
 
 class G1ParEvacuateFollowersClosure : public VoidClosure {

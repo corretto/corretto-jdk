@@ -511,7 +511,7 @@ public:
   ModuleEntry* module() const;
   bool in_unnamed_package() const   { return (_package_entry == NULL); }
   void set_package(PackageEntry* p) { _package_entry = p; }
-  void set_package(ClassLoaderData* loader_data, TRAPS);
+  void set_package(ClassLoaderData* loader_data, PackageEntry* pkg_entry, TRAPS);
   bool is_same_class_package(const Klass* class2) const;
   bool is_same_class_package(oop other_class_loader, const Symbol* other_class_name) const;
 
@@ -610,11 +610,11 @@ public:
 
   // find a local method, but skip static methods
   Method* find_instance_method(const Symbol* name, const Symbol* signature,
-                               PrivateLookupMode private_mode = find_private) const;
+                               PrivateLookupMode private_mode) const;
   static Method* find_instance_method(const Array<Method*>* methods,
                                       const Symbol* name,
                                       const Symbol* signature,
-                                      PrivateLookupMode private_mode = find_private);
+                                      PrivateLookupMode private_mode);
 
   // find a local method (returns NULL if not found)
   Method* find_local_method(const Symbol* name,
@@ -1209,7 +1209,6 @@ public:
 
   // Naming
   const char* signature_name() const;
-  static Symbol* package_from_name(const Symbol* name, TRAPS);
 
   // Oop fields (and metadata) iterators
   //
@@ -1328,7 +1327,7 @@ public:
   // CDS support - remove and restore oops from metadata. Oops are not shared.
   virtual void remove_unshareable_info();
   virtual void remove_java_mirror();
-  virtual void restore_unshareable_info(ClassLoaderData* loader_data, Handle protection_domain, TRAPS);
+  void restore_unshareable_info(ClassLoaderData* loader_data, Handle protection_domain, PackageEntry* pkg_entry, TRAPS);
 
   // jvm support
   jint compute_modifier_flags(TRAPS) const;

@@ -80,6 +80,10 @@ CFLAGS_VM_VERSION := \
     $(LIBC_DEFINE) \
     #
 
+ifneq ($(HOTSPOT_BUILD_TIME), )
+  CFLAGS_VM_VERSION += -DHOTSPOT_BUILD_TIME='"$(HOTSPOT_BUILD_TIME)"'
+endif
+
 ################################################################################
 # Disabled warnings
 
@@ -209,7 +213,6 @@ $(eval $(call SetupNativeCompilation, BUILD_LIBJVM, \
     VERSIONINFO_RESOURCE := $(TOPDIR)/src/hotspot/os/windows/version.rc, \
     PRECOMPILED_HEADER := $(JVM_PRECOMPILED_HEADER), \
     PRECOMPILED_HEADER_EXCLUDE := $(JVM_PRECOMPILED_HEADER_EXCLUDE), \
-    DEFINE_THIS_FILE := false, \
 ))
 
 # Always recompile abstract_vm_version.cpp if libjvm needs to be relinked. This ensures

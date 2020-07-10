@@ -33,7 +33,7 @@ import jdk.javadoc.internal.doclets.formats.html.markup.BodyContents;
 import jdk.javadoc.internal.doclets.formats.html.markup.ContentBuilder;
 import jdk.javadoc.internal.doclets.formats.html.markup.Entity;
 import jdk.javadoc.internal.doclets.formats.html.markup.HtmlStyle;
-import jdk.javadoc.internal.doclets.formats.html.markup.HtmlTag;
+import jdk.javadoc.internal.doclets.formats.html.markup.TagName;
 import jdk.javadoc.internal.doclets.formats.html.markup.HtmlTree;
 import jdk.javadoc.internal.doclets.formats.html.markup.StringContent;
 import jdk.javadoc.internal.doclets.toolkit.Content;
@@ -105,14 +105,10 @@ public class SingleIndexWriter extends AbstractIndexWriter {
         elements.addAll(tagSearchIndexMap.keySet());
         addLinksForIndexes(mainContent);
         for (Character unicode : elements) {
-            if (tagSearchIndexMap.get(unicode) == null) {
-                addContents(unicode, indexBuilder.getMemberList(unicode), mainContent);
-            } else if (indexBuilder.getMemberList(unicode) == null) {
-                addSearchContents(unicode, tagSearchIndexMap.get(unicode), mainContent);
-            } else {
-                addContents(unicode, indexBuilder.getMemberList(unicode),
-                            tagSearchIndexMap.get(unicode), mainContent);
+            if (tagSearchIndexMap.get(unicode) != null) {
+                indexBuilder.addSearchTags(unicode, tagSearchIndexMap.get(unicode));
             }
+            addContents(unicode, indexBuilder.getMemberList(unicode), mainContent);
         }
         addLinksForIndexes(mainContent);
         HtmlTree footer = HtmlTree.FOOTER();
@@ -143,7 +139,7 @@ public class SingleIndexWriter extends AbstractIndexWriter {
                                      new StringContent(unicode)));
             contentTree.add(Entity.NO_BREAK_SPACE);
         }
-        contentTree.add(new HtmlTree(HtmlTag.BR));
+        contentTree.add(new HtmlTree(TagName.BR));
         contentTree.add(links.createLink(DocPaths.ALLCLASSES_INDEX,
                                          contents.allClassesLabel));
         if (!configuration.packages.isEmpty()) {

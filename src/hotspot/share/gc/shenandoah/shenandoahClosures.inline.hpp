@@ -29,7 +29,6 @@
 #include "gc/shenandoah/shenandoahClosures.hpp"
 #include "gc/shenandoah/shenandoahHeap.inline.hpp"
 #include "gc/shenandoah/shenandoahNMethod.inline.hpp"
-#include "gc/shenandoah/shenandoahTraversalGC.hpp"
 #include "oops/compressedOops.inline.hpp"
 #include "runtime/atomic.hpp"
 #include "runtime/thread.hpp"
@@ -43,9 +42,7 @@ bool ShenandoahForwardedIsAliveClosure::do_object_b(oop obj) {
     return false;
   }
   obj = ShenandoahBarrierSet::resolve_forwarded_not_null(obj);
-  shenandoah_assert_not_forwarded_if(NULL, obj,
-                                     (ShenandoahHeap::heap()->is_concurrent_mark_in_progress() ||
-                                     ShenandoahHeap::heap()->is_concurrent_traversal_in_progress()));
+  shenandoah_assert_not_forwarded_if(NULL, obj, ShenandoahHeap::heap()->is_concurrent_mark_in_progress());
   return _mark_context->is_marked(obj);
 }
 
@@ -91,7 +88,9 @@ ShenandoahEvacuateUpdateRootsClosure<MO>::ShenandoahEvacuateUpdateRootsClosure()
 template <DecoratorSet MO>
 template <class T>
 void ShenandoahEvacuateUpdateRootsClosure<MO>::do_oop_work(T* p) {
-  assert(_heap->is_concurrent_root_in_progress(), "Only do this when evacuation is in progress");
+  assert(_heap->is_concurrent_weak_root_in_progress() ||
+         _heap->is_concurrent_strong_root_in_progress(),
+         "Only do this in root processing phase");
 
   T o = RawAccess<>::oop_load(p);
   if (! CompressedOops::is_null(o)) {
@@ -122,7 +121,9 @@ ShenandoahEvacUpdateOopStorageRootsClosure::ShenandoahEvacUpdateOopStorageRootsC
 }
 
 void ShenandoahEvacUpdateOopStorageRootsClosure::do_oop(oop* p) {
-  assert(_heap->is_concurrent_root_in_progress(), "Only do this when evacuation is in progress");
+  assert(_heap->is_concurrent_weak_root_in_progress() ||
+         _heap->is_concurrent_strong_root_in_progress(),
+         "Only do this in root processing phase");
 
   oop obj = RawAccess<>::oop_load(p);
   if (! CompressedOops::is_null(obj)) {

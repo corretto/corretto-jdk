@@ -32,7 +32,6 @@
 #include "gc/shenandoah/shenandoahHeuristics.hpp"
 #include "gc/shenandoah/shenandoahMonitoringSupport.hpp"
 #include "gc/shenandoah/shenandoahControlThread.hpp"
-#include "gc/shenandoah/shenandoahTraversalGC.hpp"
 #include "gc/shenandoah/shenandoahUtils.hpp"
 #include "gc/shenandoah/shenandoahVMOperations.hpp"
 #include "gc/shenandoah/shenandoahWorkerPolicy.hpp"
@@ -70,10 +69,8 @@ void ShenandoahPeriodicSATBFlushTask::task() {
 void ShenandoahControlThread::run_service() {
   ShenandoahHeap* heap = ShenandoahHeap::heap();
 
-  GCMode default_mode = heap->is_traversal_mode() ?
-                           concurrent_traversal : concurrent_normal;
-  GCCause::Cause default_cause = heap->is_traversal_mode() ?
-                           GCCause::_shenandoah_traversal_gc : GCCause::_shenandoah_concurrent_gc;
+  GCMode default_mode = concurrent_normal;
+  GCCause::Cause default_cause = GCCause::_shenandoah_concurrent_gc;
   int sleep = ShenandoahControlIntervalMin;
 
   double last_shrink_time = os::elapsedTime();
@@ -178,6 +175,9 @@ void ShenandoahControlThread::run_service() {
     if (gc_requested) {
       heap->reset_bytes_allocated_since_gc_start();
 
+      // Use default constructor to snapshot the Metaspace state before GC.
+      metaspace::MetaspaceSizesSnapshot meta_sizes;
+
       // If GC was requested, we are sampling the counters even without actual triggers
       // from allocation machinery. This captures GC phases more accurately.
       set_forced_counters_update(true);
@@ -187,28 +187,21 @@ void ShenandoahControlThread::run_service() {
         ShenandoahHeapLocker locker(heap->lock());
         heap->free_set()->log_status();
       }
-    }
 
-    switch (mode) {
-      case none:
-        break;
-      case concurrent_traversal:
-        service_concurrent_traversal_cycle(cause);
-        break;
-      case concurrent_normal:
-        service_concurrent_normal_cycle(cause);
-        break;
-      case stw_degenerated:
-        service_stw_degenerated_cycle(cause, degen_point);
-        break;
-      case stw_full:
-        service_stw_full_cycle(cause);
-        break;
-      default:
-        ShouldNotReachHere();
-    }
+      switch (mode) {
+        case concurrent_normal:
+          service_concurrent_normal_cycle(cause);
+          break;
+        case stw_degenerated:
+          service_stw_degenerated_cycle(cause, degen_point);
+          break;
+        case stw_full:
+          service_stw_full_cycle(cause);
+          break;
+        default:
+          ShouldNotReachHere();
+      }
 
-    if (gc_requested) {
       // If this was the requested GC cycle, notify waiters about it
       if (explicit_gc_requested || implicit_gc_requested) {
         notify_gc_waiters();
@@ -243,6 +236,9 @@ void ShenandoahControlThread::run_service() {
       if (heap->unload_classes()) {
         heuristics->clear_metaspace_oom();
       }
+
+      // Print Metaspace change following GC (if logging is enabled).
+      MetaspaceUtils::print_metaspace_change(meta_sizes);
 
       // GC is over, we are at idle now
       if (ShenandoahPacing) {
@@ -283,31 +279,6 @@ void ShenandoahControlThread::run_service() {
   while (!should_terminate()) {
     os::naked_short_sleep(ShenandoahControlIntervalMin);
   }
-}
-
-void ShenandoahControlThread::service_concurrent_traversal_cycle(GCCause::Cause cause) {
-  GCIdMark gc_id_mark;
-  ShenandoahGCSession session(cause);
-
-  ShenandoahHeap* heap = ShenandoahHeap::heap();
-  TraceCollectorStats tcs(heap->monitoring_support()->concurrent_collection_counters());
-
-  // Reset for upcoming cycle
-  heap->entry_reset();
-
-  heap->vmop_entry_init_traversal();
-
-  if (check_cancellation_or_degen(ShenandoahHeap::_degenerated_traversal)) return;
-
-  heap->entry_traversal();
-  if (check_cancellation_or_degen(ShenandoahHeap::_degenerated_traversal)) return;
-
-  heap->vmop_entry_final_traversal();
-
-  heap->entry_cleanup();
-
-  heap->heuristics()->record_success_concurrent();
-  heap->shenandoah_policy()->record_success_concurrent();
 }
 
 void ShenandoahControlThread::service_concurrent_normal_cycle(GCCause::Cause cause) {
@@ -371,8 +342,8 @@ void ShenandoahControlThread::service_concurrent_normal_cycle(GCCause::Cause cau
   // Complete marking under STW, and start evacuation
   heap->vmop_entry_final_mark();
 
-  // Evacuate concurrent roots
-  heap->entry_roots();
+  // Process weak roots that might still point to regions that would be broken by cleanup
+  heap->entry_weak_roots();
 
   // Final mark might have reclaimed some immediate garbage, kick cleanup to reclaim
   // the space. This would be the last action if there is nothing to evacuate.
@@ -381,6 +352,13 @@ void ShenandoahControlThread::service_concurrent_normal_cycle(GCCause::Cause cau
   {
     ShenandoahHeapLocker locker(heap->lock());
     heap->free_set()->log_status();
+  }
+
+  // Processing strong roots
+  // This may be skipped if there is nothing to update/evacuate.
+  // If so, strong_root_in_progress would be unset.
+  if (heap->is_concurrent_strong_root_in_progress()) {
+    heap->entry_strong_roots();
   }
 
   // Continue the cycle with evacuation and optional update-refs.
@@ -504,15 +482,16 @@ void ShenandoahControlThread::handle_requested_gc(GCCause::Cause cause) {
   }
 }
 
-void ShenandoahControlThread::handle_alloc_failure(size_t words) {
+void ShenandoahControlThread::handle_alloc_failure(ShenandoahAllocRequest& req) {
   ShenandoahHeap* heap = ShenandoahHeap::heap();
 
   assert(current()->is_Java_thread(), "expect Java thread here");
 
   if (try_set_alloc_failure_gc()) {
     // Only report the first allocation failure
-    log_info(gc)("Failed to allocate " SIZE_FORMAT "%s",
-                 byte_size_in_proper_unit(words * HeapWordSize), proper_unit_for_byte_size(words * HeapWordSize));
+    log_info(gc)("Failed to allocate %s, " SIZE_FORMAT "%s",
+                 req.type_string(),
+                 byte_size_in_proper_unit(req.size() * HeapWordSize), proper_unit_for_byte_size(req.size() * HeapWordSize));
 
     // Now that alloc failure GC is scheduled, we can abort everything else
     heap->cancel_gc(GCCause::_allocation_failure);
