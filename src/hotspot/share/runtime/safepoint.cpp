@@ -499,10 +499,6 @@ bool SafepointSynchronize::is_cleanup_needed() {
   return false;
 }
 
-bool SafepointSynchronize::is_forced_cleanup_needed() {
-  return ObjectSynchronizer::needs_monitor_scavenge();
-}
-
 class ParallelSPCleanupThreadClosure : public ThreadClosure {
 private:
   CodeBlobClosure* _nmethod_cl;
@@ -532,7 +528,7 @@ private:
 public:
   ParallelSPCleanupTask(uint num_workers, DeflateMonitorCounters* counters) :
     AbstractGangTask("Parallel Safepoint Cleanup"),
-    _subtasks(SubTasksDone(SafepointSynchronize::SAFEPOINT_CLEANUP_NUM_TASKS)),
+    _subtasks(SafepointSynchronize::SAFEPOINT_CLEANUP_NUM_TASKS),
     _cleanup_threads_cl(ParallelSPCleanupThreadClosure(counters)),
     _num_workers(num_workers),
     _counters(counters) {}

@@ -35,8 +35,9 @@ import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
-import java.util.concurrent.CountDownLatch;
+import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
@@ -265,26 +266,23 @@ public final class ProcessTools {
         return ProcessHandle.current().pid();
     }
 
-
-
     /**
-     * Create ProcessBuilder using the java launcher from the jdk to be tested and
-     * with any platform specific arguments prepended
-     */
-    public static ProcessBuilder createJavaProcessBuilder(String... command) {
-        return createJavaProcessBuilder(false, command);
-    }
-
-    /**
-     * Create ProcessBuilder using the java launcher from the jdk to be tested,
-     * and with any platform specific arguments prepended.
+     * Create ProcessBuilder using the java launcher from the jdk to be tested.
      *
-     * @param addTestVmAndJavaOptions If true, adds test.vm.opts and test.java.opts
-     *        to the java arguments.
      * @param command Arguments to pass to the java command.
      * @return The ProcessBuilder instance representing the java command.
      */
-    public static ProcessBuilder createJavaProcessBuilder(boolean addTestVmAndJavaOptions, String... command) {
+    public static ProcessBuilder createJavaProcessBuilder(List<String> command) {
+        return createJavaProcessBuilder(command.toArray(String[]::new));
+    }
+
+    /**
+     * Create ProcessBuilder using the java launcher from the jdk to be tested.
+     *
+     * @param command Arguments to pass to the java command.
+     * @return The ProcessBuilder instance representing the java command.
+     */
+    public static ProcessBuilder createJavaProcessBuilder(String... command) {
         String javapath = JDKToolFinder.getJDKTool("java");
 
         ArrayList<String> args = new ArrayList<>();
@@ -292,10 +290,6 @@ public final class ProcessTools {
 
         args.add("-cp");
         args.add(System.getProperty("java.class.path"));
-
-        if (addTestVmAndJavaOptions) {
-            Collections.addAll(args, Utils.getTestJavaOpts());
-        }
 
         Collections.addAll(args, command);
 
@@ -305,7 +299,7 @@ public final class ProcessTools {
             cmdLine.append(cmd).append(' ');
         System.out.println("Command line: [" + cmdLine.toString() + "]");
 
-        return new ProcessBuilder(args.toArray(new String[args.size()]));
+        return new ProcessBuilder(args);
     }
 
     private static void printStack(Thread t, StackTraceElement[] stack) {
@@ -317,6 +311,53 @@ public final class ProcessTools {
             }
             System.out.println();
         }
+    }
+
+    /**
+     * Create ProcessBuilder using the java launcher from the jdk to be tested.
+     * The default jvm options from jtreg, test.vm.opts and test.java.opts, are added.
+     *
+     * The command line will be like:
+     * {test.jdk}/bin/java {test.vm.opts} {test.java.opts} cmds
+     * Create ProcessBuilder using the java launcher from the jdk to be tested.
+     *
+     * @param command Arguments to pass to the java command.
+     * @return The ProcessBuilder instance representing the java command.
+     */
+    public static ProcessBuilder createTestJvm(List<String> command) {
+        return createTestJvm(command.toArray(String[]::new));
+    }
+
+    /**
+     * Create ProcessBuilder using the java launcher from the jdk to be tested.
+     * The default jvm options from jtreg, test.vm.opts and test.java.opts, are added.
+     *
+     * The command line will be like:
+     * {test.jdk}/bin/java {test.vm.opts} {test.java.opts} cmds
+     * Create ProcessBuilder using the java launcher from the jdk to be tested.
+     *
+     * @param command Arguments to pass to the java command.
+     * @return The ProcessBuilder instance representing the java command.
+     */
+    public static ProcessBuilder createTestJvm(String... command) {
+        return createJavaProcessBuilder(Utils.prependTestJavaOpts(command));
+    }
+
+    /**
+     * Executes a test jvm process, waits for it to finish and returns the process output.
+     * The default jvm options from jtreg, test.vm.opts and test.java.opts, are added.
+     * The java from the test.jdk is used to execute the command.
+     *
+     * The command line will be like:
+     * {test.jdk}/bin/java {test.vm.opts} {test.java.opts} cmds
+     *
+     * The jvm process will have exited before this method returns.
+     *
+     * @param cmds User specified arguments.
+     * @return The output from the process.
+     */
+    public static OutputAnalyzer executeTestJvm(List<String> cmds) throws Exception {
+        return executeTestJvm(cmds.toArray(String[]::new));
     }
 
     /**
@@ -333,7 +374,7 @@ public final class ProcessTools {
      * @return The output from the process.
      */
     public static OutputAnalyzer executeTestJvm(String... cmds) throws Exception {
-        ProcessBuilder pb = createJavaProcessBuilder(Utils.addTestJavaOpts(cmds));
+        ProcessBuilder pb = createTestJvm(cmds);
         return executeProcess(pb);
     }
 

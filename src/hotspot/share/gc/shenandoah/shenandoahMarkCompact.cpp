@@ -37,7 +37,6 @@
 #include "gc/shenandoah/shenandoahHeapRegionSet.hpp"
 #include "gc/shenandoah/shenandoahHeap.inline.hpp"
 #include "gc/shenandoah/shenandoahHeapRegion.inline.hpp"
-#include "gc/shenandoah/shenandoahHeuristics.hpp"
 #include "gc/shenandoah/shenandoahMarkingContext.inline.hpp"
 #include "gc/shenandoah/shenandoahRootProcessor.inline.hpp"
 #include "gc/shenandoah/shenandoahTaskqueue.inline.hpp"
@@ -45,6 +44,7 @@
 #include "gc/shenandoah/shenandoahVerifier.hpp"
 #include "gc/shenandoah/shenandoahVMOperations.hpp"
 #include "gc/shenandoah/shenandoahWorkerPolicy.hpp"
+#include "gc/shenandoah/heuristics/shenandoahHeuristics.hpp"
 #include "memory/metaspace.hpp"
 #include "memory/universe.hpp"
 #include "oops/compressedOops.inline.hpp"
@@ -88,7 +88,7 @@ void ShenandoahMarkCompact::do_it(GCCause::Cause gc_cause) {
   assert(Thread::current()->is_VM_thread(), "Do full GC only while world is stopped");
 
   {
-    ShenandoahGCPhase phase(ShenandoahPhaseTimings::full_gc_heapdumps);
+    ShenandoahGCPhase phase(ShenandoahPhaseTimings::full_gc_heapdump_pre);
     heap->pre_full_gc_dump(_gc_timer);
   }
 
@@ -204,7 +204,7 @@ void ShenandoahMarkCompact::do_it(GCCause::Cause gc_cause) {
   }
 
   {
-    ShenandoahGCPhase phase(ShenandoahPhaseTimings::full_gc_heapdumps);
+    ShenandoahGCPhase phase(ShenandoahPhaseTimings::full_gc_heapdump_post);
     heap->post_full_gc_dump(_gc_timer);
   }
 }
@@ -242,8 +242,8 @@ void ShenandoahMarkCompact::phase1_mark_heap() {
   rp->setup_policy(true); // forcefully purge all soft references
   rp->set_active_mt_degree(heap->workers()->active_workers());
 
-  cm->update_roots(ShenandoahPhaseTimings::full_gc_roots);
-  cm->mark_roots(ShenandoahPhaseTimings::full_gc_roots);
+  cm->update_roots(ShenandoahPhaseTimings::full_gc_update_roots);
+  cm->mark_roots(ShenandoahPhaseTimings::full_gc_scan_roots);
   cm->finish_mark_from_roots(/* full_gc = */ true);
   heap->mark_complete_marking_context();
   heap->parallel_cleaning(true /* full_gc */);
@@ -348,6 +348,7 @@ public:
   }
 
   void work(uint worker_id) {
+    ShenandoahParallelWorkerSession worker_session(worker_id);
     ShenandoahHeapRegionSet* slice = _worker_slices[worker_id];
     ShenandoahHeapRegionSetIterator it(slice);
     ShenandoahHeapRegion* from_region = it.next();
@@ -727,6 +728,7 @@ public:
   }
 
   void work(uint worker_id) {
+    ShenandoahParallelWorkerSession worker_session(worker_id);
     ShenandoahAdjustPointersObjectClosure obj_cl;
     ShenandoahHeapRegion* r = _regions.next();
     while (r != NULL) {
@@ -749,6 +751,7 @@ public:
     _preserved_marks(preserved_marks) {}
 
   void work(uint worker_id) {
+    ShenandoahParallelWorkerSession worker_session(worker_id);
     ShenandoahAdjustPointersClosure cl;
     _rp->roots_do(worker_id, &cl);
     _preserved_marks->get(worker_id)->adjust_during_full_gc();
@@ -767,7 +770,7 @@ void ShenandoahMarkCompact::phase3_update_references() {
 #if COMPILER2_OR_JVMCI
     DerivedPointerTable::clear();
 #endif
-    ShenandoahRootAdjuster rp(nworkers, ShenandoahPhaseTimings::full_gc_roots);
+    ShenandoahRootAdjuster rp(nworkers, ShenandoahPhaseTimings::full_gc_adjust_roots);
     ShenandoahAdjustRootPointersTask task(&rp, _preserved_marks);
     workers->run_task(&task);
 #if COMPILER2_OR_JVMCI
@@ -814,6 +817,7 @@ public:
   }
 
   void work(uint worker_id) {
+    ShenandoahParallelWorkerSession worker_session(worker_id);
     ShenandoahHeapRegionSetIterator slice(_worker_slices[worker_id]);
 
     ShenandoahCompactObjectsClosure cl(worker_id);
@@ -960,6 +964,7 @@ public:
   }
 
   void work(uint worker_id) {
+    ShenandoahParallelWorkerSession worker_session(worker_id);
     ShenandoahHeapRegion* region = _regions.next();
     ShenandoahHeap* heap = ShenandoahHeap::heap();
     ShenandoahMarkingContext* const ctx = heap->complete_marking_context();

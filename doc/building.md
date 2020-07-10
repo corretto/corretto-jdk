@@ -330,7 +330,7 @@ issues.
  Linux              gcc 9.2.0
  macOS              Apple Xcode 10.1 (using clang 10.0.0)
  Solaris            Oracle Solaris Studio 12.6 (with compiler version 5.15)
- Windows            Microsoft Visual Studio 2017 update 15.9.16
+ Windows            Microsoft Visual Studio 2019 update 16.5.3
 
 All compilers are expected to be able to compile to the C99 language standard,
 as some C99 features are used in the source code. Microsoft Visual Studio
@@ -891,7 +891,7 @@ containing `lib/jtreg.jar` etc.
 
 The [Adoption Group](https://wiki.openjdk.java.net/display/Adoption) provides
 recent builds of jtreg [here](
-https://adopt-openjdk.ci.cloudbees.com/job/jtreg/lastSuccessfulBuild/artifact).
+https://ci.adoptopenjdk.net/view/Dependencies/job/jtreg/lastSuccessfulBuild/artifact).
 Download the latest `.tar.gz` file, unpack it, and point `--with-jtreg` to the
 `jtreg` directory that you just unpacked.
 

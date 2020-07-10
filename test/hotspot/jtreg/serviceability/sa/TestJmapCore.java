@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2018, 2019, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2018, 2020, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -88,7 +88,7 @@ public class TestJmapCore {
     }
 
     static void test(String type) throws Throwable {
-        ProcessBuilder pb = ProcessTools.createJavaProcessBuilder(true, "-XX:+CreateCoredumpOnCrash",
+        ProcessBuilder pb = ProcessTools.createTestJvm("-XX:+CreateCoredumpOnCrash",
                 "-Xmx512m", "-XX:MaxMetaspaceSize=64m", "-XX:+CrashOnOutOfMemoryError",
                 TestJmapCore.class.getName(), type);
 
@@ -120,6 +120,7 @@ public class TestJmapCore {
 
         File dumpFile = new File("heap.hprof");
         JDKToolLauncher launcher = JDKToolLauncher.createUsingTestJDK("jhsdb");
+        launcher.addVMArgs(Utils.getTestJavaOpts());
         launcher.addToolArg("jmap");
         launcher.addToolArg("--binaryheap");
         launcher.addToolArg("--dumpfile=" + dumpFile);

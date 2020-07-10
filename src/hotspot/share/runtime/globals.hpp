@@ -192,7 +192,7 @@ const size_t minimumSymbolTableSize = 1024;
           range(os::vm_allocation_granularity(), NOT_LP64(2*G) LP64_ONLY(8192*G)) \
                                                                             \
   product(bool, ForceNUMA, false,                                           \
-          "Force NUMA optimizations on single-node/UMA systems")            \
+          "(Deprecated) Force NUMA optimizations on single-node/UMA systems") \
                                                                             \
   product(uintx, NUMAChunkResizeWeight, 20,                                 \
           "Percentage (0-100) used to weight the current sample when "      \
@@ -690,9 +690,6 @@ const size_t minimumSymbolTableSize = 1024;
   product(bool, UseLWPSynchronization, true,                                \
           "Use LWP-based instead of libthread-based synchronization "       \
           "(SPARC only)")                                                   \
-                                                                            \
-  product(intx, MonitorBound, 0, "(Deprecated) Bound Monitor population")   \
-          range(0, max_jint)                                                \
                                                                             \
   experimental(intx, MonitorUsedDeflationThreshold, 90,                     \
                 "Percentage of used monitors before triggering cleanup "    \
@@ -2298,9 +2295,6 @@ const size_t minimumSymbolTableSize = 1024;
   diagnostic(bool, PrintMethodHandleStubs, false,                           \
           "Print generated stub code for method handles")                   \
                                                                             \
-  develop(bool, TraceMethodHandles, false,                                  \
-          "trace internal method handle operations")                        \
-                                                                            \
   diagnostic(bool, VerifyMethodHandles, trueInDebug,                        \
           "perform extra checks when constructing method handles")          \
                                                                             \
@@ -2312,9 +2306,6 @@ const size_t minimumSymbolTableSize = 1024;
                                                                             \
   diagnostic(bool, FoldStableValues, true,                                  \
           "Optimize loads from stable fields (marked w/ @Stable)")          \
-                                                                            \
-  develop(bool, TraceInvokeDynamic, false,                                  \
-          "trace internal invoke dynamic operations")                       \
                                                                             \
   diagnostic(int, UseBootstrapCallInfo, 1,                                  \
           "0: when resolving InDy or ConDy, force all BSM arguments to be " \
@@ -2489,7 +2480,8 @@ const size_t minimumSymbolTableSize = 1024;
   product(bool, UseEmptySlotsInSupers, true,                                \
                 "Allow allocating fields in empty slots of super-classes")  \
                                                                             \
-
+  diagnostic(bool, DeoptimizeNMethodBarriersALot, false,                    \
+                "Make nmethod barriers deoptimise a lot.")                  \
 
 // Interface macros
 #define DECLARE_PRODUCT_FLAG(type, name, value, doc)      extern "C" type name;

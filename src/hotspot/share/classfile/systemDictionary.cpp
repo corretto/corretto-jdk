@@ -111,6 +111,46 @@ oop         SystemDictionary::_java_platform_loader       =  NULL;
 
 const int defaultProtectionDomainCacheSize = 1009;
 
+ClassLoadInfo::ClassLoadInfo() {
+  _protection_domain = Handle();
+  _unsafe_anonymous_host = NULL;
+  _cp_patches = NULL;
+  _class_hidden_info._dynamic_nest_host = NULL;
+  _class_hidden_info._class_data = Handle();
+  _is_hidden = false;
+  _is_strong_hidden = false;
+  _can_access_vm_annotations = false;
+}
+
+ClassLoadInfo::ClassLoadInfo(Handle protection_domain) {
+  _protection_domain = protection_domain;
+  _unsafe_anonymous_host = NULL;
+  _cp_patches = NULL;
+  _class_hidden_info._dynamic_nest_host = NULL;
+  _class_hidden_info._class_data = Handle();
+  _is_hidden = false;
+  _is_strong_hidden = false;
+  _can_access_vm_annotations = false;
+}
+
+ClassLoadInfo::ClassLoadInfo(Handle protection_domain,
+                             const InstanceKlass* unsafe_anonymous_host,
+                             GrowableArray<Handle>* cp_patches,
+                             InstanceKlass* dynamic_nest_host,
+                             Handle class_data,
+                             bool is_hidden,
+                             bool is_strong_hidden,
+                             bool can_access_vm_annotations) {
+  _protection_domain = protection_domain;
+  _unsafe_anonymous_host = unsafe_anonymous_host;
+  _cp_patches = cp_patches;
+  _class_hidden_info._dynamic_nest_host = dynamic_nest_host;
+  _class_hidden_info._class_data = class_data;
+  _is_hidden = is_hidden;
+  _is_strong_hidden = is_strong_hidden;
+  _can_access_vm_annotations = can_access_vm_annotations;
+}
+
 // ----------------------------------------------------------------------------
 // Java-level SystemLoader and PlatformLoader
 
@@ -142,9 +182,14 @@ void SystemDictionary::compute_java_loaders(TRAPS) {
   _java_platform_loader = (oop)result.get_jobject();
 }
 
-ClassLoaderData* SystemDictionary::register_loader(Handle class_loader) {
-  if (class_loader.is_null()) return ClassLoaderData::the_null_class_loader_data();
-  return ClassLoaderDataGraph::find_or_create(class_loader);
+ClassLoaderData* SystemDictionary::register_loader(Handle class_loader, bool create_mirror_cld) {
+  if (create_mirror_cld) {
+    // Add a new class loader data to the graph.
+    return ClassLoaderDataGraph::add(class_loader, true);
+  } else {
+    return (class_loader() == NULL) ? ClassLoaderData::the_null_class_loader_data() :
+                                      ClassLoaderDataGraph::find_or_create(class_loader);
+  }
 }
 
 // ----------------------------------------------------------------------------
@@ -822,7 +867,7 @@ InstanceKlass* SystemDictionary::resolve_instance_class_or_null(Symbol* name,
         // class loaders holding the ObjectLock shouldn't find the class here
         InstanceKlass* check = find_class(d_hash, name, dictionary);
         if (check != NULL) {
-        // Klass is already loaded, so return it after checking/adding protection domain
+          // Klass is already loaded, so return it after checking/adding protection domain
           k = check;
           class_has_been_loaded = true;
         }
@@ -982,24 +1027,28 @@ Klass* SystemDictionary::find_instance_or_array_klass(Symbol* class_name,
 
 // Note: this method is much like resolve_from_stream, but
 // does not publish the classes via the SystemDictionary.
-// Handles unsafe_DefineAnonymousClass and redefineclasses
-// RedefinedClasses do not add to the class hierarchy
+// Handles Lookup.defineClass hidden, unsafe_DefineAnonymousClass
+// and redefineclasses. RedefinedClasses do not add to the class hierarchy.
 InstanceKlass* SystemDictionary::parse_stream(Symbol* class_name,
                                               Handle class_loader,
-                                              Handle protection_domain,
                                               ClassFileStream* st,
-                                              const InstanceKlass* unsafe_anonymous_host,
-                                              GrowableArray<Handle>* cp_patches,
+                                              const ClassLoadInfo& cl_info,
                                               TRAPS) {
 
   EventClassLoad class_load_start_event;
-
   ClassLoaderData* loader_data;
-  if (unsafe_anonymous_host != NULL) {
-    // Create a new CLD for an unsafe anonymous class, that uses the same class loader
-    // as the unsafe_anonymous_host
-    guarantee(unsafe_anonymous_host->class_loader() == class_loader(), "should be the same");
-    loader_data = ClassLoaderData::unsafe_anonymous_class_loader_data(class_loader);
+  bool is_unsafe_anon_class = cl_info.unsafe_anonymous_host() != NULL;
+
+  // - for unsafe anonymous class: create a new CLD whith a class holder that uses
+  //                               the same class loader as the unsafe_anonymous_host.
+  // - for hidden classes that are not strong: create a new CLD that has a class holder and
+  //                                           whose loader is the Lookup class's loader.
+  // - for hidden class: add the class to the Lookup class's loader's CLD.
+  if (is_unsafe_anon_class || cl_info.is_hidden()) {
+    guarantee(!is_unsafe_anon_class || cl_info.unsafe_anonymous_host()->class_loader() == class_loader(),
+              "should be NULL or the same");
+    bool create_mirror_cld = is_unsafe_anon_class || !cl_info.is_strong_hidden();
+    loader_data = register_loader(class_loader, create_mirror_cld);
   } else {
     loader_data = ClassLoaderData::class_loader_data(class_loader());
   }
@@ -1015,15 +1064,16 @@ InstanceKlass* SystemDictionary::parse_stream(Symbol* class_name,
   InstanceKlass* k = KlassFactory::create_from_stream(st,
                                                       class_name,
                                                       loader_data,
-                                                      protection_domain,
-                                                      unsafe_anonymous_host,
-                                                      cp_patches,
+                                                      cl_info,
                                                       CHECK_NULL);
 
-  if (unsafe_anonymous_host != NULL && k != NULL) {
-    // Unsafe anonymous classes must update ClassLoaderData holder (was unsafe_anonymous_host loader)
-    // so that they can be unloaded when the mirror is no longer referenced.
-    k->class_loader_data()->initialize_holder(Handle(THREAD, k->java_mirror()));
+  if ((cl_info.is_hidden() || is_unsafe_anon_class) && k != NULL) {
+    // Hidden classes that are not strong and unsafe anonymous classes must update
+    // ClassLoaderData holder so that they can be unloaded when the mirror is no
+    // longer referenced.
+    if (!cl_info.is_strong_hidden() || is_unsafe_anon_class) {
+      k->class_loader_data()->initialize_holder(Handle(THREAD, k->java_mirror()));
+    }
 
     {
       MutexLocker mu_r(THREAD, Compile_lock);
@@ -1036,12 +1086,14 @@ InstanceKlass* SystemDictionary::parse_stream(Symbol* class_name,
 
     // Rewrite and patch constant pool here.
     k->link_class(CHECK_NULL);
-    if (cp_patches != NULL) {
-      k->constants()->patch_resolved_references(cp_patches);
+    if (cl_info.cp_patches() != NULL) {
+      k->constants()->patch_resolved_references(cl_info.cp_patches());
     }
 
     // If it's anonymous, initialize it now, since nobody else will.
-    k->eager_initialize(CHECK_NULL);
+    if (is_unsafe_anon_class) {
+      k->eager_initialize(CHECK_NULL);
+    }
 
     // notify jvmti
     if (JvmtiExport::should_post_class_load()) {
@@ -1052,7 +1104,7 @@ InstanceKlass* SystemDictionary::parse_stream(Symbol* class_name,
       post_class_load_event(&class_load_start_event, k, loader_data);
     }
   }
-  assert(unsafe_anonymous_host != NULL || NULL == cp_patches,
+  assert(is_unsafe_anon_class || NULL == cl_info.cp_patches(),
          "cp_patches only found with unsafe_anonymous_host");
 
   return k;
@@ -1107,13 +1159,8 @@ InstanceKlass* SystemDictionary::resolve_from_stream(Symbol* class_name,
     if (st->buffer() == NULL) {
       return NULL;
     }
-    k = KlassFactory::create_from_stream(st,
-                                         class_name,
-                                         loader_data,
-                                         protection_domain,
-                                         NULL, // unsafe_anonymous_host
-                                         NULL, // cp_patches
-                                         CHECK_NULL);
+    ClassLoadInfo cl_info(protection_domain);
+    k = KlassFactory::create_from_stream(st, class_name, loader_data, cl_info, CHECK_NULL);
   }
 
   assert(k != NULL, "no klass created");
@@ -1357,7 +1404,7 @@ void SystemDictionary::load_shared_class_misc(InstanceKlass* ik, ClassLoaderData
   // package was loaded.
   if (loader_data->is_the_null_class_loader_data()) {
     int path_index = ik->shared_classpath_index();
-    ClassLoader::add_package(ik, path_index, THREAD);
+    ik->set_classpath_index(path_index, THREAD);
   }
 
   if (DumpLoadedClassList != NULL && classlist_file->is_open()) {
@@ -2247,8 +2294,8 @@ Klass* SystemDictionary::find_constrained_instance_or_array_klass(
   return klass;
 }
 
-
 bool SystemDictionary::add_loader_constraint(Symbol* class_name,
+                                             Klass* klass_being_linked,
                                              Handle class_loader1,
                                              Handle class_loader2,
                                              Thread* THREAD) {
@@ -2286,6 +2333,14 @@ bool SystemDictionary::add_loader_constraint(Symbol* class_name,
     InstanceKlass* klass2 = find_class(d_hash2, constraint_name, dictionary2);
     bool result = constraints()->add_entry(constraint_name, klass1, class_loader1,
                                            klass2, class_loader2);
+#if INCLUDE_CDS
+    if (Arguments::is_dumping_archive() && klass_being_linked != NULL &&
+        !klass_being_linked->is_shared()) {
+         SystemDictionaryShared::record_linking_constraint(constraint_name,
+                                     InstanceKlass::cast(klass_being_linked),
+                                     class_loader1, class_loader2, THREAD);
+    }
+#endif // INCLUDE_CDS
     if (Signature::is_array(class_name)) {
       constraint_name->decrement_refcount();
     }
@@ -2321,6 +2376,42 @@ Symbol* SystemDictionary::find_resolution_error(const constantPoolHandle& pool, 
     if (entry != NULL) {
       *message = entry->message();
       return entry->error();
+    } else {
+      return NULL;
+    }
+  }
+}
+
+// Add an entry to resolution error table to record an error in resolving or
+// validating a nest host. This is used to construct informative error
+// messages when IllegalAccessError's occur. If an entry already exists it will
+// be updated with the nest host error message.
+void SystemDictionary::add_nest_host_error(const constantPoolHandle& pool,
+                                           int which,
+                                           const char* message) {
+  unsigned int hash = resolution_errors()->compute_hash(pool, which);
+  int index = resolution_errors()->hash_to_index(hash);
+  {
+    MutexLocker ml(Thread::current(), SystemDictionary_lock);
+    ResolutionErrorEntry* entry = resolution_errors()->find_entry(index, hash, pool, which);
+    if (entry != NULL) {
+      assert(entry->nest_host_error() == NULL, "Nest host error message already set!");
+      entry->set_nest_host_error(message);
+    } else {
+      resolution_errors()->add_entry(index, hash, pool, which, message);
+    }
+  }
+}
+
+// Lookup any nest host error
+const char* SystemDictionary::find_nest_host_error(const constantPoolHandle& pool, int which) {
+  unsigned int hash = resolution_errors()->compute_hash(pool, which);
+  int index = resolution_errors()->hash_to_index(hash);
+  {
+    MutexLocker ml(Thread::current(), SystemDictionary_lock);
+    ResolutionErrorEntry* entry = resolution_errors()->find_entry(index, hash, pool, which);
+    if (entry != NULL) {
+      return entry->nest_host_error();
     } else {
       return NULL;
     }
@@ -2371,7 +2462,7 @@ Symbol* SystemDictionary::find_resolution_error(const constantPoolHandle& pool, 
 // called (perhaps via an override) from the supertype.
 //
 //
-// SystemDictionary::check_signature_loaders(sig, l1, l2)
+// SystemDictionary::check_signature_loaders(sig, klass_being_linked, l1, l2)
 //
 // Make sure all class components (including arrays) in the given
 // signature will be resolved to the same class in both loaders.
@@ -2379,6 +2470,7 @@ Symbol* SystemDictionary::find_resolution_error(const constantPoolHandle& pool, 
 // NULL if no constraint failed.  No exception except OOME is thrown.
 // Arrays are not added to the loader constraint table, their elements are.
 Symbol* SystemDictionary::check_signature_loaders(Symbol* signature,
+                                               Klass* klass_being_linked,
                                                Handle loader1, Handle loader2,
                                                bool is_method, TRAPS)  {
   // Nothing to do if loaders are the same.
@@ -2392,14 +2484,13 @@ Symbol* SystemDictionary::check_signature_loaders(Symbol* signature,
       // Note: In the future, if template-like types can take
       // arguments, we will want to recognize them and dig out class
       // names hiding inside the argument lists.
-      if (!add_loader_constraint(sig, loader1, loader2, THREAD)) {
+      if (!add_loader_constraint(sig, klass_being_linked, loader1, loader2, THREAD)) {
         return sig;
       }
     }
   }
   return NULL;
 }
-
 
 Method* SystemDictionary::find_method_handle_intrinsic(vmIntrinsics::ID iid,
                                                        Symbol* signature,
@@ -2456,15 +2547,16 @@ static Method* unpack_method_and_appendix(Handle mname,
     Method* m = java_lang_invoke_MemberName::vmtarget(mname());
     if (m != NULL) {
       oop appendix = appendix_box->obj_at(0);
-      if (TraceMethodHandles) {
-    #ifndef PRODUCT
-        ttyLocker ttyl;
-        tty->print("Linked method=" INTPTR_FORMAT ": ", p2i(m));
-        m->print();
-        if (appendix != NULL) { tty->print("appendix = "); appendix->print(); }
-        tty->cr();
-    #endif //PRODUCT
+      LogTarget(Info, methodhandles) lt;
+      if (lt.develop_is_enabled()) {
+        ResourceMark rm(THREAD);
+        LogStream ls(lt);
+        ls.print("Linked method=" INTPTR_FORMAT ": ", p2i(m));
+        m->print_on(&ls);
+        if (appendix != NULL) { ls.print("appendix = "); appendix->print_on(&ls); }
+        ls.cr();
       }
+
       (*appendix_result) = Handle(THREAD, appendix);
       // the target is stored in the cpCache and if a reference to this
       // MemberName is dropped we need a way to make sure the

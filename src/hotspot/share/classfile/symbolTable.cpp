@@ -176,6 +176,11 @@ void SymbolTable::create_table ()  {
 }
 
 void SymbolTable::delete_symbol(Symbol* sym) {
+  if (Arguments::is_dumping_archive()) {
+    // Do not delete symbols as we may be in the middle of preparing the
+    // symbols for dumping.
+    return;
+  }
   if (sym->is_permanent()) {
     MutexLocker ml(SymbolArena_lock, Mutex::_no_safepoint_check_flag); // Protect arena
     // Deleting permanent symbol should not occur very often (insert race condition),
@@ -221,12 +226,18 @@ Symbol* SymbolTable::allocate_symbol(const char* name, int len, bool c_heap) {
 
   Symbol* sym;
   if (Arguments::is_dumping_archive()) {
+    // Need to make all symbols permanent -- or else some symbols may be GC'ed
+    // during the archive dumping code that's executed outside of a safepoint.
     c_heap = false;
   }
   if (c_heap) {
     // refcount starts as 1
     sym = new (len) Symbol((const u1*)name, len, 1);
     assert(sym != NULL, "new should call vm_exit_out_of_memory if C_HEAP is exhausted");
+  } else if (DumpSharedSpaces) {
+    // See comments inside Symbol::operator new(size_t, int)
+    sym = new (len) Symbol((const u1*)name, len, PERM_REFCOUNT);
+    assert(sym != NULL, "new should call vm_exit_out_of_memory if failed to allocate symbol during DumpSharedSpaces");
   } else {
     // Allocate to global arena
     MutexLocker ml(SymbolArena_lock, Mutex::_no_safepoint_check_flag); // Protect arena
@@ -459,6 +470,8 @@ Symbol* SymbolTable::lookup_only_unicode(const jchar* name, int utf16_length,
 void SymbolTable::new_symbols(ClassLoaderData* loader_data, const constantPoolHandle& cp,
                               int names_count, const char** names, int* lengths,
                               int* cp_indices, unsigned int* hashValues) {
+  // Note that c_heap will be true for non-strong hidden classes and unsafe anonymous classes
+  // even if their loader is the boot loader because they will have a different cld.
   bool c_heap = !loader_data->is_the_null_class_loader_data();
   for (int i = 0; i < names_count; i++) {
     const char *name = names[i];

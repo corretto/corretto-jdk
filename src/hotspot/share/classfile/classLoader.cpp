@@ -95,6 +95,7 @@ static FindEntry_t       FindEntry          = NULL;
 static ReadEntry_t       ReadEntry          = NULL;
 static GetNextEntry_t    GetNextEntry       = NULL;
 static Crc32_t           Crc32              = NULL;
+int ClassLoader::_libzip_loaded = 0;
 
 // Entry points for jimage.dll for loading jimage file entries
 
@@ -747,6 +748,7 @@ ClassPathEntry* ClassLoader::create_class_path_entry(const char *path, const str
         // enable call to C land
         ThreadToNativeFromVM ttn(thread);
         HandleMark hm(thread);
+        load_zip_library_if_needed();
         zip = (*ZipOpen)(canonical_path, &error_msg);
       }
       if (zip != NULL && error_msg == NULL) {
@@ -796,6 +798,7 @@ ClassPathZipEntry* ClassLoader::create_class_path_zip_entry(const char *path, bo
           JavaThread* thread = JavaThread::current();
           ThreadToNativeFromVM ttn(thread);
           HandleMark hm(thread);
+          load_zip_library_if_needed();
           zip = (*ZipOpen)(canonical_path, &error_msg);
         }
         if (zip != NULL && error_msg == NULL) {
@@ -967,6 +970,14 @@ void ClassLoader::load_java_library() {
   CanonicalizeEntry = CAST_TO_FN_PTR(canonicalize_fn_t, dll_lookup(javalib_handle, "JDK_Canonicalize", NULL));
 }
 
+void ClassLoader::release_load_zip_library() {
+  MutexLocker locker(Zip_lock, Monitor::_no_safepoint_check_flag);
+  if (_libzip_loaded == 0) {
+    load_zip_library();
+    Atomic::release_store(&_libzip_loaded, 1);
+  }
+}
+
 void ClassLoader::load_zip_library() {
   assert(ZipOpen == NULL, "should not load zip library twice");
   char path[JVM_MAXPATHLEN];
@@ -1008,33 +1019,8 @@ void ClassLoader::load_jimage_library() {
 }
 
 int ClassLoader::crc32(int crc, const char* buf, int len) {
+  load_zip_library_if_needed();
   return (*Crc32)(crc, (const jbyte*)buf, len);
-}
-
-// Function add_package checks if the package of the InstanceKlass is in the
-// boot loader's package entry table.  If so, then it sets the classpath_index
-// in the package entry record.
-//
-// The classpath_index field is used to find the entry on the boot loader class
-// path for packages with classes loaded by the boot loader from -Xbootclasspath/a
-// in an unnamed module.  It is also used to indicate (for all packages whose
-// classes are loaded by the boot loader) that at least one of the package's
-// classes has been loaded.
-bool ClassLoader::add_package(const InstanceKlass* ik, s2 classpath_index, TRAPS) {
-  assert(ik != NULL, "just checking");
-
-  PackageEntry* ik_pkg = ik->package();
-  if (ik_pkg != NULL) {
-    PackageEntryTable* pkg_entry_tbl = ClassLoaderData::the_null_class_loader_data()->packages();
-    PackageEntry* pkg_entry = pkg_entry_tbl->lookup_only(ik_pkg->name());
-    if (pkg_entry != NULL) {
-      assert(classpath_index != -1, "Unexpected classpath_index");
-      pkg_entry->set_classpath_index(classpath_index);
-    } else {
-      return false;
-    }
-  }
-  return true;
 }
 
 oop ClassLoader::get_system_package(const char* name, TRAPS) {
@@ -1283,13 +1269,12 @@ InstanceKlass* ClassLoader::load_class(Symbol* name, bool search_append_only, TR
 
   ClassLoaderData* loader_data = ClassLoaderData::the_null_class_loader_data();
   Handle protection_domain;
+  ClassLoadInfo cl_info(protection_domain);
 
   InstanceKlass* result = KlassFactory::create_from_stream(stream,
                                                            name,
                                                            loader_data,
-                                                           protection_domain,
-                                                           NULL, // unsafe_anonymous_host
-                                                           NULL, // cp_patches
+                                                           cl_info,
                                                            THREAD);
   if (HAS_PENDING_EXCEPTION) {
     if (DumpSharedSpaces) {
@@ -1298,10 +1283,7 @@ InstanceKlass* ClassLoader::load_class(Symbol* name, bool search_append_only, TR
     return NULL;
   }
 
-  if (!add_package(result, classpath_index, THREAD)) {
-    return NULL;
-  }
-
+  result->set_classpath_index(classpath_index, THREAD);
   return result;
 }
 
@@ -1331,8 +1313,8 @@ void ClassLoader::record_result(InstanceKlass* ik, const ClassFileStream* stream
   Arguments::assert_is_dumping_archive();
   assert(stream != NULL, "sanity");
 
-  if (ik->is_unsafe_anonymous()) {
-    // We do not archive unsafe anonymous classes.
+  if (ik->is_hidden() || ik->is_unsafe_anonymous()) {
+    // We do not archive hidden or unsafe anonymous classes.
     return;
   }
 
@@ -1496,8 +1478,6 @@ void ClassLoader::initialize() {
 
   // lookup java library entry points
   load_java_library();
-  // lookup zip library entry points
-  load_zip_library();
   // jimage library entry points are loaded below, in lookup_vm_options
   setup_bootstrap_search_path();
 }

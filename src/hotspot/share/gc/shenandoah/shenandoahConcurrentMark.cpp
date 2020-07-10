@@ -315,7 +315,7 @@ void ShenandoahConcurrentMark::mark_roots(ShenandoahPhaseTimings::Phase root_pha
 
 void ShenandoahConcurrentMark::update_roots(ShenandoahPhaseTimings::Phase root_phase) {
   assert(ShenandoahSafepoint::is_at_shenandoah_safepoint(), "Must be at a safepoint");
-  assert(root_phase == ShenandoahPhaseTimings::full_gc_roots ||
+  assert(root_phase == ShenandoahPhaseTimings::full_gc_update_roots ||
          root_phase == ShenandoahPhaseTimings::degen_gc_update_roots,
          "Only for these phases");
 
@@ -346,11 +346,12 @@ private:
 public:
   ShenandoahUpdateThreadRootsTask(bool is_par, ShenandoahPhaseTimings::Phase phase) :
     AbstractGangTask("Shenandoah Update Thread Roots"),
-    _thread_roots(is_par),
+    _thread_roots(phase, is_par),
     _phase(phase),
     _worker_phase(phase) {}
 
   void work(uint worker_id) {
+    ShenandoahParallelWorkerSession worker_session(worker_id);
     ShenandoahUpdateRefsClosure cl;
     _thread_roots.oops_do(&cl, NULL, worker_id);
   }
@@ -413,8 +414,6 @@ void ShenandoahConcurrentMark::concurrent_scan_code_roots(uint worker_id, Refere
 void ShenandoahConcurrentMark::mark_from_roots() {
   WorkGang* workers = _heap->workers();
   uint nworkers = workers->active_workers();
-
-  ShenandoahGCPhase conc_mark_phase(ShenandoahPhaseTimings::conc_mark);
 
   if (_heap->process_references()) {
     ReferenceProcessor* rp = _heap->ref_processor();
@@ -590,6 +589,7 @@ public:
     HandleMark hm;
     assert(ShenandoahSafepoint::is_at_shenandoah_safepoint(), "Must be at a safepoint");
     ShenandoahHeap* heap = ShenandoahHeap::heap();
+    ShenandoahParallelWorkerSession worker_session(worker_id);
     ShenandoahCMDrainMarkingStackClosure complete_gc(worker_id, _terminator);
     if (heap->has_forwarded_objects()) {
       ShenandoahForwardedIsAliveClosure is_alive;
@@ -684,7 +684,11 @@ void ShenandoahConcurrentMark::weak_refs_work_doit(bool full_gc) {
   ReferenceProcessorPhaseTimes pt(_heap->gc_timer(), rp->num_queues());
 
   {
-    ShenandoahGCPhase phase(phase_process);
+    // Note: Don't emit JFR event for this phase, to avoid overflow nesting phase level.
+    // Reference Processor emits 2 levels JFR event, that can get us over the JFR
+    // event nesting level limits, in case of degenerated GC gets upgraded to
+    // full GC.
+    ShenandoahTimingsTracker phase_timing(phase_process);
 
     if (_heap->has_forwarded_objects()) {
       ShenandoahCMKeepAliveUpdateClosure keep_alive(get_queue(serial_worker_id));

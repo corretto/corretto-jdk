@@ -63,10 +63,10 @@
           "This also caps the maximum TLAB size.")                          \
           range(1, 100)                                                     \
                                                                             \
-  experimental(ccstr, ShenandoahGCMode, "normal",                           \
+  experimental(ccstr, ShenandoahGCMode, "satb",                             \
           "GC mode to use.  Among other things, this defines which "        \
           "barriers are in in use. Possible values are:"                    \
-          " normal - default concurrent GC (three pass mark-evac-update);"  \
+          " satb - snapshot-at-the-beginning concurrent GC (three pass mark-evac-update);"  \
           " iu - incremental-update concurrent GC (three pass mark-evac-update);"  \
           " passive - stop the world GC only (either degenerated or full)") \
                                                                             \
@@ -210,10 +210,6 @@
                                                                             \
   diagnostic(bool, ShenandoahElasticTLAB, true,                             \
           "Use Elastic TLABs with Shenandoah")                              \
-                                                                            \
-  diagnostic(bool, ShenandoahAllowMixedAllocs, true,                        \
-          "Allow mixing mutator and collector allocations into a single "   \
-          "region. Some heuristics enable/disable it for their needs")      \
                                                                             \
   experimental(uintx, ShenandoahEvacReserve, 5,                             \
           "How much of heap to reserve for evacuations. Larger values make "\

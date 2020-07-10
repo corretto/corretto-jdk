@@ -29,6 +29,7 @@
 #include "classfile/javaClasses.hpp"
 #include "classfile/moduleEntry.hpp"
 #include "classfile/systemDictionary.hpp"
+#include "classfile/systemDictionaryShared.hpp"
 #include "classfile/vmSymbols.hpp"
 #include "gc/shared/collectedHeap.inline.hpp"
 #include "logging/log.hpp"
@@ -79,6 +80,10 @@ void Klass::set_is_cloneable() {
 void Klass::set_name(Symbol* n) {
   _name = n;
   if (_name != NULL) _name->increment_refcount();
+
+  if (Arguments::is_dumping_archive() && is_instance_klass()) {
+    SystemDictionaryShared::init_dumptime_info(InstanceKlass::cast(this));
+  }
 }
 
 bool Klass::is_subclass_of(const Klass* k) const {
@@ -92,6 +97,10 @@ bool Klass::is_subclass_of(const Klass* k) const {
     t = t->super();
   }
   return false;
+}
+
+void Klass::release_C_heap_structures() {
+  if (_name != NULL) _name->decrement_refcount();
 }
 
 bool Klass::search_secondary_supers(Klass* k) const {
@@ -608,7 +617,7 @@ void Klass::restore_unshareable_info(ClassLoaderData* loader_data, Handle protec
   // gotten an OOM later but keep the mirror if it was created.
   if (java_mirror() == NULL) {
     log_trace(cds, mirror)("Recreate mirror for %s", external_name());
-    java_lang_Class::create_mirror(this, loader, module_handle, protection_domain, CHECK);
+    java_lang_Class::create_mirror(this, loader, module_handle, protection_domain, Handle(), CHECK);
   }
 }
 
@@ -672,6 +681,20 @@ void Klass::check_array_allocation_length(int length, int max_length, TRAPS) {
   }
 }
 
+// Replace the last '+' char with '/'.
+static char* convert_hidden_name_to_java(Symbol* name) {
+  size_t name_len = name->utf8_length();
+  char* result = NEW_RESOURCE_ARRAY(char, name_len + 1);
+  name->as_klass_external_name(result, (int)name_len + 1);
+  for (int index = (int)name_len; index > 0; index--) {
+    if (result[index] == '+') {
+      result[index] = JVM_SIGNATURE_SLASH;
+      break;
+    }
+  }
+  return result;
+}
+
 // In product mode, this function doesn't have virtual function calls so
 // there might be some performance advantage to handling InstanceKlass here.
 const char* Klass::external_name() const {
@@ -688,7 +711,14 @@ const char* Klass::external_name() const {
       strcpy(result + name_len, addr_buf);
       assert(strlen(result) == name_len + addr_len, "");
       return result;
+
+    } else if (ik->is_hidden()) {
+      char* result = convert_hidden_name_to_java(name());
+      return result;
     }
+  } else if (is_objArray_klass() && ObjArrayKlass::cast(this)->bottom_klass()->is_hidden()) {
+    char* result = convert_hidden_name_to_java(name());
+    return result;
   }
   if (name() == NULL)  return "<unknown>";
   return name()->as_klass_external_name();
@@ -696,6 +726,18 @@ const char* Klass::external_name() const {
 
 const char* Klass::signature_name() const {
   if (name() == NULL)  return "<unknown>";
+  if (is_objArray_klass() && ObjArrayKlass::cast(this)->bottom_klass()->is_hidden()) {
+    size_t name_len = name()->utf8_length();
+    char* result = NEW_RESOURCE_ARRAY(char, name_len + 1);
+    name()->as_C_string(result, (int)name_len + 1);
+    for (int index = (int)name_len; index > 0; index--) {
+      if (result[index] == '+') {
+        result[index] = JVM_SIGNATURE_DOT;
+        break;
+      }
+    }
+    return result;
+  }
   return name()->as_C_string();
 }
 

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2018, 2019, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2018, 2020, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -25,35 +25,33 @@
  * @test
  * @bug 8184732
  * @summary Ensure that special locks never safepoint check.
+ * @requires vm.debug
  * @library /test/lib
  * @modules java.base/jdk.internal.misc
  *          java.management
  * @build sun.hotspot.WhiteBox
  * @run driver ClassFileInstaller sun.hotspot.WhiteBox
- *                              sun.hotspot.WhiteBox$WhiteBoxPermission
- * @run main NoSafepointVerifier
+ * @run driver NoSafepointVerifier
  */
 
 import jdk.test.lib.process.ProcessTools;
 import jdk.test.lib.process.OutputAnalyzer;
-import jdk.test.lib.Platform;
 
 import sun.hotspot.WhiteBox;
 
 public class NoSafepointVerifier {
 
     static void runTest(String test) throws Exception {
-        if (Platform.isDebugBuild()){
-            ProcessBuilder pb = ProcessTools.createJavaProcessBuilder(
-                  "-Xbootclasspath/a:.",
-                  "-XX:+UnlockDiagnosticVMOptions",
-                  "-XX:+WhiteBoxAPI",
-                  "-XX:-CreateCoredumpOnCrash",
-                  "NoSafepointVerifier",
-                  test);
-            OutputAnalyzer output = new OutputAnalyzer(pb.start());
-            output.shouldContain(test);
-        }
+        ProcessBuilder pb = ProcessTools.createJavaProcessBuilder(
+              "-Xbootclasspath/a:.",
+              "-XX:+UnlockDiagnosticVMOptions",
+              "-XX:+WhiteBoxAPI",
+              "-XX:-CreateCoredumpOnCrash",
+              "NoSafepointVerifier",
+              test);
+        OutputAnalyzer output = new OutputAnalyzer(pb.start());
+        output.shouldContain(test)
+              .shouldNotHaveExitValue(0);
     }
 
     static String test1 = "Special locks or below should never safepoint";
