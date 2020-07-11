@@ -422,6 +422,14 @@ public abstract class Symbol extends AnnoConstruct implements PoolConstant, Elem
         return (flags() & ENUM) != 0;
     }
 
+    public boolean isSealed() {
+        return (flags_field & SEALED) != 0;
+    }
+
+    public boolean isNonSealed() {
+        return (flags_field & NON_SEALED) != 0;
+    }
+
     public boolean isFinal() {
         return (flags_field & FINAL) != 0;
     }
@@ -1285,6 +1293,13 @@ public abstract class Symbol extends AnnoConstruct implements PoolConstant, Elem
          */
         private List<RecordComponent> recordComponents = List.nil();
 
+        // sealed classes related fields
+        /** The classes, or interfaces, permitted to extend this class, or interface
+         */
+        public List<Symbol> permitted;
+
+        public boolean isPermittedExplicit = false;
+
         public ClassSymbol(long flags, Name name, Type type, Symbol owner) {
             super(TYP, flags, name, type, owner);
             this.members_field = null;
@@ -1293,6 +1308,7 @@ public abstract class Symbol extends AnnoConstruct implements PoolConstant, Elem
             this.sourcefile = null;
             this.classfile = null;
             this.annotationTypeMetadata = AnnotationTypeMetadata.notAnAnnotationType();
+            this.permitted = List.nil();
         }
 
         public ClassSymbol(long flags, Name name, Symbol owner) {
@@ -1491,7 +1507,10 @@ public abstract class Symbol extends AnnoConstruct implements PoolConstant, Elem
 
         public RecordComponent getRecordComponent(JCVariableDecl var, boolean addIfMissing, List<JCAnnotation> annotations) {
             for (RecordComponent rc : recordComponents) {
-                if (rc.name == var.name) {
+                /* it could be that a record erroneously declares two record components with the same name, in that
+                 * case we need to use the position to disambiguate
+                 */
+                if (rc.name == var.name && var.pos == rc.pos) {
                     return rc;
                 }
             }
@@ -1597,6 +1616,11 @@ public abstract class Symbol extends AnnoConstruct implements PoolConstant, Elem
 
         public boolean isRecord() {
             return (flags_field & RECORD) != 0;
+        }
+
+        @DefinedBy(Api.LANGUAGE_MODEL)
+        public List<Type> getPermittedSubclasses() {
+            return permitted.map(s -> s.type);
         }
     }
 
@@ -1753,7 +1777,13 @@ public abstract class Symbol extends AnnoConstruct implements PoolConstant, Elem
     public static class RecordComponent extends VarSymbol implements RecordComponentElement {
         public MethodSymbol accessor;
         public JCTree.JCMethodDecl accessorMeth;
+        /* the original annotations applied to the record component
+         */
         private final List<JCAnnotation> originalAnnos;
+        /* if the user happens to erroneously declare two components with the same name, we need a way to differentiate
+         * them, the code will fail anyway but we need to keep the information for better error recovery
+         */
+        private final int pos;
 
         /**
          * Construct a record component, given its flags, name, type and owner.
@@ -1761,9 +1791,14 @@ public abstract class Symbol extends AnnoConstruct implements PoolConstant, Elem
         public RecordComponent(JCVariableDecl fieldDecl, List<JCAnnotation> annotations) {
             super(PUBLIC, fieldDecl.sym.name, fieldDecl.sym.type, fieldDecl.sym.owner);
             this.originalAnnos = annotations;
+            this.pos = fieldDecl.pos;
         }
 
         public List<JCAnnotation> getOriginalAnnos() { return originalAnnos; }
+
+        public boolean isVarargs() {
+            return type.hasTag(TypeTag.ARRAY) && ((ArrayType)type).isVarargs();
+        }
 
         @Override @DefinedBy(Api.LANGUAGE_MODEL)
         @SuppressWarnings("preview")

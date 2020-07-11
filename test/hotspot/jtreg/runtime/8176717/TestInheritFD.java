@@ -69,7 +69,7 @@ import java.util.stream.Stream;
  * The third VM communicates the success to rename the file by printing "CLOSED
  * FD". The first VM checks that the string was printed by the third VM.
  *
- * On unix like systems "lsof" or "pfiles" is used.
+ * On unix like systems "lsof" is used.
  */
 
 public class TestInheritFD {
@@ -173,12 +173,11 @@ public class TestInheritFD {
     }
 
     static Optional<Command> lsofCommandCache = stream(new Command[]{
-            new Command("/usr/bin/lsof", "-p", true),
-            new Command("/usr/sbin/lsof", "-p", true),
-            new Command("/bin/lsof", "-p", true),
-            new Command("/sbin/lsof", "-p", true),
-            new Command("/usr/local/bin/lsof", "-p", true),
-            new Command("/usr/bin/pfiles", "-F", false), // Solaris
+            new Command("/usr/bin/lsof", "-p"),
+            new Command("/usr/sbin/lsof", "-p"),
+            new Command("/bin/lsof", "-p"),
+            new Command("/sbin/lsof", "-p"),
+            new Command("/usr/local/bin/lsof", "-p"),
         })
         .filter(command -> command.exists())
         .findFirst();
@@ -196,7 +195,7 @@ public class TestInheritFD {
         Command command = lsofCmd();
         System.out.printf("using command: %s%n", command);
         return run(command.name, command.option, pid)
-                .filter(line -> !command.checkPid || line.contains(pid))
+                .filter(line -> line.contains(pid))
                 .collect(toList());
     }
 
@@ -221,12 +220,10 @@ public class TestInheritFD {
     private static class Command {
         private final String name;
         private final String option;
-        private final boolean checkPid;
 
-        public Command(String name, String option, boolean checkPid) {
+        public Command(String name, String option) {
             this.name = name;
             this.option = option;
-            this.checkPid = checkPid;
         }
 
         private boolean exists() {
@@ -234,8 +231,8 @@ public class TestInheritFD {
         }
 
         public String toString() {
-            return String.format("[name: %s, option: %s, check pid: %b]",
-                    name, option, checkPid);
+            return String.format("[name: %s, option: %s]",
+                    name, option);
         }
     }
 }
