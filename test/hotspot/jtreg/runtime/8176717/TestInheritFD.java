@@ -119,12 +119,13 @@ public class TestInheritFD {
                 "-Dtest.jdk=" + getProperty("test.jdk"),
                 VMShouldNotInheritFileDescriptors.class.getName(),
                 args[0],
-                "" + ProcessHandle.current().pid());
+                getPid());
             pb.inheritIO(); // in future, redirect information from third VM to first VM
             pb.start();
 
             if (!isWindows()) {
-                System.out.println("(Second VM) Open file descriptors:\n" + outputContainingFilenames().stream().collect(joining("\n")));
+                System.out.printf("(Second VM) Open file descriptors: %s%n",
+                        outputContainingFilenames().stream().collect(joining("\n")));
             }
         }
     }
@@ -171,25 +172,31 @@ public class TestInheritFD {
         }
     }
 
-    static Optional<String[]> lsofCommandCache = stream(new String[][]{
-            {"/usr/bin/lsof", "-p"},
-            {"/usr/sbin/lsof", "-p"},
-            {"/bin/lsof", "-p"},
-            {"/sbin/lsof", "-p"},
-            {"/usr/local/bin/lsof", "-p"}})
-        .filter(args -> new File(args[0]).exists())
+    static Optional<Command> lsofCommandCache = stream(new Command[]{
+            new Command("/usr/bin/lsof", "-p"),
+            new Command("/usr/sbin/lsof", "-p"),
+            new Command("/bin/lsof", "-p"),
+            new Command("/sbin/lsof", "-p"),
+            new Command("/usr/local/bin/lsof", "-p"),
+        })
+        .filter(command -> command.exists())
         .findFirst();
 
-    static Optional<String[]> lsofCommand() {
+    static Optional<Command> lsofCommand() {
         return lsofCommandCache;
     }
 
-    static Collection<String> outputContainingFilenames() {
-        long pid = ProcessHandle.current().pid();
+    static Command lsofCmd() {
+        return lsofCommand().orElseThrow(() -> new RuntimeException("lsof like command not found"));
+    }
 
-        String[] command = lsofCommand().orElseThrow(() -> new RuntimeException("lsof like command not found"));
-        System.out.println("using command: " + command[0] + " " + command[1]);
-        return run(command[0], command[1], "" + pid).collect(toList());
+    static Collection<String> outputContainingFilenames() {
+        String pid = getPid();
+        Command command = lsofCmd();
+        System.out.printf("using command: %s%n", command);
+        return run(command.name, command.option, pid)
+                .filter(line -> line.contains(pid))
+                .collect(toList());
     }
 
     static boolean findOpenLogFile(Collection<String> fileNames) {
@@ -204,6 +211,29 @@ public class TestInheritFD {
         ProcessHandle.of(parentPid).ifPresent(handle -> handle.onExit().join());
         System.out.println("trying to rename file to the same name: " + f);
         System.out.println(f.renameTo(f) ? RETAINS_FD : LEAKS_FD); // this parts communicates a closed file descriptor by printing "VM RESULT => RETAINS FD"
+    }
+
+    private static String getPid() {
+        return Long.toString(ProcessHandle.current().pid());
+    }
+
+    private static class Command {
+        private final String name;
+        private final String option;
+
+        public Command(String name, String option) {
+            this.name = name;
+            this.option = option;
+        }
+
+        private boolean exists() {
+            return new File(name).exists();
+        }
+
+        public String toString() {
+            return String.format("[name: %s, option: %s]",
+                    name, option);
+        }
     }
 }
 

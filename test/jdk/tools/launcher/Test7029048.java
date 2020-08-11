@@ -155,9 +155,9 @@ public class Test7029048 extends TestHelper {
                     }
 
                     desc = "LD_LIBRARY_PATH should not be set (no libjvm.so)";
-                    if (TestHelper.isAIX) {
+                    if (TestHelper.isExpandedSharedLibraryPath) {
                         System.out.println("Skipping test case \"" + desc +
-                                           "\" because the Aix launcher adds the paths in any case.");
+                                           "\" because the Aix and Musl launchers add the paths in any case.");
                         continue;
                     }
                     break;
@@ -166,9 +166,9 @@ public class Test7029048 extends TestHelper {
                         recursiveDelete(dstLibDir);
                     }
                     desc = "LD_LIBRARY_PATH should not be set (no directory)";
-                    if (TestHelper.isAIX) {
+                    if (TestHelper.isExpandedSharedLibraryPath) {
                         System.out.println("Skipping test case \"" + desc +
-                                           "\" because the Aix launcher adds the paths in any case.");
+                                           "\" because the Aix and Musl launchers add the paths in any case.");
                         continue;
                     }
                     break;
@@ -211,12 +211,15 @@ public class Test7029048 extends TestHelper {
 
         // run the tests
         test7029048();
+
+        int passesLinux = TestHelper.isMusl ? 2 : 6;
+
         if (errors > 0) {
             throw new Exception("Test7029048: FAIL: with "
                     + errors + " errors and passes " + passes);
-        } else if (isLinux && passes < 6) {
+        } else if (isLinux && passes < passesLinux) {
              throw new Exception("Test7029048: FAIL: " +
-                    "all tests did not run, expected " + 6 + " got " + passes);
+                    "all tests did not run, expected " + passesLinux + " got " + passes);
         } else {
             System.out.println("Test7029048: PASS " + passes);
         }

@@ -279,9 +279,10 @@ static attach_state_t ptrace_attach(pid_t pid, char* err_buf, size_t err_buf_len
       }
     }
     char buf[200];
-    char* msg = strerror_r(errno, buf, sizeof(buf));
-    snprintf(err_buf, err_buf_len, "ptrace(PTRACE_ATTACH, ..) failed for %d: %s", pid, msg);
-    print_error("%s\n", err_buf);
+    if (strerror_r(errno, buf, sizeof(buf) == 0)) {
+      snprintf(err_buf, err_buf_len, "ptrace(PTRACE_ATTACH, ..) failed for %d: %s", pid, buf);
+      print_error("%s\n", err_buf);
+    }
     return ATTACH_FAIL;
   } else {
     attach_state_t wait_ret = ptrace_waitpid(pid);

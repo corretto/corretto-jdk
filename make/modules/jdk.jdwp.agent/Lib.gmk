@@ -31,6 +31,7 @@ $(eval $(call SetupJdkLibrary, BUILD_LIBDT_SOCKET, \
     NAME := dt_socket, \
     OPTIMIZATION := LOW, \
     CFLAGS := $(CFLAGS_JDKLIB) $(LIBDT_SOCKET_CPPFLAGS), \
+    DISABLED_WARNINGS_gcc := stringop-truncation, \
     EXTRA_HEADER_DIRS := \
         include \
         libjdwp/export, \
