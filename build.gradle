@@ -245,6 +245,8 @@ project(':openjdksrc') {
                     'ASSEMBLY_EXCEPTION',
                     'version.txt',
                     'amazon-cacerts',
+                    'configure',
+                    'Makefile',
                     'bin/**',
                     'doc/**',
                     'make/**',
