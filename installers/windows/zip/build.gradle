@@ -37,7 +37,7 @@ task copySource(type: Copy) {
 
 task configureBuild(type: Exec) {
     dependsOn copySource
-    workingDir "$buildRoot/src"
+    workingDir buildRoot
 
     // Platform specific flags
     def command = ['bash', 'configure',
@@ -55,7 +55,7 @@ task configureBuild(type: Exec) {
 
 task executeBuild(type: Exec) {
     dependsOn configureBuild
-    workingDir "$buildRoot/src"
+    workingDir buildRoot
 
     commandLine 'make', 'clean', 'images'
 }
@@ -77,10 +77,9 @@ task packageJdk(type: Zip) {
     from(buildRoot) {
         include 'ASSEMBLY_EXCEPTION'
         include 'LICENSE'
-        include 'THIRD_PARTY_README'
         include 'version.txt'
         include 'ADDITIONAL_LICENSE_INFO'
-        include 'README.md'
+        include 'README'
     }
 }
 
