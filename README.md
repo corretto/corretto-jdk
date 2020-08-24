@@ -6,6 +6,9 @@ Corretto is used internally at Amazon for production services.
 With Corretto, you can develop and run Java applications 
 on operating systems such as Linux, Windows, and macOS.
 
+This repository is used to track [OpenJDK upstream tip](https://github.com/openjdk/jdk). 
+Please look at the branches section for more information on Feature Releases. 
+
 Documentation is available at [https://docs.aws.amazon.com/corretto](https://docs.aws.amazon.com/corretto).
 
 ### Licenses and Trademarks
@@ -14,17 +17,18 @@ Please read these files: "LICENSE", "ADDITIONAL_LICENSE_INFO", "ASSEMBLY_EXCEPTI
 
 ### Branches
 
-_develop_
-: The default branch. It absorbs active development contributions from forks or topic branches via pull requests that pass smoke testing and are accepted.
-
 _develop-jdk15_
-: The branch that consumes development and patches to upstream jdk15. 
+: The default branch. The branch that consumes development and patches to upstream jdk15. Corretto 15 builds are generated from this branch. 
+
+_develop_
+: It absorbs active development contributions from forks or topic branches via pull requests that pass smoke testing and are accepted.
+
+_upstream-jdk15_
+: The branch is similar to master at [openjdk/jdk15](https://github.com/openjdk/jdk15). This branch merges into develop-jdk15.
 
 _upstream_
 : The branch is similar to master at [openjdk/jdk](https://github.com/openjdk/jdk). This branch merges into develop.
 
-_upstream-jdk15_
-: The branch is similar to master at [openjdk/jdk15](https://github.com/openjdk/jdk15). This branch merges into develop-jdk15.
 
 ### OpenJDK Readme 
 ```
