@@ -1,0 +1,21 @@
+name: "Refresh from Upstream"
+on: 
+  schedule:
+    - cron: '0 7 * * *'
+  workflow_dispatch:
+
+jobs:
+    refresh-jdk15:
+        runs-on: ubuntu-latest
+        name: "Update Corretto-15"
+        if: github.repository_owner == 'corretto'
+        steps:
+            - name: "Checkout code"
+              uses: actions/checkout@v2
+              with:
+                fetch-depth: 0
+            - name: "Fetch and Update Corretto-15"
+              uses: ./.github/actions/fetch-repo
+              with:
+                upstream: 'https://github.com/openjdk/jdk15u.git'
+                local-branch: 'upstream-jdk15'
