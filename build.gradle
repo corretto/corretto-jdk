@@ -80,6 +80,16 @@ allprojects {
                 "--with-vendor-version-string=Corretto-${project.version.full}"
         ]
 
+        def versionOpt = project.findProperty("corretto.versionOpt")
+        if (versionOpt) {
+            correttoCommonFlags += ["--with-version-opt=${versionOpt}"]
+        }
+
+        def versionDate = project.findProperty("corretto.versionDate")
+        if (versionDate) {
+            correttoCommonFlags += ["--with-version-date=${versionDate}"]
+        }
+
         // Valid value: null, release, debug, fastdebug, slowdebug
         def correttoDebugLevel = "release" // Default: release
         switch(project.findProperty("corretto.debug_level")) {
