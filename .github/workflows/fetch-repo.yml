@@ -14,8 +14,13 @@ jobs:
               uses: actions/checkout@v2
               with:
                 fetch-depth: 0
-            - name: "Fetch and Update Corretto-15"
+            - name: "Fetch Corretto-15"
               uses: ./.github/actions/fetch-repo
               with:
                 upstream: 'https://github.com/openjdk/jdk15u.git'
                 local-branch: 'upstream-jdk15'
+            - name: "Merge Corretto-15"
+              uses: ./.github/actions/merge-repo
+              with: 
+                upstream: 'upstream-jdk15'
+                merge-branch: 'develop-jdk15'
