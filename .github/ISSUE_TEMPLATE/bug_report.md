@@ -9,20 +9,11 @@ assignees: ''
 
 Thank you for taking the time to help improve OpenJDK and Corretto.
 
-If your request concerns a security vulnerability then please report it by email to aws-security@amazon.com instead of here.
-(You can find more information regarding security issues at https://aws.amazon.com/security/vulnerability-reporting/.)
+If your request concerns a security vulnerability then please report it by email to aws-security@amazon.com instead of here. (You can find more information regarding security issues at https://aws.amazon.com/security/vulnerability-reporting/.)
 
-Otherwise, if your issue concerns OpenJDK
-and is not specific to Corretto
-we ask that you raise it to the OpenJDK community.
-Depending on your contributor status for OpenJDK,
-please use the [JDK bug system](https://bugs.openjdk.java.net/) or
-the appropriate [mailing list](http://mail.openjdk.java.net/mailman/listinfo)
-for the given problem area or [update project](http://mail.openjdk.java.net/mailman/listinfo/jdk-updates-dev).
+Otherwise, if your issue concerns OpenJDK and is not specific to Corretto we ask that you raise it to the OpenJDK community. Depending on your contributor status for OpenJDK, please use the [JDK bug system](https://bugs.openjdk.java.net/) or the appropriate [mailing list](http://mail.openjdk.java.net/mailman/listinfo) for the given problem area or [update project](http://mail.openjdk.java.net/mailman/listinfo/jdk-updates-dev).
 
-If your issue is specific to Corretto,
-then you are in the right place.
-Please proceed with the following.
+If your issue is specific to Corretto, then you are in the right place. Please proceed with the following.
 
 ### Describe the bug
 A clear and concise description of what the bug is.
@@ -42,3 +33,5 @@ If applicable, add screenshots to help explain your problem.
 
 ### Additional context
 Add any other context about the problem here.
+
+For VM crashes, please attach the error report file. By default the file name is `hs_err_pidpid.log`, where pid is the process ID of the process.
