@@ -17,3 +17,4 @@ NashornProfile.txt
 /.gradle/
 .gradletasknamecache
 /pre-build/
+commitId.txt
