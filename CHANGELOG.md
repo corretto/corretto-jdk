@@ -4,7 +4,7 @@ The following sections describe the changes for each release of Amazon Corretto 
 
 ## January 2021 critical patch update: Corretto version 15.0.2.7.1
 
-Release Date: January xx, 2021
+Release Date: January 20, 2021
 
 **Target Platforms**
 
