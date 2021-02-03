@@ -92,6 +92,8 @@ task packageBuildResults(type: Zip) {
     }
 }
 
+build.dependsOn packageBuildResults
+
 artifacts {
     archives packageBuildResults
 }
