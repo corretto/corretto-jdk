@@ -1,0 +1,26 @@
+name: "Refresh jdk16 from Upstream"
+on:
+  schedule:
+    - cron: '0 8 * * *'
+  workflow_dispatch:
+
+jobs:
+    refresh-jdk16:
+        runs-on: ubuntu-latest
+        name: "Update Corretto-16"
+        if: github.repository_owner == 'corretto'
+        steps:
+            - name: "Checkout code"
+              uses: actions/checkout@v2
+              with:
+                fetch-depth: 0
+            - name: "Fetch Corretto-16"
+              uses: ./.github/actions/fetch-repo
+              with:
+                upstream: 'https://github.com/openjdk/jdk16u.git'
+                local-branch: 'upstream-jdk16'
+            - name: "Merge Corretto-16"
+              uses: ./.github/actions/merge-repo
+              with:
+                upstream: 'upstream-jdk16'
+                merge-branch: 'develop-jdk16'
