@@ -156,7 +156,7 @@ task packageTestResults(type: Tar) {
 
 }
 
-build.dependsOn packageing
+build.dependsOn packaging
 build.dependsOn packageTestResults
 
 artifacts {
