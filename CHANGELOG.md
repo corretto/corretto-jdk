@@ -22,7 +22,7 @@ The following issues are addressed in 16.0.1.9.1.
 | --- | --- | --- | --- |
 | Import jdk-16.0.1.9.1 | All | Updates Corretto baseline to OpenJDK 16.0.1+9 | [jdk-16.0.1+9](https://github.com/openjdk/jdk16u/releases/tag/jdk-16.0.1%2B9)
 
-The following CVEs are addressed in 8.292.10.1
+The following CVEs are addressed in 16.0.1.9.1
 
 | CVE | CVSS | Component |
 | --- | --- | --- |
