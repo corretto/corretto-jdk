@@ -83,6 +83,8 @@ jobs:
               input='${{ github.event.inputs.platforms }}'
             elif [[ $GITHUB_EVENT_NAME == push ]]; then
               input='${{ secrets.JDK_SUBMIT_PLATFORMS }}'
+            elif [[ $GITHUB_EVENT_NAME == pull_request ]]; then
+              input='${{ secrets.JDK_SUBMIT_PLATFORMS }}'
             else
               echo 'Internal error in GHA'
               exit 1
