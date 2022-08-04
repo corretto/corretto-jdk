@@ -238,6 +238,7 @@ public class Deflater {
             this.inputPos = off;
             this.inputLim = off + len;
         }
+        throw new RuntimeException("Will the test catch this in the PR?");
     }
 
     /**
