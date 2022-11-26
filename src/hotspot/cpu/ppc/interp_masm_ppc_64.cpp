@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2003, 2022, Oracle and/or its affiliates. All rights reserved.
- * Copyright (c) 2012, 2021 SAP SE. All rights reserved.
+ * Copyright (c) 2012, 2022 SAP SE. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -1769,7 +1769,7 @@ void InterpreterMacroAssembler::profile_arguments_type(Register callee,
     if (MethodData::profile_arguments()) {
       Label done;
       int off_to_args = in_bytes(TypeEntriesAtCall::args_data_offset());
-      add(R28_mdx, off_to_args, R28_mdx);
+      addi(R28_mdx, R28_mdx, off_to_args);
 
       for (int i = 0; i < TypeProfileArgsLimit; i++) {
         if (i > 0 || MethodData::profile_return()) {
@@ -2210,7 +2210,7 @@ void InterpreterMacroAssembler::get_method_counters(Register method,
 void InterpreterMacroAssembler::increment_invocation_counter(Register Rcounters,
                                                              Register iv_be_count,
                                                              Register Rtmp_r0) {
-  assert(UseCompiler || LogTouchedMethods, "incrementing must be useful");
+  assert(UseCompiler, "incrementing must be useful");
   Register invocation_count = iv_be_count;
   Register backedge_count   = Rtmp_r0;
   int delta = InvocationCounter::count_increment;

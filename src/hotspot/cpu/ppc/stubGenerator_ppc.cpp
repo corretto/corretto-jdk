@@ -2133,7 +2133,7 @@ class StubGenerator: public StubCodeGenerator {
 
     __ check_klass_subtype_fast_path(sub_klass, super_klass, temp, R0, &L_success, &L_miss, NULL,
                                      super_check_offset);
-    __ check_klass_subtype_slow_path(sub_klass, super_klass, temp, R0, &L_success, NULL);
+    __ check_klass_subtype_slow_path(sub_klass, super_klass, temp, R0, &L_success);
 
     // Fall through on failure!
     __ bind(L_miss);
@@ -3537,7 +3537,7 @@ class StubGenerator: public StubCodeGenerator {
     // passing the link register's value directly doesn't work.
     // Since we have to save the link register on the stack anyway, we calculate the corresponding stack address
     // and pass that one instead.
-    __ add(R3_ARG1, _abi0(lr), R1_SP);
+    __ addi(R3_ARG1, R1_SP, _abi0(lr));
 
     __ save_LR_CR(R0);
     __ push_frame_reg_args(nbytes_save, R0);
@@ -4501,12 +4501,6 @@ class StubGenerator: public StubCodeGenerator {
 
 #endif // VM_LITTLE_ENDIAN
 
-  RuntimeStub* generate_cont_doYield() {
-    if (!Continuations::enabled()) return nullptr;
-    Unimplemented();
-    return nullptr;
-  }
-
   address generate_cont_thaw() {
     if (!Continuations::enabled()) return nullptr;
     Unimplemented();
@@ -4616,9 +4610,6 @@ class StubGenerator: public StubCodeGenerator {
     StubRoutines::_cont_thaw          = generate_cont_thaw();
     StubRoutines::_cont_returnBarrier = generate_cont_returnBarrier();
     StubRoutines::_cont_returnBarrierExc = generate_cont_returnBarrier_exception();
-    StubRoutines::_cont_doYield_stub = generate_cont_doYield();
-    StubRoutines::_cont_doYield      = StubRoutines::_cont_doYield_stub == nullptr ? nullptr
-                                        : StubRoutines::_cont_doYield_stub->entry_point();
 
     JFR_ONLY(StubRoutines::_jfr_write_checkpoint_stub = generate_jfr_write_checkpoint();)
     JFR_ONLY(StubRoutines::_jfr_write_checkpoint = StubRoutines::_jfr_write_checkpoint_stub->entry_point();)

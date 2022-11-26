@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2014, 2022, Oracle and/or its affiliates. All rights reserved.
- * Copyright (c) 2015, 2021 SAP SE. All rights reserved.
+ * Copyright (c) 2015, 2022 SAP SE. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -474,12 +474,6 @@ address TemplateInterpreterGenerator::generate_abstract_entry(void) {
   __ bctr();
 
   return entry;
-}
-
-address TemplateInterpreterGenerator::generate_Continuation_doYield_entry(void) {
-  if (!Continuations::enabled()) return nullptr;
-  Unimplemented();
-  return NULL;
 }
 
 // Interpreter intrinsic for WeakReference.get().
@@ -1016,7 +1010,7 @@ void TemplateInterpreterGenerator::generate_fixed_frame(bool native_call, Regist
   if (native_call) {
     __ li(R14_bcp, 0); // Must initialize.
   } else {
-    __ add(R14_bcp, in_bytes(ConstMethod::codes_offset()), Rconst_method);
+    __ addi(R14_bcp, Rconst_method, in_bytes(ConstMethod::codes_offset()));
   }
 
   // Resize parent frame.
@@ -1190,7 +1184,7 @@ address TemplateInterpreterGenerator::generate_native_entry(bool synchronized) {
 
   address entry = __ pc();
 
-  const bool inc_counter = UseCompiler || CountCompiledCalls || LogTouchedMethods;
+  const bool inc_counter = UseCompiler || CountCompiledCalls;
 
   // -----------------------------------------------------------------------------
   // Allocate a new frame that represents the native callee (i2n frame).
@@ -1442,7 +1436,9 @@ address TemplateInterpreterGenerator::generate_native_entry(bool synchronized) {
   __ li(R0/*thread_state*/, _thread_in_native_trans);
   __ release();
   __ stw(R0/*thread_state*/, thread_(thread_state));
-  __ fence();
+  if (!UseSystemMemoryBarrier) {
+    __ fence();
+  }
 
   // Now before we return to java we must look for a current safepoint
   // (a new safepoint can not start since we entered native_trans).
@@ -1614,7 +1610,7 @@ address TemplateInterpreterGenerator::generate_native_entry(bool synchronized) {
 // Generic interpreted method entry to (asm) interpreter.
 //
 address TemplateInterpreterGenerator::generate_normal_entry(bool synchronized) {
-  bool inc_counter = UseCompiler || CountCompiledCalls || LogTouchedMethods;
+  bool inc_counter = UseCompiler || CountCompiledCalls;
   address entry = __ pc();
   // Generate the code to allocate the interpreter stack frame.
   Register Rsize_of_parameters = R4_ARG2, // Written by generate_fixed_frame.

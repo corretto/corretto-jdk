@@ -74,7 +74,6 @@ class SafepointSynchronize : AllStatic {
     SAFEPOINT_CLEANUP_UPDATE_INLINE_CACHES,
     SAFEPOINT_CLEANUP_SYMBOL_TABLE_REHASH,
     SAFEPOINT_CLEANUP_STRING_TABLE_REHASH,
-    SAFEPOINT_CLEANUP_SYSTEM_DICTIONARY_RESIZE,
     SAFEPOINT_CLEANUP_REQUEST_OOPSTORAGE_CLEANUP,
     // Leave this one last.
     SAFEPOINT_CLEANUP_NUM_TASKS
@@ -260,6 +259,7 @@ private:
 
   static VM_Operation::VMOp_Type _current_type;
   static jlong     _max_sync_time;
+  static jlong     _max_cleanup_time;
   static jlong     _max_vmop_time;
   static uint64_t  _op_count[VM_Operation::VMOp_Terminating];
 

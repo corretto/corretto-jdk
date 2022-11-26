@@ -243,8 +243,6 @@ private:
   static const TypeFunc* l2f_Type();
   static const TypeFunc* void_long_Type();
   static const TypeFunc* void_void_Type();
-  static const TypeFunc* continuation_doYield_Type();
-  static const TypeFunc* continuation_jump_Type();
 
   static const TypeFunc* jfr_write_checkpoint_Type();
 
@@ -282,6 +280,7 @@ private:
   static const TypeFunc* ghash_processBlocks_Type();
   static const TypeFunc* base64_encodeBlock_Type();
   static const TypeFunc* base64_decodeBlock_Type();
+  static const TypeFunc* poly1305_processBlocks_Type();
 
   static const TypeFunc* updateBytesCRC32_Type();
   static const TypeFunc* updateBytesCRC32C_Type();
