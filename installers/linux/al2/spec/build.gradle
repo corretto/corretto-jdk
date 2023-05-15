@@ -51,7 +51,8 @@ task inflateRpmSpec {
                     release_id          : releaseId,
                     version_opt         : versionOpt,
                     debug_level         : correttoDebugLevel,
-                    boot_jdk_major_version : version.major.toInteger() - 1
+                    boot_jdk_major_version : version.major.toInteger() - 1,
+                    experimental_feature: project.findProperty("corretto.experimental_feature") ?: "%{nil}"
                 ])
         outputs.files.singleFile.text = renderedTemplate
     }
