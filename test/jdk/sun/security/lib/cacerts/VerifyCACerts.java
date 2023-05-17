@@ -409,8 +409,8 @@ public class VerifyCACerts {
         String checksum = HEX.formatHex(md.digest(data));
         if (!checksum.equals(CHECKSUM)) {
             atLeastOneFailed = true;
-            System.err.println("ERROR: wrong checksum" + checksum);
-            System.err.println("Expected checksum" + CHECKSUM);
+            System.err.println("ERROR: wrong checksum " + checksum);
+            System.err.println("Expected checksum " + CHECKSUM);
         }
         */
 
