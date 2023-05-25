@@ -1,11 +1,13 @@
-
 /*
- * Copyright (c) 2002, 2019, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2021, 2023, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2023 SAP SE. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
  * under the terms of the GNU General Public License version 2 only, as
- * published by the Free Software Foundation.
+ * published by the Free Software Foundation.  Oracle designates this
+ * particular file as subject to the "Classpath" exception as provided
+ * by Oracle in the LICENSE file that accompanied this code.
  *
  * This code is distributed in the hope that it will be useful, but WITHOUT
  * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
@@ -21,28 +23,13 @@
  * or visit www.oracle.com if you need additional information or have any
  * questions.
  */
+package jdk.internal.foreign.abi.ppc64;
 
-package gc;
+import jdk.internal.foreign.abi.ppc64.CallArranger;
 
-/*
- * test TestMemoryInitialization
- * bug 4668531
- * Simple test for -XX:+CheckMemoryInitialization doesn't crash VM
+/**
+ * PPC64 CallArranger specialized for ABI v2.
  */
-
-public class TestMemoryInitialization {
-    final static int LOOP_LENGTH = 10;
-    final static int CHUNK_SIZE = 1500000;
-
-    public static byte[] buffer;
-
-    public static void main(String args[]) {
-
-        for (int i = 0; i < LOOP_LENGTH; i++) {
-            for (int j = 0; j < LOOP_LENGTH; j++) {
-                buffer = new byte[CHUNK_SIZE];
-                buffer = null;
-            }
-        }
-    }
+public class ABIv2CallArranger extends CallArranger {
+    // Currently no specific content, but CallArranger detects usage of ABIv2 for this class.
 }
