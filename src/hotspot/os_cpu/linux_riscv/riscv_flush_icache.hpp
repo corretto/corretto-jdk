@@ -1,5 +1,6 @@
 /*
- * Copyright (c) 2019, 2023, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2023, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2023, Rivos Inc. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -21,39 +22,18 @@
  * questions.
  *
  */
-#include "precompiled.hpp"
-#include "jfr/leakprofiler/sampling/objectSample.hpp"
-#include "jfr/leakprofiler/sampling/objectSampler.hpp"
-#include "oops/weakHandle.inline.hpp"
-#include "runtime/handles.inline.hpp"
 
-void ObjectSample::reset() {
-  release();
-  set_stack_trace_id(0);
-  set_stack_trace_hash(0);
-  release_references();
-  _virtual_thread = false;
-}
+#ifndef OS_LINUX_RISCV_FLUSH_ICACHE_LINUX_HPP
+#define OS_LINUX_RISCV_FLUSH_ICACHE_LINUX_HPP
 
-oop ObjectSample::object() const {
-  return _object.resolve();
-}
+#include "memory/allStatic.hpp"
+#include "runtime/vm_version.hpp"
+#include "utilities/growableArray.hpp"
 
-bool ObjectSample::is_dead() const {
-  return _object.peek() == nullptr;
-}
+class RiscvFlushIcache: public AllStatic {
+ public:
+  static bool test();
+  static void flush(uintptr_t start, uintptr_t end);
+};
 
-const oop* ObjectSample::object_addr() const {
-  return _object.ptr_raw();
-}
-
-void ObjectSample::set_object(oop object) {
-  assert(_object.is_empty(), "should be empty");
-  Handle h(Thread::current(), object);
-  _object = WeakHandle(ObjectSampler::oop_storage(), h);
-}
-
-void ObjectSample::release() {
-  _object.release(ObjectSampler::oop_storage());
-  _object = WeakHandle();
-}
+#endif // OS_LINUX_RISCV_FLUSH_ICACHE_LINUX_HPP
