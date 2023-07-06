@@ -26,6 +26,25 @@
 %global build_id        $build_id
 %global release_id      $release_id
 %global version_opt     $version_opt
+%global experimental_feature     $experimental_feature
+%global additional_configure_options     $additional_configure_options
+%global zlib_option $zlib_option
+%global use_gcc_ver $use_gcc_ver
+
+# The experimental_feature macro gets set to %nil by the template, but that is still defined and
+# the spec doesn't have a quick is not nil check, just define/not defined, this makes it easier to
+# work with
+%if 0%{?experimental_feature:1} && "%{experimental_feature}" == "%{nil}"
+%undefine experimental_feature
+%endif
+
+%if 0%{?additional_configure_options:1} == 1 && "%{additional_configure_options}" == "%{nil}"
+%undefine additional_configure_options
+%endif
+
+%if 0%{?use_gcc_ver:1} == 1 && "%{use_gcc_ver}" == "%{nil}"
+%undefine use_gcc_ver
+%endif
 # If we need to rev the package for something outside of what the
 # Corretto team is doing, we can define release_ext.
 # %global release_ext  1
@@ -57,16 +76,26 @@
 %global abs2rel %{__perl} -e %{script}
 
 # Filter out private libraries so RPM does not list them as provided/required
-%global _privatelibs libjli[.]so.*
+%global _privatelibs libjli[.]so.*|libattach[.]so.*|libawt_headless[.]so.*|libawt[.]so.*|libdt_socket[.]so.*|libextnet[.]so.*|libfontmanager[.]so.*|libinstrument[.]so.*|libj2gss[.]so.*|libj2pcsc[.]so.*|libj2pkcs11[.]so.*|libjaas[.]so.*|libjavajpeg[.]so.*|libjdwp[.]so.*|libjimage[.]so.*|libjsound[.]so.*|libjsvml[.]so.*|liblcms[.]so.*|libmanagement[.]so.*|libmanagement_agent[.]so.*|libmanagement_ext[.]so.*|libmlib_image[.]so.*|libnet[.]so.*|libnio[.]so.*|libprefs[.]so.*|librmi[.]so.*|libsaproc[.]so.*|libsctp[.]so.*|libsyslookup[.]so.*|libzip[.]so.*|libsplashscreen[.]so.*|libawt_xawt[.]so.*
+%global _publiclibs libjawt[.]so.*|libjava.so.*|libjsig.so.*|libjvm.so.*|libverify.so.*
+
+%if "%{dist}" == ".amzn2" || "%{dist}" == ".amzn2int"
+# On AL2 we don't want to list any libraries as Provides to keep existing functionality
+%global __provides_exclude ^(%{_privatelibs}|%{_publiclibs})\$
+%global __requires_exclude ^(%{_privatelibs}|%{_publiclibs})\$
+%else
+# On newer AL versions, we will want only the latest LTS at release time to provide the public libs.
+# Having multiple versions of Java providing the libs will cause problems. (https://bugzilla.redhat.com/show_bug.cgi?id=1702356)
 %global __provides_exclude ^(%{_privatelibs})\$
 %global __requires_exclude ^(%{_privatelibs})\$
+%endif
 
 # By default install a bootstrap jdk. If one is already available,
 # this can be skipped using --without bootjdk
 %bcond_without bootjdk
 
 Summary: Amazon Corretto development environment
-Name: java-${java_spec_version}-amazon-corretto
+Name: java-${java_spec_version}-amazon-corretto%{?experimental_feature:-%{experimental_feature}}
 # Matches the 'full version' from Java's release notes:
 # https://www.oracle.com/technetwork/java/javase/11-0-2-relnotes-5188746.html
 # Eg: 11.0.2+7
@@ -75,7 +104,8 @@ Release: %{release_id}%{?dist}%{?release_ext:.%{release_ext}}
 
 Epoch: 1
 Group: Development/Languages
-AutoReqProv: no
+AutoProv: 1
+AutoReq: 0
 License: ASL 1.1 and ASL 2.0 and BSD and BSD with advertising and GPL+ and GPLv2 and GPLv2 with exceptions and IJG and LGPLv2+ and MIT and MPLv2.0 and Public Domain and W3C and zlib and ISC and FTL and RSA.
 Vendor: Amazon
 Url: https://github.com/corretto/corretto-${java_spec_version}
@@ -98,7 +128,7 @@ BuildRequires: cups-devel
 BuildRequires: fontconfig-devel
 BuildRequires: freetype-devel
 BuildRequires: giflib-devel
-BuildRequires: gcc-c++
+BuildRequires: gcc%{?use_gcc_ver}-c++
 BuildRequires: libjpeg-devel
 BuildRequires: libpng-devel
 BuildRequires: libxslt
@@ -142,7 +172,8 @@ OpenJDK ${java_spec_version} code.
 %package headless
 Summary: Amazon Corretto headless development environment
 Group:   Development/Tools
-AutoReqProv: no
+AutoProv: 1
+AutoReq: 0
 
 %if "%{dist}" == ".amzn2" || "%{dist}" == ".amzn2int"
 Requires: jpackage-utils
@@ -188,7 +219,8 @@ Amazon Corretto's packaging of the OpenJDK ${java_spec_version} API documentatio
 %package devel
 Summary: Amazon Corretto ${java_spec_version} development tools
 Group: Development
-AutoReqProv: no
+AutoProv: 1
+AutoReq: 0
 
 Provides: java-devel = %{epoch}:%{java_version}
 Provides: java-${java_spec_version}-devel = %{epoch}:%{java_version}
@@ -214,14 +246,24 @@ Amazon Corretto's packaging of the OpenJDK ${java_spec_version} jmods.
 %setup -q -n src -c
 
 %build
+
+%if "%{dist}" == ".amzn2" || "%{dist}" == ".amzn2int"
 # AmazonLinux ships with GifLib 4.x which does not define GIFLIB_MAJOR. This must be defined
 # because -Werror=undef is enabled.
+%define GIFLIB_DEFINE "-DGIFLIB_MAJOR=4"
+%endif
+
 bash ./configure \\
 %ifarch aarch64
-        --with-extra-cflags="-moutline-atomics -DGIFLIB_MAJOR=4" \\
+        --with-extra-cflags="-moutline-atomics %{GIFLIB_DEFINE}" \\
         --with-extra-cxxflags="-moutline-atomics" \\
 %else
-        --with-extra-cflags="-DGIFLIB_MAJOR=4" \\
+%if "%{?GIFLIB_DEFINE:1}" == "1"
+        --with-extra-cflags="%{GIFLIB_DEFINE}" \\
+%endif
+%endif
+%if 0%{?additional_configure_options:1}
+        %{additional_configure_options} \\
 %endif
         --with-jvm-features="zgc shenandoahgc" \\
         --with-version-feature="${java_spec_version}" \\
@@ -229,10 +271,10 @@ bash ./configure \\
         --with-libjpeg=system \\
         --with-giflib=system \\
         --with-libpng=system \\
-        --with-zlib=system \\
+        --with-zlib="%{zlib_option}" \\
         --with-version-opt="%{version_opt}" \\
         --with-version-build="%{build_id}" \\
-        --with-vendor-version-string="Corretto-%{java_version}.%{build_id}.%{release_id}" \\
+        --with-vendor-version-string="Corretto%{?experimental_feature:-%{experimental_feature}}-%{java_version}.%{build_id}.%{release_id}" \\
         --with-version-pre= \\
         --with-vendor-name="Amazon.com Inc." \\
         --with-vendor-url="https://aws.amazon.com/corretto/" \\
@@ -249,6 +291,12 @@ rm -rf %{buildroot}
 install -d -m 755 %{buildroot}%{java_home}
 cp -a %{java_imgdir}/jdk/* %{buildroot}%{java_home}
 rm -rf %{buildroot}%{java_home}/demo
+
+# Properly set permissions for executables and libs to enable auto-provides scanning
+find %{buildroot}%{java_home}/ -name "*.so" -exec chmod 755 \\{\\} \\; ;
+find %{buildroot}%{java_home} -type d -exec chmod 755 \\{\\} \\; ;
+# Set legal to read-only.
+find %{buildroot}%{java_home}/legal -type f -exec chmod 644 \\{\\} \\; ;
 
 # Make a *relative* symlink pointing to the cacerts file from ca-certificates.
 rm -f %{buildroot}%{java_home}/lib/security/cacerts
@@ -270,7 +318,7 @@ if [ \$1 -eq 1 ] ; then
                --slave %{_mandir}/man1/rmiregistry.1 rmiregistry.1 %{java_home}/man/man1/rmiregistry.1
 
   # Need to setup the jre alternatives separately when there is a higher priority jre java these don't get created above.
-  alternatives --install %{_jvmdir}/jre-%{java_major_version} jre_%{java_major_version} %{java_home}/jre %{alternatives_priority} \
+  alternatives --install %{_jvmdir}/jre-%{java_major_version} jre_%{java_major_version} %{java_home} %{alternatives_priority} \
                --slave %{_jvmdir}/jre-%{java_major_version}-openjdk jre_%{java_major_version}_openjdk %{java_home}/jre
 fi
 
@@ -446,6 +494,9 @@ fi
 %license %{java_imgdir}/docs/legal
 
 %changelog
+* Mon Oct 10 2022 Dan Lutker <lutkerd@amazon.com>
+- Fix provides to include public shared libs
+
 * Mon Aug 29 2022 Dan Lutker <lutkerd@amazon.com>
 - Move requires for jpeg, alsa and fonts to headless package
 
