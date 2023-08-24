@@ -70,6 +70,7 @@
 #include "services/nmtCommon.hpp"
 #include "services/threadService.hpp"
 #include "utilities/align.hpp"
+#include "utilities/checkedCast.hpp"
 #include "utilities/count_trailing_zeros.hpp"
 #include "utilities/defaultStream.hpp"
 #include "utilities/events.hpp"
@@ -136,11 +137,11 @@ char* os::iso8601_time(jlong milliseconds_since_19700101, char* buffer, size_t b
     assert(false, "buffer_length too small");
     return nullptr;
   }
-  const int milliseconds_per_microsecond = 1000;
+  const int milliseconds_per_second = 1000;
   const time_t seconds_since_19700101 =
-    milliseconds_since_19700101 / milliseconds_per_microsecond;
+    milliseconds_since_19700101 / milliseconds_per_second;
   const int milliseconds_after_second =
-    milliseconds_since_19700101 % milliseconds_per_microsecond;
+    checked_cast<int>(milliseconds_since_19700101 % milliseconds_per_second);
   // Convert the time value to a tm and timezone variable
   struct tm time_struct;
   if (utc) {
@@ -942,6 +943,7 @@ ATTRIBUTE_NO_ASAN static bool read_safely_from(intptr_t* p, intptr_t* result) {
 }
 
 static void print_hex_location(outputStream* st, address p, int unitsize) {
+  assert(is_aligned(p, unitsize), "Unaligned");
   address pa = align_down(p, sizeof(intptr_t));
 #ifndef _LP64
   // Special handling for printing qwords on 32-bit platforms
@@ -961,10 +963,14 @@ static void print_hex_location(outputStream* st, address p, int unitsize) {
 #endif // 32-bit, qwords
   intptr_t i = 0;
   if (read_safely_from((intptr_t*)pa, &i)) {
+    // bytes:   CA FE BA BE DE AD C0 DE
+    // bytoff:   0  1  2  3  4  5  6  7
+    // LE bits:  0  8 16 24 32 40 48 56
+    // BE bits: 56 48 40 32 24 16  8  0
     const int offset = (int)(p - (address)pa);
     const int bitoffset =
       LITTLE_ENDIAN_ONLY(offset * BitsPerByte)
-      BIG_ENDIAN_ONLY((int)(sizeof(intptr_t) - 1 - offset) * BitsPerByte);
+      BIG_ENDIAN_ONLY((int)((sizeof(intptr_t) - unitsize - offset) * BitsPerByte));
     const int bitfieldsize = unitsize * BitsPerByte;
     intptr_t value = bitfield(i, bitoffset, bitfieldsize);
     switch (unitsize) {
