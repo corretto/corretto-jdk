@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2017, 2020, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2023, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -21,24 +21,12 @@
  * questions.
  */
 
-#ifndef SHARE_GC_X_XARGUMENTS_HPP
-#define SHARE_GC_X_XARGUMENTS_HPP
+#include <jni.h>
 
-#include "gc/shared/gcArguments.hpp"
+#include <Windows.h>
 
-class CollectedHeap;
+const DWORD EX_CODE = 42;
 
-class XArguments : AllStatic {
-public:
-  static void initialize_alignments();
-  static void initialize_heap_flags_and_sizes();
-  static void initialize();
-  static size_t heap_virtual_to_physical_ratio();
-  static CollectedHeap* create_heap();
-
-  static bool is_supported();
-
-  static bool is_os_supported();
-};
-
-#endif // SHARE_GC_X_XARGUMENTS_HPP
+JNIEXPORT void JNICALL Java_UncaughtNativeExceptionTest_00024Crasher_throwException(JNIEnv* env, jclass cls) {
+  RaiseException(EX_CODE, EXCEPTION_NONCONTINUABLE, 0, NULL);
+}
