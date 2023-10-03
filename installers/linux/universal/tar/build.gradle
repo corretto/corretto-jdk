@@ -128,12 +128,7 @@ task packageBuildResults(type: Tar) {
     archiveName "${project.correttoJdkArchiveName}.tar.gz"
     compression Compression.GZIP
     from(buildRoot) {
-        include 'ADDITIONAL_LICENSE_INFO'
-        include 'ASSEMBLY_EXCEPTION'
-        include 'LICENSE'
-        include 'README.md'
-        include 'commitId.txt'
-        include 'version.txt'
+        include project.rootFiles
         into project.correttoJdkArchiveName
     }
     from(jdkResultingImage) {
