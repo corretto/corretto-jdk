@@ -140,12 +140,7 @@ task packageBuildResults(type: Tar) {
     archiveName "amazon-corretto-${project.version.full}-alpine-linux-${arch_alias}.tar.gz"
     compression Compression.GZIP
     from(buildRoot) {
-        include 'ADDITIONAL_LICENSE_INFO'
-        include 'ASSEMBLY_EXCEPTION'
-        include 'LICENSE'
-        include 'README.md'
-        include 'commitId.txt'
-        include 'version.txt'
+        include project.rootFiles
     }
     from(jdkResultingImage) {
         include 'bin/**'
