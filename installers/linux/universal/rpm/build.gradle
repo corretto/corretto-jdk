@@ -144,6 +144,13 @@ task generateJdkRpm(type: Rpm) {
         into "${jdkHome}/legal"
         fileMode 0444
     }
+
+    if (!project.excludeReadmeJavaSE) {
+        from("${jdkBinaryDir}/README.JAVASE") {
+            into jdkHome
+            fileMode 0444
+        }
+    }   
 }
 
 artifacts {

@@ -191,6 +191,13 @@ task generateJdkDeb(type: Deb) {
         fileMode 0444
     }
 
+    if (!project.excludeReadmeJavaSE) {
+        from("${jdkBinaryDir}/README.JAVASE") {
+            into jdkHome
+            fileMode 0444
+        }
+    }
+
     from("${buildRoot}/jinfo") {
         include '**/*.jinfo'
         into jvmDir
