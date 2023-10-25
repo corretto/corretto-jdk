@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2022, 2023, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2023, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -22,21 +22,31 @@
  */
 
 /*
- * @test TestEventWriterLog
- * @summary Test that log message of JFR when handle bytecodes
- * @key jfr
- * @requires vm.hasJFR
- * @library /test/lib /test/jdk
- * @run main/othervm TestEventWriterLog
+ * @test
+ * @bug 8316964
+ * @summary check exit code in jarsigner and keytool
+ * @library /test/lib
+ * @modules java.base/sun.security.tools.keytool
+ *          jdk.jartool/sun.security.tools.jarsigner
  */
 
-import jdk.test.lib.process.ProcessTools;
-import jdk.test.lib.process.OutputAnalyzer;
+import jdk.test.lib.Asserts;
+import jdk.test.lib.SecurityTools;
 
-public class TestEventWriterLog {
+public class ExitOrNot {
     public static void main(String[] args) throws Exception {
-        ProcessBuilder pb = ProcessTools.createJavaProcessBuilder("-Xlog:jfr+system+bytecode=trace", "-XX:StartFlightRecording", "-version");
-        OutputAnalyzer output = new OutputAnalyzer(pb.start());
-        output.shouldContain("superclass: jdk/jfr/events/AbstractJDKEvent");
+
+        // launching the tool still exits
+        SecurityTools.jarsigner("1 2 3")
+                .shouldHaveExitValue(1);
+        SecurityTools.keytool("-x")
+                .shouldHaveExitValue(1);
+
+        // calling the run() methods no longer
+        Asserts.assertEQ(new sun.security.tools.jarsigner.Main()
+                    .run("1 2 3".split(" ")), 1);
+
+        Asserts.assertEQ(new sun.security.tools.keytool.Main()
+                    .run("-x".split(" "), System.out), 1);
     }
 }
