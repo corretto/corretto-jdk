@@ -1,12 +1,10 @@
 /*
- * Copyright (c) 2016, 2022, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2023, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
  * under the terms of the GNU General Public License version 2 only, as
- * published by the Free Software Foundation.  Oracle designates this
- * particular file as subject to the "Classpath" exception as provided
- * by Oracle in the LICENSE file that accompanied this code.
+ * published by the Free Software Foundation.
  *
  * This code is distributed in the hope that it will be useful, but WITHOUT
  * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
@@ -23,18 +21,37 @@
  * questions.
  */
 
-package jdk.javadoc.internal.tool;
-
-/**
- * The access value kinds.
+/*
+ * @test
+ * @bug 8287284
+ * @summary The phi of cnt is split from the inner to the outer loop,
+ *          and then from outer loop to the inner loop again.
+ *          This ended in a endless optimization cycle.
+ * @library /test/lib /
+ * @run driver compiler.c2.loopopts.TestSplitThruPhiInfinitely
  */
-public enum AccessKind {
-    /** Limits access to public entities */
-    PUBLIC,
-    /** Limits access to public and protected entities */
-    PROTECTED,
-    /** Limits access to public, protected and package private entities */
-    PACKAGE,
-    /** No limits */
-    PRIVATE;
+
+package compiler.c2.loopopts;
+
+import compiler.lib.ir_framework.*;
+
+public class TestSplitThruPhiInfinitely {
+
+    public static int cnt = 1;
+
+    @Test
+    @IR(counts = {IRNode.PHI, " <= 10"})
+    public static void test() {
+        int j = 0;
+        do {
+            j = cnt;
+            for (int k = 0; k < 20000; k++) {
+                cnt += 2;
+            }
+        } while (++j < 10);
+    }
+
+    public static void main(String[] args) {
+        TestFramework.runWithFlags("-XX:-PartialPeelLoop");
+    }
 }
