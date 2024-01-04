@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2018, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2023, Alibaba Group Holding Limited. All Rights Reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -21,30 +21,22 @@
  * questions.
  */
 
-/*
+/**
  * @test
- * @bug 7198073 7197662
- * @summary Tests that user preferences are stored in the permanent storage
+ * @summary Test of option -XX:FullGCHeapDumpLimit
  * @library /test/lib
- * @build jdk.test.lib.process.* CheckUserPrefFirst CheckUserPrefLater
- * @run main CheckUserPrefsStorage
+ * @run main/othervm -XX:+UseSerialGC -XX:+HeapDumpBeforeFullGC -XX:+HeapDumpAfterFullGC -XX:HeapDumpPath=test.hprof -XX:FullGCHeapDumpLimit=1 FullGCHeapDumpLimitTest
  */
 
-import jdk.test.lib.process.ProcessTools;
+import java.io.File;
 
-public class CheckUserPrefsStorage {
+import jdk.test.lib.Asserts;
 
-    public static void main(String[] args) throws Throwable {
-        // First to create and store a user preference
-        run("CheckUserPrefFirst");
-        // Then check that preferences stored by CheckUserPrefFirst can be retrieved
-        run("CheckUserPrefLater");
-    }
+public class FullGCHeapDumpLimitTest {
 
-    public static void run(String testName) throws Exception {
-        ProcessTools.executeTestJava("-Djava.util.prefs.userRoot=.", testName)
-                    .outputTo(System.out)
-                    .errorTo(System.out)
-                    .shouldHaveExitValue(0);
+    public static void main(String[] args) throws Exception {
+        System.gc();
+        Asserts.assertTrue(new File("test.hprof").exists());
+        Asserts.assertFalse(new File("test.hprof.1").exists());
     }
 }

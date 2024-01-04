@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2018, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2023, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -21,30 +21,17 @@
  * questions.
  */
 
+#include <stdio.h>
+
+#ifdef _WIN64
+#define EXPORT __declspec(dllexport)
+#else
+#define EXPORT
+#endif
+
 /*
- * @test
- * @bug 7198073 7197662
- * @summary Tests that user preferences are stored in the permanent storage
- * @library /test/lib
- * @build jdk.test.lib.process.* CheckUserPrefFirst CheckUserPrefLater
- * @run main CheckUserPrefsStorage
+ * Call a function with the given function pointer.
  */
-
-import jdk.test.lib.process.ProcessTools;
-
-public class CheckUserPrefsStorage {
-
-    public static void main(String[] args) throws Throwable {
-        // First to create and store a user preference
-        run("CheckUserPrefFirst");
-        // Then check that preferences stored by CheckUserPrefFirst can be retrieved
-        run("CheckUserPrefLater");
-    }
-
-    public static void run(String testName) throws Exception {
-        ProcessTools.executeTestJava("-Djava.util.prefs.userRoot=.", testName)
-                    .outputTo(System.out)
-                    .errorTo(System.out)
-                    .shouldHaveExitValue(0);
-    }
+EXPORT void call(void *(*f)(void)) {
+    (*f)();
 }
