@@ -21,28 +21,23 @@
  * questions.
  *
  */
+#include <jni.h>
+#include <stdio.h>
+#include <stdlib.h>
 
-#include "precompiled.hpp"
-#include "gc/serial/serialVMOperations.hpp"
-#include "gc/shared/gcLocker.hpp"
+JNIEXPORT void JNICALL Java_TestJNIAbstractMethod_invokeAbstractM(JNIEnv* env,
+                                                                  jclass this_cls,
+                                                                  jclass target_cls,
+                                                                  jobject receiver) {
 
-void VM_GenCollectForAllocation::doit() {
-  SvcGCMarker sgcm(SvcGCMarker::MINOR);
-
-  SerialHeap* gch = SerialHeap::heap();
-  GCCauseSetter gccs(gch, _gc_cause);
-  _result = gch->satisfy_failed_allocation(_word_size, _tlab);
-  assert(_result == nullptr || gch->is_in_reserved(_result), "result not in heap");
-
-  if (_result == nullptr && GCLocker::is_active_and_needs_gc()) {
-    set_gc_locked();
+  jmethodID mid = (*env)->GetMethodID(env, target_cls, "abstractM", "()V");
+  if (mid == NULL) {
+    fprintf(stderr, "Error looking up method abstractM\n");
+    (*env)->ExceptionDescribe(env);
+    exit(1);
   }
-}
 
-void VM_GenCollectFull::doit() {
-  SvcGCMarker sgcm(SvcGCMarker::FULL);
+  printf("Invoking abstract method ...\n");
+  (*env)->CallVoidMethod(env, receiver, mid);  // Should raise exception
 
-  SerialHeap* gch = SerialHeap::heap();
-  GCCauseSetter gccs(gch, _gc_cause);
-  gch->do_full_collection(gch->must_clear_all_soft_refs(), _max_generation);
 }
