@@ -98,8 +98,30 @@ task createTestImage(type: Exec) {
     commandLine 'make','test-image'
 }
 
-task packageTestImage(type: Tar) {
+task fixCrossCompileLinking(type: Exec) {
     dependsOn createTestImage
+    /* When cross-compiling for aarch64, gcc incorrectly links against
+     * libz.so, provided by the -devel packages, instead of libz.so.1
+     * This can lead to runtime errors of the form
+     * javac: error while loading shared libraries: libz.so: cannot open shared object file: No such file or directory
+     * As a workaround, use patchelf to update all references to libz.so to the expected libz.so.1
+     *
+     * See also:
+     * - https://github.com/AppImage/AppImageKit/issues/964
+     * - https://github.com/AppImage/AppImageKit/issues/1092
+     * - https://github.com/electron-userland/electron-builder/issues/7835
+     * - https://github.com/CollaboraOnline/richdocumentscode/issues/68
+     * - https://github.com/Sienci-Labs/gsender/issues/420
+     */
+    if (project.hasProperty("corretto.crossCompile")) {
+        commandLine 'bash', '-c', "find ${imageDir} -type f -exec patchelf --replace-needed libz.so libz.so.1 {} \\; 2>/dev/null"
+    } else {
+        commandLine 'bash', '-c', "echo 'Not a cross-compiled build, no linker fixup required'"
+    }
+}
+
+task packageTestImage(type: Tar) {
+    dependsOn fixCrossCompileLinking
     description 'Package test results'
     archiveName "${project.correttoTestImageArchiveName}.tar.gz"
     compression Compression.GZIP
