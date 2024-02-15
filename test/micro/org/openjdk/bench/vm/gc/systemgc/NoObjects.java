@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2021, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2017, 2024, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -19,25 +19,33 @@
  * Please contact Oracle, 500 Oracle Parkway, Redwood Shores, CA 94065 USA
  * or visit www.oracle.com if you need additional information or have any
  * questions.
- *
  */
+package org.openjdk.bench.vm.gc.systemgc;
 
-#ifndef SHARE_OOPS_COMPILEDICHOLDER_INLINE_HPP
-#define SHARE_OOPS_COMPILEDICHOLDER_INLINE_HPP
+import org.openjdk.jmh.annotations.Benchmark;
+import org.openjdk.jmh.annotations.BenchmarkMode;
+import org.openjdk.jmh.annotations.Fork;
+import org.openjdk.jmh.annotations.Mode;
+import org.openjdk.jmh.annotations.OutputTimeUnit;
 
-#include "oops/compiledICHolder.hpp"
+import java.util.concurrent.TimeUnit;
 
-#include "oops/klass.inline.hpp"
+@BenchmarkMode(Mode.SingleShotTime)
+@Fork(value=25, jvmArgsAppend={"-Xmx5g", "-Xms5g", "-Xmn3g", "-XX:+AlwaysPreTouch"})
+@OutputTimeUnit(TimeUnit.MILLISECONDS)
+public class NoObjects {
 
-inline bool CompiledICHolder::is_loader_alive() {
-  Klass* k = _is_metadata_method ? ((Method*)_holder_metadata)->method_holder() : (Klass*)_holder_metadata;
-  if (!k->is_loader_alive()) {
-    return false;
-  }
-  if (!_holder_klass->is_loader_alive()) {
-    return false;
-  }
-  return true;
+    /*
+     * Test the System GC when there are no additionally allocate
+     * objects.
+     *
+     * The heap settings provided are the same as for the other
+     * test for consistency.
+     */
+
+    @Benchmark
+    public void gc() {
+        System.gc();
+    }
+
 }
-
-#endif // SHARE_OOPS_COMPILEDICHOLDER_INLINE_HPP
