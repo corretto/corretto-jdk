@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1999, 2014, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2024, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -21,28 +21,29 @@
  * questions.
  */
 
-import javax.swing.JApplet;
-import javax.swing.JTable;
-import javax.swing.SwingUtilities;
-import javax.swing.UIManager;
+package compiler.vectorapi.reshape;
 
-/**
+import compiler.vectorapi.reshape.tests.TestVectorCast;
+import compiler.vectorapi.reshape.utils.TestCastMethods;
+import compiler.vectorapi.reshape.utils.VectorReshapeHelper;
+
+/*
  * @test
- * @bug 4222153
- * @author Konstantin Eremin
- * @run applet/manual=yesno bug4222153.html
+ * @bug 8321021 8321023 8321024
+ * @key randomness
+ * @modules jdk.incubator.vector
+ * @modules java.base/jdk.internal.misc
+ * @summary Test that vector cast intrinsics work as intended on riscv (rvv).
+ * @requires os.arch == "riscv64" & vm.cpu.features ~= ".*v,.*"
+ * @library /test/lib /
+ * @run main/timeout=300 compiler.vectorapi.reshape.TestVectorCastRVV
  */
-public class bug4222153 extends JApplet {
-
-    public void init() {
-        SwingUtilities.invokeLater(() -> {
-            try {
-                UIManager.setLookAndFeel(
-                        "javax.swing.plaf.metal.MetalLookAndFeel");
-            } catch (Exception e) {
-                throw new RuntimeException(e);
-            }
-            getContentPane().add(new JTable(2, 2));
-        });
+public class TestVectorCastRVV {
+    public static void main(String[] args) {
+        VectorReshapeHelper.runMainHelper(
+                TestVectorCast.class,
+                TestCastMethods.RVV_CAST_TESTS.stream(),
+                "-XX:+UseRVV");
     }
 }
+
