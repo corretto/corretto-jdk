@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2016, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2024, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -19,29 +19,25 @@
  * Please contact Oracle, 500 Oracle Parkway, Redwood Shores, CA 94065 USA
  * or visit www.oracle.com if you need additional information or have any
  * questions.
+ *
  */
 
-/* @test
- * @bug 8148984
- * @summary Chinese Comma cannot be entered using Pinyin Input Method on OS X
- * @author Dmitry Markov
- * @run applet/manual=yesno bug8148984.html
+package gc.epsilon;
+
+/**
+ * @test TestEnoughUnusedSpace
+ * @requires vm.gc.Epsilon
+ * @summary Epsilon should allocates object successfully if it has enough space.
+ * @run main/othervm -Xms64M -Xmx128M -XX:+UnlockExperimentalVMOptions
+ *                   -XX:+UseEpsilonGC gc.epsilon.TestEnoughUnusedSpace
  */
 
-import javax.swing.*;
+public class TestEnoughUnusedSpace {
+    static volatile Object arr;
 
-public class bug8148984 extends JApplet {
-    @Override
-    public void init() {
-        SwingUtilities.invokeLater(new Runnable() {
-            @Override
-            public void run() {
-                JPanel panel = new JPanel();
-                panel.add(new JLabel("Text field:"));
-                panel.add(new JTextField(20));
-                add(panel);
-            }
-        });
+    public static void main(String[] args) {
+        // Create an array about 90M. It should be created successfully
+        // instead of throwing OOME, because 90M is smaller than 128M.
+        arr = new byte[90 * 1024 * 1024];
     }
 }
-
