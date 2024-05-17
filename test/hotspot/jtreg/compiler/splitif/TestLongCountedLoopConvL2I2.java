@@ -1,6 +1,5 @@
 /*
- * Copyright (c) 2019, 2024, Red Hat, Inc. All rights reserved.
- * Copyright (c) 2024, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2024, Red Hat, Inc. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -20,24 +19,41 @@
  * Please contact Oracle, 500 Oracle Parkway, Redwood Shores, CA 94065 USA
  * or visit www.oracle.com if you need additional information or have any
  * questions.
- *
  */
 
-#ifndef SHARE_NMT_THREADSTACKTRACKER_HPP
-#define SHARE_NMT_THREADSTACKTRACKER_HPP
+/*
+ * @test
+ * @bug 8331575
+ * @summary C2: crash when ConvL2I is split thru phi at LongCountedLoop
+ * @run main/othervm -Xcomp -XX:CompileOnly=TestLongCountedLoopConvL2I2.* TestLongCountedLoopConvL2I2
+ */
 
-#include "memory/allStatic.hpp"
-#include "utilities/globalDefinitions.hpp"
-#include "utilities/nativeCallStack.hpp"
+public class TestLongCountedLoopConvL2I2 {
+    static int x = 34;
 
-class ThreadStackTracker : AllStatic {
-private:
-  static volatile size_t _thread_count;
-public:
-  static void new_thread_stack(void* base, size_t size, const NativeCallStack& stack);
-  static void delete_thread_stack(void* base, size_t size);
-  static size_t thread_count() { return _thread_count; }
-};
+    public static void main(String[] strArr) {
+        for (int i = 0; i < 2; i++) {
+            test();
+        }
+    }
 
-#endif // SHARE_NMT_THREADSTACKTRACKER_HPP
+    static int test() {
+        int a = 5, b = 6;
+        long lArr[] = new long[2];
 
+        for (long i = 159; i > 1; i -= 3) {
+            a += 3;
+            for (int j = 1; j < 4; j++) {
+                if (a == 9) {
+                    if (x == 73) {
+                        try {
+                            b = 10 / (int) i;
+                        } catch (ArithmeticException a_e) {
+                        }
+                    }
+                }
+            }
+        }
+        return b;
+    }
+}
