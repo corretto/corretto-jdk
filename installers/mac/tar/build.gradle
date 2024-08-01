@@ -112,7 +112,7 @@ task prepareArtifacts {
         plistTokens["VENDOR"] = "Amazon.com Inc."
 
         copy {
-            from("${rootDir}/make/data/bundle/JDK-Info.plist") {
+            from("${rootDir}/make/data/bundle/JDK-Info.plist.template") {
                 rename { file -> 'Info.plist' }
                 filter(org.apache.tools.ant.filters.ReplaceTokens, beginToken: "@@", endToken: "@@", tokens: plistTokens)
             }
