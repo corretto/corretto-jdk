@@ -507,6 +507,12 @@ fi
 %license %{java_imgdir}/docs/legal
 
 %files debugsymbols
+<<<<<<< HEAD
+=======
+%dir %{java_home}/bin
+%dir %{java_home}/lib
+%dir %{java_home}/lib/server
+>>>>>>> 85e1c0de3a7 (Package debug symbols for AL builds)
 %{java_home}/bin/*.diz
 %{java_home}/lib/*.diz
 %{java_home}/lib/server/*.diz
