@@ -438,6 +438,9 @@ fi
 %exclude %{java_lib}/libawt_xawt.so
 %exclude %{java_lib}/libjawt.so
 %exclude %{java_lib}/libsplashscreen.so
+# Exclude debug symbol files
+%exclude %{java_home}/lib/*.diz
+%exclude %{java_home}/lib/server/*.diz
 
 %files devel
 %{java_home}/bin/jar
@@ -504,9 +507,6 @@ fi
 %license %{java_imgdir}/docs/legal
 
 %files debugsymbols
-%dir %{java_home}/bin
-%dir %{java_home}/lib
-%dir %{java_home}/lib/server
 %{java_home}/bin/*.diz
 %{java_home}/lib/*.diz
 %{java_home}/lib/server/*.diz
