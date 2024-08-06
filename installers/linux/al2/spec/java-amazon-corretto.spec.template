@@ -53,6 +53,7 @@
 # %global release_ext  1
 
 %global boot_jdk_major_version    $boot_jdk_major_version
+%global boot_jdk_major_v_backup    $boot_jdk_major_v_backup
 
 %global java_home %{_jvmdir}/%{name}.%{_arch}
 %global java_lib  %{java_home}/lib
@@ -146,7 +147,7 @@ BuildRequires: pkgconfig
 BuildRequires: xorg-x11-proto-devel
 
 %if %{with bootjdk}
-BuildRequires: java-${boot_jdk_major_version}-devel
+BuildRequires: (java-${boot_jdk_major_version}-devel or java-${boot_jdk_major_v_backup}-devel)
 %endif
 
 Requires: libX11
