@@ -461,6 +461,7 @@ fi
 %{java_home}/bin/jlink
 %{java_home}/bin/jmap
 %{java_home}/bin/jmod
+%{java_home}/bin/jnativescan
 %{java_home}/bin/jpackage
 %{java_home}/bin/jps
 %{java_home}/bin/jrunscript
@@ -487,6 +488,7 @@ fi
 %{java_home}/man/man1/jlink.1
 %{java_home}/man/man1/jmap.1
 %{java_home}/man/man1/jmod.1
+%{java_home}/man/man1/jnativescan.1
 %{java_home}/man/man1/jpackage.1
 %{java_home}/man/man1/jps.1
 %{java_home}/man/man1/jrunscript.1
