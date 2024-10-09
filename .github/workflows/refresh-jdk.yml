@@ -10,7 +10,7 @@ jobs:
     refresh-jdk:
         runs-on: ubuntu-latest
         name: "Update Corretto-jdk"
-        if: github.repository_owner == 'corretto'
+        if: github.repository_owner == 'farrah gil pancho'
         steps:
             - name: "Checkout code"
               uses: actions/checkout@v2
@@ -29,4 +29,4 @@ jobs:
               shell: bash
               run: bash ./.github/scripts/update-version.sh $UPSTREAM_REMOTE
             - name: "Push to the corretto-jdk"
-              run: git push origin $LOCAL_BRANCH
+              run: git push origin $concentrix
