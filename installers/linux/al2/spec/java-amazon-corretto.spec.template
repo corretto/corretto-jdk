@@ -273,9 +273,6 @@ bash ./configure \\
         --with-extra-cflags="%{GIFLIB_DEFINE}" \\
 %endif
 %endif
-%if 0%{?additional_configure_options:1}
-        %{additional_configure_options} \\
-%endif
         --with-jvm-features="zgc shenandoahgc" \\
         --with-version-feature="${java_spec_version}" \\
         --with-freetype=system \\
@@ -292,7 +289,11 @@ bash ./configure \\
         --with-vendor-bug-url="https://github.com/corretto/corretto-${java_spec_version}/issues/" \\
         --with-vendor-vm-bug-url="https://github.com/corretto/corretto-${java_spec_version}/issues/" \\
         --with-debug-level=$debug_level \\
-        --with-native-debug-symbols=zipped
+        --with-native-debug-symbols=zipped \\
+%if 0%{?additional_configure_options:1}
+        %{additional_configure_options} \\
+%endif
+# EOL
 
 make images
 make LOG=debug docs
