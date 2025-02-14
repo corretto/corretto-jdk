@@ -410,7 +410,6 @@ fi
 %config(noreplace) %{java_home}/conf/sound.properties
 %config(noreplace) %{java_home}/conf/management/jmxremote.access
 %config(noreplace) %{java_home}/conf/management/management.properties
-%config(noreplace) %{java_home}/conf/security/java.policy
 %config(noreplace) %{java_home}/conf/security/java.security
 %config(noreplace) %{java_home}/conf/security/policy/limited/exempt_local.policy
 %config(noreplace) %{java_home}/conf/security/policy/limited/default_local.policy
@@ -418,7 +417,6 @@ fi
 %config(noreplace) %{java_home}/conf/security/policy/unlimited/default_local.policy
 %config(noreplace) %{java_home}/conf/security/policy/unlimited/default_US_export.policy
 %config(noreplace) %{java_home}/lib/security/blocked.certs
-%config(noreplace) %{java_home}/lib/security/default.policy
 %config(noreplace) %{java_home}/lib/security/public_suffix_list.dat
 %dir %{java_home}
 %dir %{java_home}/bin
