@@ -77,12 +77,10 @@ allprojects {
             'conf/security/policy/limited/default_US_export.policy',
             'conf/security/policy/unlimited/default_local.policy',
             'conf/security/policy/unlimited/default_US_export.policy',
-            'conf/security/java.policy',
             'conf/security/java.security',
             'conf/management/jmxremote.access',
             'conf/management/management.properties',
             'lib/security/blocked.certs',
-            'lib/security/default.policy',
             'lib/security/public_suffix_list.dat'
             ];
 
