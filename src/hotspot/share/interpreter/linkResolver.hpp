@@ -296,14 +296,6 @@ class LinkResolver: AllStatic {
                                    const methodHandle& method,
                                    Bytecodes::Code byte,
                                    bool initialize_class, TRAPS);
-  static void resolve_field_access(fieldDescriptor& result,
-                                   const constantPoolHandle& pool,
-                                   int index,
-                                   const methodHandle& method,
-                                   Bytecodes::Code byte, TRAPS) {
-    resolve_field_access(result, pool, index, method, byte,
-                         /* initialize_class*/true, THREAD);
-  }
   static void resolve_field(fieldDescriptor& result, const LinkInfo& link_info,
                             Bytecodes::Code access_kind,
                             bool initialize_class, TRAPS);
@@ -328,6 +320,7 @@ class LinkResolver: AllStatic {
 
   static void cds_resolve_virtual_call  (CallInfo& result, const LinkInfo& link_info, TRAPS);
   static void cds_resolve_interface_call(CallInfo& result, const LinkInfo& link_info, TRAPS);
+  static void cds_resolve_static_call   (CallInfo& result, const LinkInfo& link_info, TRAPS);
   static void cds_resolve_special_call  (CallInfo& result, const LinkInfo& link_info, TRAPS);
 
   // same as above for compile-time resolution; but returns null handle instead of throwing

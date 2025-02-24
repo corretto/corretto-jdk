@@ -58,6 +58,13 @@ private:
   static char* read_manifest(JavaThread* current, ClassPathEntry* entry, jint *manifest_size, bool clean_text);
   static bool has_jar_suffix(const char* filename);
 
+  // All classes whose path_index is within
+  //     [_app_class_exclusion_start_path_index ... _app_module_paths_start_index)
+  // are excluded from the archive. See -XX:CacheOnlyClassesIn.
+  static int  _app_class_exclusion_start_path_index;
+
+  static ClassPathEntry* get_class_path_entry(s2 classpath_index);
+  static void check_invalid_classpath_index(s2 classpath_index, InstanceKlass* ik);
 public:
   static void process_jar_manifest(JavaThread* current, ClassPathEntry* entry);
 
@@ -127,6 +134,13 @@ public:
   static void set_has_non_jar_in_classpath() {
     _has_non_jar_in_classpath = true;
   }
+
+  // -XX:CacheOnlyClassesIn=
+  static bool should_be_excluded(InstanceKlass* k);
+  static void set_app_class_exclusion_start_path_index(int i) {
+    _app_class_exclusion_start_path_index = i;
+  }
+
 #endif // INCLUDE_CDS
 };
 

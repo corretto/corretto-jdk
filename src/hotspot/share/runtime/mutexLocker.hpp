@@ -25,9 +25,12 @@
 #ifndef SHARE_RUNTIME_MUTEXLOCKER_HPP
 #define SHARE_RUNTIME_MUTEXLOCKER_HPP
 
+#include "logging/log.hpp"
 #include "memory/allocation.hpp"
 #include "runtime/flags/flagSetting.hpp"
 #include "runtime/mutex.hpp"
+#include "runtime/perfData.hpp"
+#include "runtime/thread.hpp"
 
 class Thread;
 
@@ -80,8 +83,15 @@ extern Mutex*   MonitoringSupport_lock;          // Protects updates to the serv
 extern Monitor* ConcurrentGCBreakpoints_lock;    // Protects concurrent GC breakpoint management
 extern Mutex*   Compile_lock;                    // a lock held when Compilation is updating code (used to block CodeCache traversal, CHA updates, etc)
 extern Monitor* MethodCompileQueue_lock;         // a lock held when method compilations are enqueued, dequeued
+extern Monitor* MethodCompileQueueC1_lock;       // a lock held when method compilations are enqueued, dequeued
+extern Monitor* MethodCompileQueueC2_lock;       // a lock held when method compilations are enqueued, dequeued
+extern Monitor* MethodCompileQueueC3_lock;       // a lock held when method compilations are enqueued, dequeued
+extern Monitor* MethodCompileQueueSC1_lock;      // a lock held when method compilations are enqueued, dequeued
+extern Monitor* MethodCompileQueueSC2_lock;      // a lock held when method compilations are enqueued, dequeued
 extern Monitor* CompileThread_lock;              // a lock held by compile threads during compilation system initialization
 extern Monitor* Compilation_lock;                // a lock used to pause compilation
+extern Mutex*   TrainingData_lock;               // a lock used when accessing training records
+extern Monitor* TrainingReplayQueue_lock;        // a lock held when class are added/removed to the training replay queue
 extern Mutex*   CompileTaskAlloc_lock;           // a lock held when CompileTasks are allocated
 extern Mutex*   CompileStatistics_lock;          // a lock held when updating compilation statistics
 extern Mutex*   DirectivesStack_lock;            // a lock held when mutating the dirstack and ref counting directives
@@ -129,6 +139,7 @@ extern Mutex*   ClassListFile_lock;              // ClassListWriter()
 extern Mutex*   UnregisteredClassesTable_lock;   // UnregisteredClassesTableTable
 extern Mutex*   LambdaFormInvokers_lock;         // Protecting LambdaFormInvokers::_lambdaform_lines
 extern Mutex*   ScratchObjects_lock;             // Protecting _scratch_xxx_table in heapShared.cpp
+extern Mutex*   ArchivedObjectTables_lock;       // Protecting the table used by HeapShared::get_archived_object_permanent_index()
 #endif // INCLUDE_CDS
 #if INCLUDE_JFR
 extern Mutex*   JfrStacktrace_lock;              // used to guard access to the JFR stacktrace table
@@ -186,21 +197,39 @@ void assert_lock_strong(const Mutex* lock);
 class MutexLockerImpl: public StackObj {
  protected:
   Mutex* _mutex;
+  bool _prof;
+  elapsedTimer _before;
+  elapsedTimer _after;
+
+private:
+  static PerfCounter** _perf_lock_count;
+  static PerfCounter** _perf_lock_wait_time;
+  static PerfCounter** _perf_lock_hold_time;
+
+public:
 
   MutexLockerImpl(Mutex* mutex, Mutex::SafepointCheckFlag flag = Mutex::_safepoint_check_flag) :
-    _mutex(mutex) {
+    _mutex(mutex), _prof(ProfileVMLocks && Thread::current_or_null() != nullptr && Thread::current()->profile_vm_locks()) {
+
     bool no_safepoint_check = flag == Mutex::_no_safepoint_check_flag;
     if (_mutex != nullptr) {
+      if (_prof) { _before.start(); } // before
+
       if (no_safepoint_check) {
         _mutex->lock_without_safepoint_check();
       } else {
         _mutex->lock();
       }
+
+      if (_prof) { _before.stop(); _after.start(); } // after
     }
   }
 
   MutexLockerImpl(Thread* thread, Mutex* mutex, Mutex::SafepointCheckFlag flag = Mutex::_safepoint_check_flag) :
-    _mutex(mutex) {
+    _mutex(mutex), _prof(thread->profile_vm_locks()) {
+
+    if (_prof) { _before.start(); } // before
+
     bool no_safepoint_check = flag == Mutex::_no_safepoint_check_flag;
     if (_mutex != nullptr) {
       if (no_safepoint_check) {
@@ -209,17 +238,38 @@ class MutexLockerImpl: public StackObj {
         _mutex->lock(thread);
       }
     }
+
+    if (_prof) { _before.stop(); _after.start(); } // after
   }
 
   ~MutexLockerImpl() {
     if (_mutex != nullptr) {
       assert_lock_strong(_mutex);
       _mutex->unlock();
+
+      if (_mutex->id() == -1) {
+        log_trace(init)("Unnamed unclassified lock: %s", _mutex->name());
+      }
+
+      if (_prof) {
+        assert(UsePerfData, "required");
+        _after.stop();
+        _perf_lock_count    [_mutex->id() + 1]->inc();
+        _perf_lock_wait_time[_mutex->id() + 1]->inc(_before.ticks());
+        _perf_lock_hold_time[_mutex->id() + 1]->inc(_after.ticks());
+      }
     }
   }
 
+ private:
+  static void print_counter_on(outputStream* st, const char* name, bool is_unique, int idx);
+
  public:
+  static int name2id(const char* name);
+
   static void post_initialize();
+  static void init_counters();
+  static void print_counters_on(outputStream* st);
 };
 
 // Simplest mutex locker.

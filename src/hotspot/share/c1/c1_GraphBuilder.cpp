@@ -40,6 +40,8 @@
 #include "interpreter/bytecode.hpp"
 #include "jfr/jfrEvents.hpp"
 #include "memory/resourceArea.hpp"
+#include "oops/oop.inline.hpp"
+#include "runtime/runtimeUpcalls.hpp"
 #include "runtime/sharedRuntime.hpp"
 #include "utilities/checkedCast.hpp"
 #include "utilities/macros.hpp"
@@ -4072,6 +4074,14 @@ bool GraphBuilder::try_inline_full(ciMethod* callee, bool holder_known, bool ign
     Values* args = new Values(1);
     args->push(append(new Constant(new MethodConstant(method()))));
     append(new RuntimeCall(voidType, "dtrace_method_entry", CAST_FROM_FN_PTR(address, SharedRuntime::dtrace_method_entry), args));
+  }
+
+  MethodDetails method_details(callee);
+  RuntimeUpcallInfo* upcall = RuntimeUpcalls::get_first_upcall(RuntimeUpcallType::onMethodEntry, method_details);
+  while (upcall != nullptr) {
+    Values* args = new Values(0);
+    append(new RuntimeCall(voidType, upcall->upcall_name(), upcall->upcall_address(), args));
+    upcall = RuntimeUpcalls::get_next_upcall(RuntimeUpcallType::onMethodEntry, method_details, upcall);
   }
 
   if (profile_inlined_calls()) {

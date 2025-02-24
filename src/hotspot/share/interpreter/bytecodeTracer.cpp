@@ -22,6 +22,7 @@
  *
  */
 
+#include "cds/heapShared.hpp"
 #include "classfile/classPrinter.hpp"
 #include "classfile/javaClasses.inline.hpp"
 #include "interpreter/bytecodeHistogram.hpp"
@@ -129,10 +130,10 @@ class BytecodePrinter {
       int bci = (int)(bcp - method->code_base());
       st->print("[%zu] ", Thread::current()->osthread()->thread_id_for_printing());
       if (Verbose) {
-        st->print("%8d  %4d  " INTPTR_FORMAT " " INTPTR_FORMAT " %s",
+        st->print(JLONG_FORMAT_W(8) "  %4d  " INTPTR_FORMAT " " INTPTR_FORMAT " %s",
             BytecodeCounter::counter_value(), bci, tos, tos2, Bytecodes::name(code));
       } else {
-        st->print("%8d  %4d  %s",
+        st->print(JLONG_FORMAT_W(8) "  %4d  %s",
             BytecodeCounter::counter_value(), bci, Bytecodes::name(code));
       }
       print_attributes(bci, st);
@@ -174,7 +175,9 @@ class BytecodePrinter {
     }
     _next_pc = is_wide() ? bcp+2 : bcp+1;
     print_attributes(bci, st);
-    bytecode_epilog(bci, st);
+    if (ClassPrinter::has_mode(_flags, ClassPrinter::PRINT_PROFILE)) {
+      bytecode_epilog(bci, st);
+    }
   }
 };
 
@@ -301,6 +304,10 @@ void BytecodePrinter::print_invokedynamic(int indy_index, int cp_index, outputSt
       ResolvedIndyEntry* indy_entry = constants()->resolved_indy_entry_at(indy_index);
       st->print("  ResolvedIndyEntry: ");
       indy_entry->print_on(st);
+      if (indy_entry->has_appendix()) {
+        oop apx = constants()->resolved_reference_from_indy(indy_index);
+        st->print_cr(" - appendix = " INTPTR_FORMAT, p2i(apx));
+      }
     }
   }
 }

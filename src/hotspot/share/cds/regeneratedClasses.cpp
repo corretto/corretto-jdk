@@ -63,6 +63,12 @@ void RegeneratedClasses::add_class(InstanceKlass* orig_klass, InstanceKlass* reg
       _renegerated_objs->put((address)orig_m, (address)regen_m);
     }
   }
+
+  if (log_is_enabled(Info, cds)) {
+    ResourceMark rm;
+    log_info(cds)("Regenerated class %s: methods %d -> %d)", orig_klass->external_name(),
+                  orig_klass->methods()->length(), regen_klass->methods()->length());
+  }
 }
 
 bool RegeneratedClasses::has_been_regenerated(address orig_obj) {
@@ -71,6 +77,13 @@ bool RegeneratedClasses::has_been_regenerated(address orig_obj) {
   } else {
     return _renegerated_objs->get(orig_obj) != nullptr;
   }
+}
+
+address RegeneratedClasses::get_regenerated_object(address orig_obj) {
+  assert(_renegerated_objs != nullptr, "must be");
+  address* p =_renegerated_objs->get(orig_obj);
+  assert(p != nullptr, "must be");
+  return *p;
 }
 
 void RegeneratedClasses::record_regenerated_objects() {

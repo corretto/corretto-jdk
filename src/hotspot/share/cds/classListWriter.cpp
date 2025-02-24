@@ -22,7 +22,9 @@
  *
  */
 
+#include "cds/aotConstantPoolResolver.hpp"
 #include "cds/cds_globals.hpp"
+#include "cds/classListParser.hpp"
 #include "cds/classListWriter.hpp"
 #include "cds/lambdaFormInvokers.inline.hpp"
 #include "classfile/classFileStream.hpp"
@@ -30,10 +32,12 @@
 #include "classfile/classLoaderData.hpp"
 #include "classfile/classLoaderDataGraph.hpp"
 #include "classfile/moduleEntry.hpp"
+#include "classfile/symbolTable.hpp"
 #include "classfile/systemDictionaryShared.hpp"
 #include "memory/resourceArea.hpp"
 #include "oops/constantPool.inline.hpp"
 #include "oops/instanceKlass.hpp"
+#include "runtime/javaCalls.hpp"
 #include "runtime/mutexLocker.hpp"
 
 fileStream* ClassListWriter::_classlist_file = nullptr;
@@ -207,10 +211,23 @@ public:
       if (klass->is_instance_klass()) {
         InstanceKlass* ik = InstanceKlass::cast(klass);
         write_resolved_constants_for(ik);
+        write_array_info_for(ik); // FIXME: piggybacking on WriteResolveConstantsCLDClosure is misleading
       }
     }
   }
 };
+
+void ClassListWriter::write_array_info_for(InstanceKlass* ik) {
+  ObjArrayKlass* oak = ik->array_klasses();
+  if (oak != nullptr) {
+    while (oak->higher_dimension() != nullptr) {
+      oak = oak->higher_dimension();
+    }
+    ResourceMark rm;
+    outputStream* stream = _classlist_file;
+    stream->print_cr("%s %s %d", ClassListParser::ARRAY_TAG, ik->name()->as_C_string(), oak->dimension());
+  }
+}
 
 void ClassListWriter::write_resolved_constants() {
   if (!is_enabled()) {
@@ -221,6 +238,33 @@ void ClassListWriter::write_resolved_constants() {
 
   WriteResolveConstantsCLDClosure closure;
   ClassLoaderDataGraph::loaded_cld_do(&closure);
+}
+
+void ClassListWriter::write_reflection_data() {
+  if (!is_enabled()) {
+    return;
+  }
+  auto collector = [&] (const InstanceKlass* ik, int id) {
+    write_reflection_data_for(const_cast<InstanceKlass*>(ik));
+  };
+  _id_table->iterate_all(collector);
+}
+
+void ClassListWriter::write_reflection_data_for(InstanceKlass* ik) {
+  ResourceMark rm;
+  outputStream* stream = _classlist_file;
+  if (!SystemDictionaryShared::is_builtin_loader(ik->class_loader_data()) || ik->is_hidden()) {
+    return; // ignore
+  }
+  if (java_lang_Class::has_reflection_data(ik->java_mirror())) {
+    EXCEPTION_MARK;
+    int rd_flags = AOTConstantPoolResolver::class_reflection_data_flags(ik, THREAD);
+    if (!HAS_PENDING_EXCEPTION) {
+      // We can't hold the lock when doing the upcall inside class_reflection_data_flags()
+      MutexLocker lock2(ClassListFile_lock, Mutex::_no_safepoint_check_flag);
+      stream->print_cr("%s %s %d", ClassListParser::CLASS_REFLECTION_DATA_TAG, ik->name()->as_C_string(), rd_flags);
+    }
+  }
 }
 
 void ClassListWriter::write_resolved_constants_for(InstanceKlass* ik) {
@@ -292,6 +336,7 @@ void ClassListWriter::write_resolved_constants_for(InstanceKlass* ik) {
         if (rme->is_resolved(Bytecodes::_invokevirtual) ||
             rme->is_resolved(Bytecodes::_invokespecial) ||
             rme->is_resolved(Bytecodes::_invokeinterface) ||
+            rme->is_resolved(Bytecodes::_invokestatic) ||
             rme->is_resolved(Bytecodes::_invokehandle)) {
           list.at_put(rme->constant_pool_index(), true);
           print = true;
@@ -316,4 +361,51 @@ void ClassListWriter::write_resolved_constants_for(InstanceKlass* ik) {
     }
     stream->cr();
   }
+}
+
+void ClassListWriter::write_loader_negative_lookup_cache_for(oop loader, const char* loader_type) {
+  TempNewSymbol method = SymbolTable::new_symbol("negativeLookupCacheContents");
+  TempNewSymbol signature = SymbolTable::new_symbol("()Ljava/lang/String;");
+
+  EXCEPTION_MARK;
+  HandleMark hm(THREAD);
+
+  JavaValue result(T_OBJECT);
+  JavaCalls::call_virtual(&result,
+                          Handle(THREAD, loader),
+                          loader->klass(),
+                          method,
+                          signature,
+                          CHECK);
+
+  if (HAS_PENDING_EXCEPTION) {
+    log_warning(cds)("Error during BuiltinClassLoader::negativeLookupCacheContents() call for %s loader", loader_type);
+    CLEAR_PENDING_EXCEPTION;
+    return;
+  } else if (result.get_oop() == nullptr) {
+    return;
+  }
+
+  ResourceMark rm;
+  const char* cache_contents = java_lang_String::as_utf8_string(result.get_oop());
+  log_debug(cds)("%s loader negative cache: %s", loader_type, cache_contents);
+
+  outputStream* stream = _classlist_file;
+  const size_t buffer_size = strlen(ClassListParser::LOADER_NEGATIVE_CACHE_TAG) + 1 /* for space*/
+                    + strlen(loader_type) + 1 /* for space */ + strlen(cache_contents) + 1 /* for null character */;
+  char* buffer = NEW_C_HEAP_ARRAY(char, buffer_size, mtInternal);
+  _classlist_file->set_scratch_buffer(buffer, buffer_size);
+  MutexLocker lock2(ClassListFile_lock, Mutex::_no_safepoint_check_flag);
+  stream->print("%s %s %s", ClassListParser::LOADER_NEGATIVE_CACHE_TAG, loader_type, cache_contents);
+  stream->cr();
+  _classlist_file->set_scratch_buffer(nullptr, 0);
+}
+
+void ClassListWriter::write_loader_negative_lookup_cache() {
+  if (!is_enabled()) {
+    return;
+  }
+
+  write_loader_negative_lookup_cache_for(SystemDictionary::java_platform_loader(), "platform");
+  write_loader_negative_lookup_cache_for(SystemDictionary::java_system_loader(), "app");
 }

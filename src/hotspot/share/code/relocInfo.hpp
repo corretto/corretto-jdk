@@ -451,6 +451,8 @@ class relocInfo {
     length_limit       = 1 + 1 + (3*BytesPerWord/BytesPerShort) + 1,
     have_format        = format_width > 0
   };
+
+  static const char* type_name(relocInfo::relocType t);
 };
 
 #define FORWARD_DECLARE_EACH_CLASS(name)              \
@@ -638,11 +640,11 @@ class RelocIterator : public StackObj {
   bool   addr_in_const()      const;
 
   address section_start(int n) const {
-    assert(_section_start[n], "must be initialized");
+    assert(_section_start[n], "section %d must be initialized", n);
     return _section_start[n];
   }
   address section_end(int n) const {
-    assert(_section_end[n], "must be initialized");
+    assert(_section_end[n], "section %d must be initialized", n);
     return _section_end[n];
   }
 
@@ -658,11 +660,9 @@ class RelocIterator : public StackObj {
   // generic relocation accessor; switches on type to call the above
   Relocation* reloc();
 
-#ifndef PRODUCT
  public:
-  void print();
-  void print_current();
-#endif
+  void print_on(outputStream* st);
+  void print_current_on(outputStream* st);
 };
 
 
@@ -672,6 +672,7 @@ class RelocIterator : public StackObj {
 
 class Relocation {
   friend class RelocIterator;
+  friend class SCCReader;
 
  private:
   // When a relocation has been created by a RelocIterator,
@@ -1287,6 +1288,25 @@ class trampoline_stub_Relocation : public Relocation {
 
   void pack_data_to(CodeSection * dest) override;
   void unpack_data() override;
+#if defined(AARCH64)
+  address    pd_destination     ();
+  void       pd_set_destination (address x);
+#endif
+  address  destination() {
+#if defined(AARCH64)
+    return pd_destination();
+#else
+    fatal("trampoline_stub_Relocation::destination() unimplemented");
+    return (address)-1;
+#endif
+  }
+  void     set_destination(address x) {
+#if defined(AARCH64)
+    pd_set_destination(x);
+#else
+    fatal("trampoline_stub_Relocation::set_destination() unimplemented");
+#endif
+  }
 
   // Find the trampoline stub for a call.
   static address get_trampoline_for(address call, nmethod* code);

@@ -45,6 +45,7 @@
 #include "compiler/compilationPolicy.hpp"
 #include "compiler/compileBroker.hpp"
 #include "gc/shared/collectedHeap.inline.hpp"
+#include "interpreter/bytecodeHistogram.hpp"
 #include "interpreter/bytecodeStream.hpp"
 #include "interpreter/oopMapCache.hpp"
 #include "interpreter/rewriter.hpp"
@@ -73,6 +74,7 @@
 #include "oops/oop.inline.hpp"
 #include "oops/recordComponent.hpp"
 #include "oops/symbol.hpp"
+#include "oops/trainingData.hpp"
 #include "prims/jvmtiExport.hpp"
 #include "prims/jvmtiRedefineClasses.hpp"
 #include "prims/jvmtiThreadState.hpp"
@@ -88,6 +90,7 @@
 #include "runtime/orderAccess.hpp"
 #include "runtime/os.inline.hpp"
 #include "runtime/reflection.hpp"
+#include "runtime/runtimeUpcalls.hpp"
 #include "runtime/synchronizer.hpp"
 #include "runtime/threads.hpp"
 #include "services/classLoadingService.hpp"
@@ -879,8 +882,8 @@ void InstanceKlass::initialize_with_aot_initialized_mirror(TRAPS) {
 #endif
 
   set_init_thread(THREAD);
-  AOTClassInitializer::call_runtime_setup(THREAD, this);
   set_initialization_state_and_notify(fully_initialized, CHECK);
+  AOTClassInitializer::call_runtime_setup(THREAD, this);
 }
 #endif
 
@@ -1076,11 +1079,12 @@ void InstanceKlass::rewrite_class(TRAPS) {
 // This is outside is_rewritten flag. In case of an exception, it can be
 // executed more than once.
 void InstanceKlass::link_methods(TRAPS) {
-  PerfTraceTime timer(ClassLoader::perf_ik_link_methods_time());
+  PerfTraceElapsedTime timer(ClassLoader::perf_ik_link_methods_time());
 
   int len = methods()->length();
   for (int i = len-1; i >= 0; i--) {
     methodHandle m(THREAD, methods()->at(i));
+    RuntimeUpcalls::install_upcalls(m);
 
     // Set up method entry points for compiler and interpreter    .
     m->link_method(m, CHECK);
@@ -1184,6 +1188,21 @@ void InstanceKlass::initialize_impl(TRAPS) {
   bool wait = false;
 
   JavaThread* jt = THREAD;
+
+  if (ForceProfiling) {
+    // Preallocate MDOs.
+    for (int i = 0; i < methods()->length(); i++) {
+      assert(!HAS_PENDING_EXCEPTION, "");
+      methodHandle m(THREAD, methods()->at(i));
+      Method::build_profiling_method_data(m, THREAD);
+      if (HAS_PENDING_EXCEPTION) {
+        ResourceMark rm;
+        log_warning(cds)("MDO preallocation failed for %s", external_name());
+        CLEAR_PENDING_EXCEPTION;
+        break;
+      }
+    }
+  }
 
   bool debug_logging_enabled = log_is_enabled(Debug, class, init);
 
@@ -1323,6 +1342,7 @@ void InstanceKlass::initialize_impl(TRAPS) {
   if (!HAS_PENDING_EXCEPTION) {
     set_initialization_state_and_notify(fully_initialized, CHECK);
     debug_only(vtable().verify(tty, true);)
+    CompilationPolicy::replay_training_at_init(this, THREAD);
   }
   else {
     // Step 10 and 11
@@ -1352,7 +1372,6 @@ void InstanceKlass::initialize_impl(TRAPS) {
   }
   DTRACE_CLASSINIT_PROBE_WAIT(end, -1, wait);
 }
-
 
 void InstanceKlass::set_initialization_state_and_notify(ClassState state, TRAPS) {
   Handle h_init_lock(THREAD, init_lock());
@@ -1583,7 +1602,9 @@ instanceOop InstanceKlass::allocate_instance(TRAPS) {
   return (instanceOop)Universe::heap()->obj_allocate(this, size, CHECK_NULL);
 }
 
-instanceOop InstanceKlass::allocate_instance(oop java_class, TRAPS) {
+instanceOop InstanceKlass::allocate_instance(oop java_class,
+                                             const char* who,
+                                             TRAPS) {
   Klass* k = java_lang_Class::as_Klass(java_class);
   if (k == nullptr) {
     ResourceMark rm(THREAD);
@@ -1651,8 +1672,6 @@ ArrayKlass* InstanceKlass::array_klass_or_null() {
   return array_klass_or_null(1);
 }
 
-static int call_class_initializer_counter = 0;   // for debugging
-
 Method* InstanceKlass::class_initializer() const {
   Method* clinit = find_method(
       vmSymbols::class_initializer_name(), vmSymbols::void_method_signature());
@@ -1686,6 +1705,61 @@ void InstanceKlass::call_class_initializer(TRAPS) {
 
   methodHandle h_method(THREAD, class_initializer());
   assert(!is_initialized(), "we cannot initialize twice");
+
+#if 0
+  // FIXME -- revive this code added to leyden/premain for <clinit> profiling
+  int init_id = log_class_init(THREAD, this);
+  if (h_method() != nullptr) {
+    JavaCallArguments args; // No arguments
+    JavaValue result(T_VOID);
+    InstanceKlass* outer = THREAD->set_class_being_initialized(this);
+    jlong bc_start = (CountBytecodesPerThread ? THREAD->bc_counter_value() : BytecodeCounter::counter_value());
+
+    elapsedTimer timer;
+    {
+      PerfPauseTimer pt(THREAD->current_rt_call_timer(), THREAD->profile_rt_calls());
+      PauseRuntimeCallProfiling prcp(THREAD, THREAD->profile_rt_calls());
+
+      timer.start();
+      JavaCalls::call(&result, h_method, &args, THREAD); // Static call (no args)
+      timer.stop();
+    }
+
+    jlong bc_end = (CountBytecodesPerThread ? THREAD->bc_counter_value() : BytecodeCounter::counter_value());
+
+    jlong bc_executed = (bc_end - bc_start);
+    if (UsePerfData && outer == nullptr) { // outermost clinit
+      THREAD->inc_clinit_bc_counter_value(bc_executed);
+      ClassLoader::perf_class_init_bytecodes_count()->inc(bc_executed);
+    }
+
+    THREAD->set_class_being_initialized(outer);
+
+    LogStreamHandle(Debug, init) log;
+    if (log.is_enabled()) {
+      ResourceMark rm(THREAD);
+      log.print("%d Initialized in %.3fms (total: " JLONG_FORMAT "ms); ",
+                init_id, timer.seconds() * 1000.0, ClassLoader::class_init_time_ms());
+      if (CountBytecodes || CountBytecodesPerThread) {
+        log.print("executed " JLONG_FORMAT " bytecodes; ", bc_executed);
+      }
+      name()->print_value_on(&log);
+      log.print_cr(" by thread " PTR_FORMAT " \"%s\" (" PTR_FORMAT ")",
+                   p2i(THREAD), THREAD->name(), p2i(this));
+    }
+  }
+  LogTarget(Info, class, init) lt;
+  if (lt.is_enabled()) {
+    ResourceMark rm(THREAD);
+    LogStream ls(lt);
+    ls.print("%d Initialized ", init_id);
+    name()->print_value_on(&ls);
+    ls.print_cr("%s (" PTR_FORMAT ") by thread \"%s\"",
+                h_method() == nullptr ? "(no method)" : "", p2i(this),
+                THREAD->name());
+  }
+#else
+  static int call_class_initializer_counter = 0;   // for debugging
   LogTarget(Info, class, init) lt;
   if (lt.is_enabled()) {
     ResourceMark rm(THREAD);
@@ -1702,6 +1776,7 @@ void InstanceKlass::call_class_initializer(TRAPS) {
     JavaValue result(T_VOID);
     JavaCalls::call(&result, h_method, &args, CHECK); // Static call (no args)
   }
+#endif
 }
 
 // If a class that implements this interface is initialized, is the JVM required
@@ -2506,7 +2581,7 @@ inline DependencyContext InstanceKlass::dependencies() {
 }
 
 void InstanceKlass::mark_dependent_nmethods(DeoptimizationScope* deopt_scope, KlassDepChange& changes) {
-  dependencies().mark_dependent_nmethods(deopt_scope, changes);
+  dependencies().mark_dependent_nmethods(deopt_scope, changes, this);
 }
 
 void InstanceKlass::add_dependent_nmethod(nmethod* nm) {
@@ -2643,12 +2718,12 @@ void InstanceKlass::metaspace_pointers_do(MetaspaceClosure* it) {
 
 #if INCLUDE_CDS
 void InstanceKlass::remove_unshareable_info() {
-
   if (is_linked()) {
     assert(can_be_verified_at_dumptime(), "must be");
     // Remember this so we can avoid walking the hierarchy at runtime.
     set_verified_at_dump_time();
   }
+  _misc_flags.set_has_init_deps_processed(false);
 
   Klass::remove_unshareable_info();
 
@@ -2707,6 +2782,7 @@ void InstanceKlass::remove_unshareable_info() {
   }
   init_shared_package_entry();
   _dep_context_last_cleaned = 0;
+  DEBUG_ONLY(_shared_class_load_count = 0);
 
   remove_unshareable_flags();
 }
@@ -2817,17 +2893,22 @@ void InstanceKlass::restore_unshareable_info(ClassLoaderData* loader_data, Handl
   }
 }
 
-// Check if a class or any of its supertypes has a version older than 50.
-// CDS will not perform verification of old classes during dump time because
-// without changing the old verifier, the verification constraint cannot be
-// retrieved during dump time.
-// Verification of archived old classes will be performed during run time.
 bool InstanceKlass::can_be_verified_at_dumptime() const {
+  if (CDSConfig::preserve_all_dumptime_verification_states(this)) {
+    return true;
+  }
+
   if (MetaspaceShared::is_in_shared_metaspace(this)) {
     // This is a class that was dumped into the base archive, so we know
     // it was verified at dump time.
     return true;
   }
+
+  // Check if a class or any of its supertypes has a version older than 50.
+  // CDS will not perform verification of old classes during dump time because
+  // without changing the old verifier, the verification constraint cannot be
+  // retrieved during dump time.
+  // Verification of archived old classes will be performed during run time.
   if (major_version() < 50 /*JAVA_6_VERSION*/) {
     return false;
   }
@@ -2855,6 +2936,7 @@ int InstanceKlass::shared_class_loader_type() const {
     return ClassLoader::OTHER;
   }
 }
+
 #endif // INCLUDE_CDS
 
 #if INCLUDE_JVMTI
@@ -3633,6 +3715,10 @@ const char* InstanceKlass::init_state_name() const {
   return state_names[init_state()];
 }
 
+const char* InstanceKlass::state2name(ClassState s) {
+  return state_names[s];
+}
+
 void InstanceKlass::print_on(outputStream* st) const {
   assert(is_klass(), "must be klass");
   Klass::print_on(st);
@@ -3962,6 +4048,23 @@ void InstanceKlass::print_class_load_helper(ClassLoaderData* loader_data,
     }
   }
 
+  info_stream.print(" loader:");
+  if (is_shared()) {
+    info_stream.print(" %s", SystemDictionaryShared::class_loader_name_for_shared((Klass*)this));
+  } else if (loader_data == ClassLoaderData::the_null_class_loader_data()) {
+    info_stream.print(" boot_loader");
+  } else {
+    oop class_loader = loader_data->class_loader();
+    if (class_loader != nullptr) {
+      info_stream.print(" %s", class_loader->klass()->external_name());
+      oop cl_name_and_id = java_lang_ClassLoader::nameAndId(class_loader);
+      if (cl_name_and_id != nullptr) {
+        info_stream.print(" %s", java_lang_String::as_utf8_string(cl_name_and_id));
+      }
+    } else {
+      info_stream.print(" null");
+    }
+  }
   msg.info("%s", info_stream.as_string());
 
   if (log_is_enabled(Debug, class, load)) {

@@ -40,8 +40,18 @@
  * @run main/othervm -XX:+UnlockDiagnosticVMOptions -XX:+WhiteBoxAPI -Xbootclasspath/a:. JavacBench DYNAMIC
  */
 
+/*
+ * @test id=leyden
+ * @summary Run JavacBenchApp with Leyden workflow
+ * @requires vm.cds
+ * @requires vm.cds.write.archived.java.heap
+ * @library /test/lib
+ * @run driver JavacBench LEYDEN
+ */
+
 import jdk.test.lib.cds.CDSAppTester;
 import jdk.test.lib.helpers.ClassFileInstaller;
+import jdk.test.lib.process.OutputAnalyzer;
 
 public class JavacBench {
     static String mainClass = JavacBenchApp.class.getName();

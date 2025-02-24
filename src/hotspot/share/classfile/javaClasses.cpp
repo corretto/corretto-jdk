@@ -1143,7 +1143,11 @@ void java_lang_Class::create_mirror(Klass* k, Handle class_loader,
       release_set_array_klass(comp_mirror(), k);
     }
     if (CDSConfig::is_dumping_heap()) {
-      create_scratch_mirror(k, CHECK);
+      if (CDSConfig::is_dumping_protection_domains()) {
+        create_scratch_mirror(k, protection_domain, CHECK);
+      } else {
+        create_scratch_mirror(k, Handle() /* null protection_domain*/, CHECK);
+      }
     }
   } else {
     assert(fixup_mirror_list() != nullptr, "fixup_mirror_list not initialized");
@@ -1163,7 +1167,7 @@ void java_lang_Class::create_mirror(Klass* k, Handle class_loader,
 // Note: we archive the "scratch mirror" instead of k->java_mirror(), because the
 // latter may contain dumptime-specific information that cannot be archived
 // (e.g., ClassLoaderData*, or static fields that are modified by Java code execution).
-void java_lang_Class::create_scratch_mirror(Klass* k, TRAPS) {
+void java_lang_Class::create_scratch_mirror(Klass* k, Handle protection_domain, TRAPS) {
   if (k->class_loader() != nullptr &&
       k->class_loader() != SystemDictionary::java_platform_loader() &&
       k->class_loader() != SystemDictionary::java_system_loader()) {
@@ -1171,7 +1175,7 @@ void java_lang_Class::create_scratch_mirror(Klass* k, TRAPS) {
     return;
   }
 
-  Handle protection_domain, classData; // set to null. Will be reinitialized at runtime
+  Handle classData; // set to null. Will be reinitialized at runtime
   Handle mirror;
   Handle comp_mirror;
   allocate_mirror(k, /*is_scratch=*/true, protection_domain, classData, mirror, comp_mirror, CHECK);
@@ -1300,6 +1304,15 @@ oop java_lang_Class::class_data(oop java_class) {
 void java_lang_Class::set_class_data(oop java_class, oop class_data) {
   assert(_classData_offset != 0, "must be set");
   java_class->obj_field_put(_classData_offset, class_data);
+}
+
+oop java_lang_Class::reflection_data(oop java_class) {
+  assert(_reflectionData_offset != 0, "must be set");
+  return java_class->obj_field(_reflectionData_offset);
+}
+
+bool java_lang_Class::has_reflection_data(oop java_class) {
+  return (java_lang_Class::reflection_data(java_class) != nullptr);
 }
 
 void java_lang_Class::set_reflection_data(oop java_class, oop reflection_data) {
@@ -1498,7 +1511,7 @@ oop java_lang_Class::primitive_mirror(BasicType t) {
   macro(_module_offset,              k, "module",              module_signature,       false); \
   macro(_name_offset,                k, "name",                string_signature,       false); \
   macro(_classData_offset,           k, "classData",           object_signature,       false); \
-  macro(_reflectionData_offset,      k, "reflectionData",      java_lang_ref_SoftReference_signature, false); \
+  macro(_reflectionData_offset,      k, "reflectionData",      class_ReflectionData_signature, false); \
   macro(_signers_offset,             k, "signers",             object_array_signature, false); \
   macro(_modifiers_offset,           k, vmSymbols::modifiers_name(), int_signature,    false); \
   macro(_protection_domain_offset,   k, "protectionDomain",    java_security_ProtectionDomain_signature,  false);
@@ -2306,6 +2319,10 @@ void java_lang_Throwable::clear_stacktrace(oop throwable) {
   set_stacktrace(throwable, nullptr);
 }
 
+oop java_lang_Throwable::create_exception_instance(Symbol* class_name, TRAPS) {
+  Klass* k = SystemDictionary::resolve_or_fail(class_name, true, CHECK_NULL);
+  return InstanceKlass::cast(k)->allocate_instance(CHECK_NULL);
+}
 
 void java_lang_Throwable::print(oop throwable, outputStream* st) {
   ResourceMark rm;
@@ -5447,12 +5464,6 @@ bool JavaClasses::is_supported_for_archiving(oop obj) {
         klass == vmClasses::MemberName_klass()) {
       return false;
     }
-  }
-
-  if (klass->is_subclass_of(vmClasses::Reference_klass())) {
-    // It's problematic to archive Reference objects. One of the reasons is that
-    // Reference::discovered may pull in unwanted objects (see JDK-8284336)
-    return false;
   }
 
   return true;

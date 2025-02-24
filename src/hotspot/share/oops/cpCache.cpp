@@ -48,6 +48,7 @@
 #include "oops/method.inline.hpp"
 #include "oops/objArrayOop.inline.hpp"
 #include "oops/oop.inline.hpp"
+#include "oops/method.inline.hpp"
 #include "oops/resolvedFieldEntry.hpp"
 #include "oops/resolvedIndyEntry.hpp"
 #include "oops/resolvedMethodEntry.hpp"
@@ -175,7 +176,8 @@ void ConstantPoolCache::set_direct_or_vtable_call(Bytecodes::Code invoke_code,
     }
     if (invoke_code == Bytecodes::_invokestatic) {
       assert(method->method_holder()->is_initialized() ||
-             method->method_holder()->is_reentrant_initialization(JavaThread::current()),
+             method->method_holder()->is_reentrant_initialization(JavaThread::current()) ||
+             (CDSConfig::is_dumping_archive() && VM_Version::supports_fast_class_init_checks()),
              "invalid class initialization state for invoke_static");
 
       if (!VM_Version::supports_fast_class_init_checks() && method->needs_clinit_barrier()) {
@@ -428,7 +430,9 @@ void ConstantPoolCache::remove_resolved_field_entries_if_non_deterministic() {
     ResolvedFieldEntry* rfi = _resolved_field_entries->adr_at(i);
     int cp_index = rfi->constant_pool_index();
     bool archived = false;
-    bool resolved = rfi->is_resolved(Bytecodes::_getfield)  ||
+    bool resolved = rfi->is_resolved(Bytecodes::_getstatic) ||
+                    rfi->is_resolved(Bytecodes::_putstatic) ||
+                    rfi->is_resolved(Bytecodes::_getfield)  ||
                     rfi->is_resolved(Bytecodes::_putfield);
     if (resolved && AOTConstantPoolResolver::is_resolution_deterministic(src_cp, cp_index)) {
       rfi->mark_and_relocate();
@@ -464,12 +468,9 @@ void ConstantPoolCache::remove_resolved_method_entries_if_non_deterministic() {
     bool archived = false;
     bool resolved = rme->is_resolved(Bytecodes::_invokevirtual)   ||
                     rme->is_resolved(Bytecodes::_invokespecial)   ||
+                  //rme->is_resolved(Bytecodes::_invokestatic)    || // FIXME -- leyden+JEP483 merge
                     rme->is_resolved(Bytecodes::_invokeinterface) ||
                     rme->is_resolved(Bytecodes::_invokehandle);
-
-    // Just for safety -- this should not happen, but do not archive if we ever see this.
-    resolved &= !(rme->is_resolved(Bytecodes::_invokestatic));
-
     if (resolved && can_archive_resolved_method(src_cp, rme)) {
       rme->mark_and_relocate(src_cp);
       archived = true;
@@ -567,7 +568,8 @@ bool ConstantPoolCache::can_archive_resolved_method(ConstantPool* src_cp, Resolv
     return false;
   }
 
-  if (method_entry->is_resolved(Bytecodes::_invokeinterface) ||
+  if (method_entry->is_resolved(Bytecodes::_invokestatic) ||
+      method_entry->is_resolved(Bytecodes::_invokeinterface) ||
       method_entry->is_resolved(Bytecodes::_invokevirtual) ||
       method_entry->is_resolved(Bytecodes::_invokespecial)) {
     return true;

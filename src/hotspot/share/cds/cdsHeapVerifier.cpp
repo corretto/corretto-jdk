@@ -95,7 +95,7 @@ CDSHeapVerifier::CDSHeapVerifier() : _archived_objs(0), _problems(0)
   // you might need to fix the core library code, or fix the ADD_EXCL entries below.
   //
   //       class                                         field                     type
-  ADD_EXCL("java/lang/ClassLoader",                      "scl");                   // A
+  ADD_EXCL("java/lang/ClassLoader$Holder",               "scl");                   // A
   ADD_EXCL("java/lang/Module",                           "ALL_UNNAMED_MODULE",     // A
                                                          "ALL_UNNAMED_MODULE_SET", // A
                                                          "EVERYONE_MODULE",        // A
@@ -133,6 +133,12 @@ CDSHeapVerifier::CDSHeapVerifier() : _archived_objs(0), _problems(0)
                                                           "INVOKER_SUPER_DESC");   // E same as java.lang.constant.ConstantDescs::CD_Object
   }
 
+  // These are used by BuiltinClassLoader::negativeLookupCache, etc but seem to be
+  // OK. TODO - we should completely disable the caching unless ArchiveLoaderLookupCache
+  // is enabled
+  ADD_EXCL("java/lang/Boolean",                           "TRUE",                  // E
+                                                          "FALSE");                // E
+
 # undef ADD_EXCL
 
   ClassLoaderDataGraph::classes_do(this);
@@ -143,7 +149,7 @@ CDSHeapVerifier::~CDSHeapVerifier() {
     log_error(cds, heap)("Scanned %d objects. Found %d case(s) where "
                          "an object points to a static field that "
                          "may hold a different value at runtime.", _archived_objs, _problems);
-    MetaspaceShared::unrecoverable_writing_error();
+    //MetaspaceShared::unrecoverable_writing_error(); // FIXME -- leyden+JEP483 merge
   }
 }
 

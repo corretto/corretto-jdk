@@ -1225,11 +1225,11 @@ void TemplateInterpreterGenerator::bang_stack_shadow_pages(bool native_call) {
 //   abstract stack (grows up)
 //     [  IJava (caller of JNI callee)  ]  <-- ASP
 //        ...
-address TemplateInterpreterGenerator::generate_native_entry(bool synchronized) {
+address TemplateInterpreterGenerator::generate_native_entry(bool synchronized, bool runtime_upcalls) {
 
   address entry = __ pc();
 
-  const bool inc_counter = UseCompiler || CountCompiledCalls;
+  const bool inc_counter = (UseCompiler || CountCompiledCalls) && !PreloadOnly;
 
   // -----------------------------------------------------------------------------
   // Allocate a new frame that represents the native callee (i2n frame).
@@ -1684,8 +1684,8 @@ address TemplateInterpreterGenerator::generate_native_entry(bool synchronized) {
 
 // Generic interpreted method entry to (asm) interpreter.
 //
-address TemplateInterpreterGenerator::generate_normal_entry(bool synchronized) {
-  bool inc_counter = UseCompiler || CountCompiledCalls;
+address TemplateInterpreterGenerator::generate_normal_entry(bool synchronized, bool runtime_upcalls) {
+  bool inc_counter = (UseCompiler || CountCompiledCalls) && !PreloadOnly;
   address entry = __ pc();
   // Generate the code to allocate the interpreter stack frame.
   Register Rsize_of_parameters = R4_ARG2, // Written by generate_fixed_frame.
@@ -2255,6 +2255,20 @@ void TemplateInterpreterGenerator::set_vtos_entry_points(Template* t,
 
 //-----------------------------------------------------------------------------
 
+void TemplateInterpreterGenerator::count_bytecode() {
+  int offs = __ load_const_optimized(R11_scratch1, (address) &BytecodeCounter::_counter_value, R12_scratch2, true);
+  __ lwz(R12_scratch2, offs, R11_scratch1);
+  __ addi(R12_scratch2, R12_scratch2, 1);
+  __ stw(R12_scratch2, offs, R11_scratch1);
+}
+
+void TemplateInterpreterGenerator::histogram_bytecode(Template* t) {
+  int offs = __ load_const_optimized(R11_scratch1, (address) &BytecodeHistogram::_counters[t->bytecode()], R12_scratch2, true);
+  __ lwz(R12_scratch2, offs, R11_scratch1);
+  __ addi(R12_scratch2, R12_scratch2, 1);
+  __ stw(R12_scratch2, offs, R11_scratch1);
+}
+
 // Non-product code
 #ifndef PRODUCT
 address TemplateInterpreterGenerator::generate_trace_code(TosState state) {
@@ -2340,20 +2354,6 @@ address TemplateInterpreterGenerator::generate_trace_code(TosState state) {
   __ blr();
   BLOCK_COMMENT("} trace_code");
   return entry;
-}
-
-void TemplateInterpreterGenerator::count_bytecode() {
-  int offs = __ load_const_optimized(R11_scratch1, (address) &BytecodeCounter::_counter_value, R12_scratch2, true);
-  __ lwz(R12_scratch2, offs, R11_scratch1);
-  __ addi(R12_scratch2, R12_scratch2, 1);
-  __ stw(R12_scratch2, offs, R11_scratch1);
-}
-
-void TemplateInterpreterGenerator::histogram_bytecode(Template* t) {
-  int offs = __ load_const_optimized(R11_scratch1, (address) &BytecodeHistogram::_counters[t->bytecode()], R12_scratch2, true);
-  __ lwz(R12_scratch2, offs, R11_scratch1);
-  __ addi(R12_scratch2, R12_scratch2, 1);
-  __ stw(R12_scratch2, offs, R11_scratch1);
 }
 
 void TemplateInterpreterGenerator::histogram_bytecode_pair(Template* t) {

@@ -51,7 +51,13 @@
     cflags(DumpReplay,              bool, false, DumpReplay) \
     cflags(DumpInline,              bool, false, DumpInline) \
     cflags(CompilerDirectivesIgnoreCompileCommands, bool, CompilerDirectivesIgnoreCompileCommands, Unknown) \
-    cflags(RepeatCompilation,       intx, RepeatCompilation, RepeatCompilation)
+    cflags(RepeatCompilation,       intx, RepeatCompilation, RepeatCompilation) \
+    cflags(PrecompileRecorded,      uintx, 0, PrecompileRecorded) \
+    cflags(DontPrecompile,          bool, false, DontPrecompile) \
+    cflags(DontPreload,             bool, false, DontPreload) \
+    cflags(IgnoreRecordedProfile,   bool, false, IgnoreRecordedProfile) \
+    cflags(IgnorePrecompiled,       bool, false, IgnorePrecompiled) \
+    cflags(TooManyTrapsAtBCI,       ccstrlist, "", TooManyTrapsAtBCI)
 #define compilerdirectives_common_string_flags(cflags)                           \
   cflags(DisableIntrinsic,        ccstrlist, DisableIntrinsic, DisableIntrinsic) \
   cflags(ControlIntrinsic,        ccstrlist, ControlIntrinsic, ControlIntrinsic)

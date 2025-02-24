@@ -36,12 +36,6 @@
  *      Implementation of class jdk.internal.perf.Perf
  */
 
-
-#define PERF_ENTRY(result_type, header) \
-  JVM_ENTRY(result_type, header)
-
-#define PERF_END JVM_END
-
 #define PerfWrapper(arg) /* Unimplemented at this time */
 
 static char* jstr_to_utf(JNIEnv *env, jstring str, TRAPS) {
@@ -63,7 +57,7 @@ static char* jstr_to_utf(JNIEnv *env, jstring str, TRAPS) {
   return utfstr;
 }
 
-PERF_ENTRY(jobject, Perf_Attach(JNIEnv *env, jobject unused, int vmid))
+JVM_ENTRY(jobject, Perf_Attach(JNIEnv *env, jobject unused, int vmid))
 
   PerfWrapper("Perf_Attach");
 
@@ -78,9 +72,9 @@ PERF_ENTRY(jobject, Perf_Attach(JNIEnv *env, jobject unused, int vmid))
     return env->NewDirectByteBuffer(address, (jlong)capacity);
   }
 
-PERF_END
+JVM_END
 
-PERF_ENTRY(void, Perf_Detach(JNIEnv *env, jobject unused, jobject buffer))
+JVM_ENTRY(void, Perf_Detach(JNIEnv *env, jobject unused, jobject buffer))
 
   PerfWrapper("Perf_Detach");
 
@@ -101,9 +95,9 @@ PERF_ENTRY(void, Perf_Detach(JNIEnv *env, jobject unused, jobject buffer))
 
   PerfMemory::detach((char*)address, capacity);
 
-PERF_END
+JVM_END
 
-PERF_ENTRY(jobject, Perf_CreateLong(JNIEnv *env, jobject perf, jstring name,
+JVM_ENTRY(jobject, Perf_CreateLong(JNIEnv *env, jobject perf, jstring name,
            int variability, int units, jlong value))
 
   PerfWrapper("Perf_CreateLong");
@@ -162,9 +156,9 @@ PERF_ENTRY(jobject, Perf_CreateLong(JNIEnv *env, jobject perf, jstring name,
     return env->NewDirectByteBuffer(lp, sizeof(jlong));
   }
 
-PERF_END
+JVM_END
 
-PERF_ENTRY(jobject, Perf_CreateByteArray(JNIEnv *env, jobject perf,
+JVM_ENTRY(jobject, Perf_CreateByteArray(JNIEnv *env, jobject perf,
                                          jstring name, jint variability,
                                          jint units, jbyteArray value,
                                          jint maxlength))
@@ -245,9 +239,9 @@ PERF_ENTRY(jobject, Perf_CreateByteArray(JNIEnv *env, jobject perf,
     return env->NewDirectByteBuffer(cp, maxlength+1);
   }
 
-PERF_END
+JVM_END
 
-PERF_ENTRY(jlong, Perf_HighResCounter(JNIEnv *env, jobject perf))
+JVM_ENTRY(jlong, Perf_HighResCounter(JNIEnv *env, jobject perf))
 
   PerfWrapper("Perf_HighResCounter");
 
@@ -258,9 +252,9 @@ PERF_ENTRY(jlong, Perf_HighResCounter(JNIEnv *env, jobject perf))
 
   return os::elapsed_counter();
 
-PERF_END
+JVM_END
 
-PERF_ENTRY(jlong, Perf_HighResFrequency(JNIEnv *env, jobject perf))
+JVM_ENTRY(jlong, Perf_HighResFrequency(JNIEnv *env, jobject perf))
 
   PerfWrapper("Perf_HighResFrequency");
 
@@ -271,7 +265,7 @@ PERF_ENTRY(jlong, Perf_HighResFrequency(JNIEnv *env, jobject perf))
 
   return os::elapsed_frequency();
 
-PERF_END
+JVM_END
 
 /// JVM_RegisterPerfMethods
 

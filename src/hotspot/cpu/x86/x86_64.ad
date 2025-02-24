@@ -426,7 +426,6 @@ source_hpp %{
 
 // Register masks
 source_hpp %{
-
 extern RegMask _ANY_REG_mask;
 extern RegMask _PTR_REG_mask;
 extern RegMask _PTR_REG_NO_RBP_mask;
@@ -839,7 +838,7 @@ void MachPrologNode::emit(C2_MacroAssembler *masm, PhaseRegAlloc *ra_) const {
 
   if (C->clinit_barrier_on_entry()) {
     assert(VM_Version::supports_fast_class_init_checks(), "sanity");
-    assert(!C->method()->holder()->is_not_initialized(), "initialization should have been started");
+    assert(!C->method()->holder()->is_not_initialized() || C->do_clinit_barriers(), "initialization should have been started");
 
     Label L_skip_barrier;
     Register klass = rscratch1;
@@ -1847,7 +1846,12 @@ encode %{
 
   enc_class Java_To_Runtime(method meth) %{
     // No relocation needed
-    __ mov64(r10, (int64_t) $meth$$method);
+    if (SCCache::is_on_for_write()) {
+      // Created runtime_call_type relocation when caching code
+      __ lea(r10, RuntimeAddress((address)$meth$$method));
+    } else {
+      __ mov64(r10, (int64_t) $meth$$method);
+    }
     __ call(r10);
     __ post_call_nop();
   %}
@@ -2470,6 +2474,18 @@ operand immL_65535()
   predicate(n->get_long() == 65535);
   match(ConL);
 
+  format %{ %}
+  interface(CONST_INTER);
+%}
+
+// AOT Runtime Constants Address
+operand immAOTRuntimeConstantsAddress()
+%{
+  // Check if the address is in the range of AOT Runtime Constants
+  predicate(AOTRuntimeConstants::contains((address)(n->get_ptr())));
+  match(ConP);
+
+  op_cost(0);
   format %{ %}
   interface(CONST_INTER);
 %}
@@ -4427,6 +4443,19 @@ instruct loadD(regD dst, memory mem)
     __ movdbl($dst$$XMMRegister, $mem$$Address);
   %}
   ins_pipe(pipe_slow); // XXX
+%}
+
+instruct loadAOTRCAddress(rRegP dst, immAOTRuntimeConstantsAddress con)
+%{
+  match(Set dst con);
+
+  format %{ "leaq  $dst, $con\t# AOT Runtime Constants Address" %}
+
+  ins_encode %{
+    __ load_aotrc_address($dst$$Register, (address)$con$$constant);
+  %}
+
+  ins_pipe(ialu_reg_fat);
 %}
 
 // max = java.lang.Math.max(float a, float b)

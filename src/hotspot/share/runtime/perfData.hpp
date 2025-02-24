@@ -430,6 +430,7 @@ class PerfLongVariant : public PerfLong {
     inline void inc() { (*(jlong*)_valuep)++; }
     inline void inc(jlong val) { (*(jlong*)_valuep) += val; }
     inline void dec(jlong val) { inc(-val); }
+    inline void reset() { (*(jlong*)_valuep) = 0; }
 };
 
 /*
@@ -636,6 +637,41 @@ class PerfDataList : public CHeapObj<mtInternal> {
     inline PerfData* at(int index);
 };
 
+class PerfTickCounters : public CHeapObj<mtInternal> {
+private:
+  const char* _name;
+  PerfCounter* const _elapsed_counter;
+  PerfCounter* const _thread_counter;
+public:
+  PerfTickCounters(const char* name, PerfCounter* elapsed_counter, PerfCounter* thread_counter) :
+                   _name(name), _elapsed_counter(elapsed_counter), _thread_counter(thread_counter) {
+  }
+
+  const char* name() { return _name; }
+
+  PerfCounter* elapsed_counter() const {
+    return _elapsed_counter;
+  }
+  long elapsed_counter_value() const {
+    return _elapsed_counter->get_value();
+  }
+  inline jlong elapsed_counter_value_ms() const;
+  inline jlong elapsed_counter_value_us() const;
+
+  PerfCounter* thread_counter() const {
+    return _thread_counter;
+  }
+  jlong thread_counter_value() const {
+    return _thread_counter->get_value();
+  }
+  inline jlong thread_counter_value_ms() const;
+  inline jlong thread_counter_value_us() const;
+
+  void reset() {
+    _elapsed_counter->reset();
+    _thread_counter->reset();
+  }
+};
 
 /*
  * The PerfDataManager class is responsible for creating PerfData
@@ -800,6 +836,18 @@ class PerfDataManager : AllStatic {
       return create_long_counter(ns, name, u, sh, THREAD);
     }
 
+    static PerfTickCounters* create_tick_counters(CounterNS ns,
+                                                  const char* counter_name,
+                                                  const char* elapsed_counter_name,
+                                                  const char* thread_counter_name,
+                                                  PerfData::Units u, TRAPS) {
+      PerfCounter* elapsed_counter = create_long_counter(ns, elapsed_counter_name, u, (jlong)0, THREAD);
+      PerfCounter* thread_counter = create_long_counter(ns, thread_counter_name, u, (jlong)0, THREAD);
+
+      PerfTickCounters* counters = new PerfTickCounters(counter_name, elapsed_counter, thread_counter);
+      return counters;
+    }
+
     static void destroy();
     static bool has_PerfData() { return Atomic::load_acquire(&_has_PerfData); }
 };
@@ -817,18 +865,23 @@ class PerfDataManager : AllStatic {
   {counter = PerfDataManager::create_counter(counter_ns, counter_name, \
                                              PerfData::U_Bytes,CHECK);}
 
+#define NEWPERFTICKCOUNTERS(counter, counter_ns, counter_name)  \
+  {counter = PerfDataManager::create_tick_counters(counter_ns, counter_name, counter_name "_elapsed_time", \
+                                             counter_name "_thread_time", PerfData::U_Ticks,CHECK);}
+
 // Utility Classes
 
-/*
- * this class will administer a PerfCounter used as a time accumulator
+/* PerfTraceElapsedTime and PerfTraceThreadTime will administer a PerfCounter used as a time accumulator
  * for a basic block much like the TraceTime class.
+ * PerfTraceElapsedTime uses elapsedTimer to measure time which reflects the elapsed time,
+ * and PerfTraceThreadTime uses ThreadTimer which reflects thread cpu time.
  *
  * Example:
  *
  *    static PerfCounter* my_time_counter = PerfDataManager::create_counter("my.time.counter", PerfData::U_Ticks, 0LL, CHECK);
  *
  *    {
- *      PerfTraceTime ptt(my_time_counter);
+ *      PerfTraceElapsedTime ptt(my_time_counter);
  *      // perform the operation you want to measure
  *    }
  *
@@ -836,31 +889,108 @@ class PerfDataManager : AllStatic {
  * block. The UsePerfData guard is used with the implementation
  * of this class.
  */
-class PerfTraceTime : public StackObj {
 
+class PerfTraceTimeBase : public StackObj {
+  friend class PerfPauseTimer;
+  private:
+    BaseTimer* _t;
   protected:
-    elapsedTimer _t;
-    PerfLongCounter* _timerp;
+    PerfLongCounter* _counter;
 
   public:
-    inline PerfTraceTime(PerfLongCounter* timerp) : _timerp(timerp) {
-      if (!UsePerfData || timerp == nullptr) { return; }
+    inline PerfTraceTimeBase(BaseTimer* t, PerfLongCounter* counter) : _t(t), _counter(counter) {}
+
+    ~PerfTraceTimeBase();
+
+    jlong active_ticks() { return _t->active_ticks(); }
+
+    const char* name() { return _counter->name(); }
+    BaseTimer* timer() { return _t; }
+};
+
+class PerfTraceElapsedTime: public PerfTraceTimeBase {
+  protected:
+    elapsedTimer _t;
+
+  public:
+    inline PerfTraceElapsedTime(PerfCounter* counter) : PerfTraceTimeBase(&_t, counter) {
+      if (!UsePerfData || counter == nullptr) { return; }
       _t.start();
-    }
-
-    const char* name() const {
-      assert(_timerp != nullptr, "sanity");
-      return _timerp->name();
-    }
-
-    ~PerfTraceTime() {
-      if (!UsePerfData || !_t.is_active()) { return; }
-      _t.stop();
-      _timerp->inc(_t.ticks());
     }
 };
 
-/* The PerfTraceTimedEvent class is responsible for counting the
+class PerfTraceThreadTime: public PerfTraceTimeBase {
+  protected:
+    ThreadTimer _t;
+
+  public:
+    inline PerfTraceThreadTime(PerfCounter* counter) : PerfTraceTimeBase(&_t, counter) {
+      if (!UsePerfData || !TraceThreadTime || counter == nullptr) { return; }
+      _t.start();
+    }
+};
+
+// PerfTraceTime is a utility class to provide the ability to measure both elapsed and thread cpu time using a single object.
+class PerfTraceTime : public StackObj {
+  friend class PerfPauseTimer;
+  private:
+    PerfTickCounters* _counters;
+    PerfTraceElapsedTime _elapsed_timer;
+    PerfTraceThreadTime _thread_timer;
+
+  public:
+    inline PerfTraceTime(PerfTickCounters* counters, bool is_on = true):
+                         _counters(counters),
+                         _elapsed_timer(counters != nullptr ? counters->elapsed_counter() : nullptr),
+                         _thread_timer(counters != nullptr ? counters->thread_counter() : nullptr) {}
+
+    const char* name() { return _counters->name(); }
+    PerfTraceTimeBase* elapsed_timer() { return &_elapsed_timer; }
+    PerfTraceTimeBase* thread_timer() { return &_thread_timer; }
+
+    jlong elapsed_timer_active_ticks() {
+      return _elapsed_timer.active_ticks();
+    }
+
+    jlong thread_timer_active_ticks() {
+      return _thread_timer.active_ticks();
+    }
+};
+
+class PerfPauseTimerBase : public StackObj {
+  protected:
+    bool _is_active;
+    BaseTimer* _timer;
+
+  public:
+    inline PerfPauseTimerBase(PerfTraceTimeBase* timer, bool is_on) : _is_active(false), _timer(nullptr) {
+      _is_active = (is_on && timer != nullptr);
+      if (UsePerfData && _is_active) {
+        _timer = timer->timer();
+        _timer->stop(); // pause
+      }
+    }
+
+    inline ~PerfPauseTimerBase() {
+      if (UsePerfData && _is_active) {
+        assert(_timer != nullptr, "");
+        _timer->start(); // resume
+      }
+    }
+};
+
+class PerfPauseTimer : public StackObj {
+  private:
+    PerfPauseTimerBase _elapsed_timer_pause;
+    PerfPauseTimerBase _thread_timer_pause;
+
+  public:
+    inline PerfPauseTimer(PerfTraceTime* timer, bool is_on) :
+                          _elapsed_timer_pause(timer != nullptr ? timer->elapsed_timer() : nullptr, is_on),
+                          _thread_timer_pause(timer != nullptr ? timer->thread_timer() : nullptr, is_on) {}
+};
+
+/* The PerfTraceElapsedTimeEvent class is responsible for counting the
  * occurrence of some event and measuring the elapsed time of
  * the event in two separate PerfCounter instances.
  *
@@ -870,7 +1000,7 @@ class PerfTraceTime : public StackObj {
  *    static PerfCounter* my_event_counter = PerfDataManager::create_counter("my.event.counter", PerfData::U_Events, CHECK);
  *
  *    {
- *      PerfTraceTimedEvent ptte(my_time_counter, my_event_counter);
+ *      PerfTraceElapsedTimeEvent ptte(my_time_counter, my_event_counter);
  *      // perform the operation you want to count and measure
  *    }
  *
@@ -878,18 +1008,39 @@ class PerfTraceTime : public StackObj {
  * block. The UsePerfData guard is used with the implementation
  * of this class.
  *
+ * Similarly, PerfTraceThreadTimeEvent can count the occurrence of some event and measure the thread cpu time of the event.
+ * PerfTraceTimedEvent can count the occurrence of some event and measure both the elapsed time and the thread cpu time of the event.
  */
-class PerfTraceTimedEvent : public PerfTraceTime {
-
+class PerfTraceElapsedTimeEvent: public PerfTraceElapsedTime {
   protected:
     PerfLongCounter* _eventp;
 
   public:
-    inline PerfTraceTimedEvent(PerfLongCounter* timerp, PerfLongCounter* eventp): PerfTraceTime(timerp), _eventp(eventp) {
-      if (!UsePerfData || timerp == nullptr) { return; }
+    inline PerfTraceElapsedTimeEvent(PerfCounter* counter, PerfLongCounter* eventp) : PerfTraceElapsedTime(counter), _eventp(eventp) {
+      if (!UsePerfData || counter == nullptr) return;
       _eventp->inc();
     }
-
 };
 
+class PerfTraceThreadTimeEvent: public PerfTraceThreadTime {
+  protected:
+    PerfLongCounter* _eventp;
+
+  public:
+    inline PerfTraceThreadTimeEvent(PerfCounter* counter, PerfLongCounter* eventp) : PerfTraceThreadTime(counter), _eventp(eventp) {
+      if (!UsePerfData || counter == nullptr) return;
+      _eventp->inc();
+    }
+};
+
+class PerfTraceTimedEvent : public PerfTraceTime {
+  protected:
+    PerfLongCounter* _eventp;
+
+  public:
+    inline PerfTraceTimedEvent(PerfTickCounters* counters, PerfLongCounter* eventp, bool is_on = true) : PerfTraceTime(counters, is_on), _eventp(eventp) {
+      if (!UsePerfData || !is_on || counters == nullptr) return;
+      _eventp->inc();
+    }
+};
 #endif // SHARE_RUNTIME_PERFDATA_HPP

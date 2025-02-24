@@ -525,3 +525,10 @@ PerfDataList* PerfDataList::clone() {
   return copy;
 }
 
+PerfTraceTimeBase::~PerfTraceTimeBase() {
+  if (!UsePerfData || !_t->is_active()) return;
+  if (_counter != nullptr) {
+    _t->stop();
+    _counter->inc(_t->ticks());
+  }
+}

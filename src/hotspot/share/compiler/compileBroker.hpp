@@ -31,7 +31,9 @@
 #include "compiler/compilerDirectives.hpp"
 #include "compiler/compilerThread.hpp"
 #include "runtime/atomic.hpp"
+#include "runtime/javaThread.hpp"
 #include "runtime/perfDataTypes.hpp"
+#include "utilities/nonblockingQueue.inline.hpp"
 #include "utilities/stack.hpp"
 #if INCLUDE_JVMCI
 #include "jvmci/jvmciCompiler.hpp"
@@ -98,10 +100,14 @@ class CompileQueue : public CHeapObj<mtCompiler> {
  private:
   const char* _name;
 
+  NonblockingQueue<CompileTask, &CompileTask::next_ptr> _queue;
+
   CompileTask* _first;
   CompileTask* _last;
 
   CompileTask* _first_stale;
+
+  Monitor* _lock;
 
   volatile int _size;
   int _peak_size;
@@ -110,8 +116,9 @@ class CompileQueue : public CHeapObj<mtCompiler> {
 
   void purge_stale_tasks();
  public:
-  CompileQueue(const char* name) {
+  CompileQueue(const char* name, Monitor* lock) {
     _name = name;
+    _lock = lock;
     _first = nullptr;
     _last = nullptr;
     _size = 0;
@@ -123,6 +130,9 @@ class CompileQueue : public CHeapObj<mtCompiler> {
 
   const char*  name() const                      { return _name; }
 
+  void         add_pending(CompileTask* task);
+  void         transfer_pending();
+
   void         add(CompileTask* task);
   void         remove(CompileTask* task);
   void         remove_and_mark_stale(CompileTask* task);
@@ -133,6 +143,8 @@ class CompileQueue : public CHeapObj<mtCompiler> {
 
   bool         is_empty() const                  { return _first == nullptr; }
   int          size()     const                  { return _size;          }
+
+  Monitor* lock() const { return _lock; }
 
   int         get_peak_size()     const          { return _peak_size; }
   uint        get_total_added()   const          { return _total_added; }
@@ -178,30 +190,34 @@ class CompileBroker: AllStatic {
 
  private:
   static bool _initialized;
+  static bool _replay_initialized;
   static volatile bool _should_block;
 
   // This flag can be used to stop compilation or turn it back on
   static volatile jint _should_compile_new_jobs;
 
   // The installed compiler(s)
-  static AbstractCompiler* _compilers[2];
+  static AbstractCompiler* _compilers[3];
 
   // The maximum numbers of compiler threads to be determined during startup.
-  static int _c1_count, _c2_count;
+  static int _c1_count, _c2_count, _c3_count, _sc_count;
 
   // An array of compiler thread Java objects
-  static jobject *_compiler1_objects, *_compiler2_objects;
+  static jobject *_compiler1_objects, *_compiler2_objects, *_compiler3_objects, *_sc_objects;
 
   // An array of compiler logs
-  static CompileLog **_compiler1_logs, **_compiler2_logs;
+  static CompileLog **_compiler1_logs, **_compiler2_logs, **_compiler3_logs, **_sc_logs;
 
   // These counters are used for assigning id's to each compilation
   static volatile jint _compilation_id;
   static volatile jint _osr_compilation_id;
   static volatile jint _native_compilation_id;
 
+  static CompileQueue* _c3_compile_queue;
   static CompileQueue* _c2_compile_queue;
   static CompileQueue* _c1_compile_queue;
+  static CompileQueue* _sc1_compile_queue;
+  static CompileQueue* _sc2_compile_queue;
 
   // performance counters
   static PerfCounter* _perf_total_compilation;
@@ -237,6 +253,7 @@ class CompileBroker: AllStatic {
   static uint _total_compile_count;
   static uint _total_bailout_count;
   static uint _total_invalidated_count;
+  static uint _total_not_entrant_count;
   static uint _total_native_compile_count;
   static uint _total_osr_compile_count;
   static uint _total_standard_compile_count;
@@ -249,16 +266,21 @@ class CompileBroker: AllStatic {
   static jlong _peak_compilation_time;
 
   static CompilerStatistics _stats_per_level[];
+  static CompilerStatistics _scc_stats;
+  static CompilerStatistics _scc_stats_per_level[];
 
   static volatile int _print_compilation_warning;
 
   enum ThreadType {
     compiler_t,
-    deoptimizer_t
+    deoptimizer_t,
+    training_replay_t
   };
 
+  static Handle create_thread_oop(const char* name, TRAPS);
   static JavaThread* make_thread(ThreadType type, jobject thread_oop, CompileQueue* queue, AbstractCompiler* comp, JavaThread* THREAD);
   static void init_compiler_threads();
+  static void init_training_replay();
   static void possibly_add_compiler_threads(JavaThread* THREAD);
   static bool compilation_is_prohibited(const methodHandle& method, int osr_bci, int comp_level, bool excluded);
 
@@ -269,7 +291,9 @@ class CompileBroker: AllStatic {
                                           int                 comp_level,
                                           const methodHandle& hot_method,
                                           int                 hot_count,
+                                          SCCEntry*           scc_entry,
                                           CompileTask::CompileReason compile_reason,
+                                          bool                requires_online_compilation,
                                           bool                blocking);
   static void wait_for_completion(CompileTask* task);
 #if INCLUDE_JVMCI
@@ -291,12 +315,17 @@ class CompileBroker: AllStatic {
                                   const methodHandle& hot_method,
                                   int hot_count,
                                   CompileTask::CompileReason compile_reason,
+                                  bool requires_online_compilation,
                                   bool blocking,
                                   Thread* thread);
 
-  static CompileQueue* compile_queue(int comp_level);
+  static CompileQueue* compile_queue(int comp_level, bool is_scc);
   static bool init_compiler_runtime();
   static void shutdown_compiler_runtime(AbstractCompiler* comp, CompilerThread* thread);
+
+  static SCCEntry* find_scc_entry(const methodHandle& method, int osr_bci, int comp_level,
+                                  CompileTask::CompileReason compile_reason,
+                                  bool requires_online_compilation);
 
 public:
   enum {
@@ -310,11 +339,14 @@ public:
     return nullptr;
   }
 
-  static bool compilation_is_complete(const methodHandle& method, int osr_bci, int comp_level);
+  static bool initialized() { return _initialized; }
+  static bool replay_initialized() { return _replay_initialized; }
+  static bool compilation_is_complete(Method* method, int osr_bci, int comp_level, bool online_only,
+                                      CompileTask::CompileReason compile_reason);
   static bool compilation_is_in_queue(const methodHandle& method);
   static void print_compile_queues(outputStream* st);
-  static int queue_size(int comp_level) {
-    CompileQueue *q = compile_queue(comp_level);
+  static int queue_size(int comp_level, bool is_scc = false) {
+    CompileQueue *q = compile_queue(comp_level, is_scc);
     return q != nullptr ? q->size() : 0;
   }
   static void compilation_init(JavaThread* THREAD);
@@ -324,6 +356,7 @@ public:
                                  int comp_level,
                                  const methodHandle& hot_method,
                                  int hot_count,
+                                 bool requires_online_compilation,
                                  CompileTask::CompileReason compile_reason,
                                  TRAPS);
   static CompileQueue* c1_compile_queue();
@@ -335,6 +368,7 @@ private:
                                    int comp_level,
                                    const methodHandle& hot_method,
                                    int hot_count,
+                                   bool requires_online_compilation,
                                    CompileTask::CompileReason compile_reason,
                                    DirectiveSet* directive,
                                    TRAPS);
@@ -419,8 +453,21 @@ public:
     return _compiler2_objects[idx];
   }
 
+  static jobject compiler3_object(int idx) {
+    assert(_compiler3_objects != nullptr, "must be initialized");
+    assert(idx < _c3_count, "oob");
+    return _compiler3_objects[idx];
+  }
+
+  static jobject sc_object(int idx) {
+    assert(_sc_objects != nullptr, "must be initialized");
+    assert(idx < _sc_count, "oob");
+    return _sc_objects[idx];
+  }
+
   static AbstractCompiler* compiler1() { return _compilers[0]; }
   static AbstractCompiler* compiler2() { return _compilers[1]; }
+  static AbstractCompiler* compiler3() { return _compilers[2]; }
 
   static bool can_remove(CompilerThread *ct, bool do_it);
 
@@ -443,12 +490,24 @@ public:
   static jlong get_peak_compilation_time() {        return _peak_compilation_time; }
   static jlong get_total_compilation_time() {       return _t_total_compilation.milliseconds(); }
 
+  static void log_not_entrant(nmethod* nm);
+
   // Log that compilation profiling is skipped because metaspace is full.
   static void log_metaspace_failure();
+
+  static void print_statistics_on(outputStream* st);
 
   // CodeHeap State Analytics.
   static void print_info(outputStream *out);
   static void print_heapinfo(outputStream *out, const char* function, size_t granularity);
+};
+
+class TrainingReplayThread : public JavaThread {
+  static void training_replay_thread_entry(JavaThread* thread, TRAPS);
+public:
+  TrainingReplayThread() : JavaThread(&training_replay_thread_entry) { }
+
+  bool is_hidden_from_external_view() const      { return true; }
 };
 
 #endif // SHARE_COMPILER_COMPILEBROKER_HPP

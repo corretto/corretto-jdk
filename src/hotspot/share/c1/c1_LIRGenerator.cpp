@@ -33,12 +33,14 @@
 #include "ci/ciInstance.hpp"
 #include "ci/ciObjArray.hpp"
 #include "ci/ciUtilities.hpp"
+#include "code/SCCache.hpp"
 #include "compiler/compilerDefinitions.inline.hpp"
 #include "compiler/compilerOracle.hpp"
 #include "gc/shared/barrierSet.hpp"
 #include "gc/shared/c1/barrierSetC1.hpp"
 #include "oops/klass.inline.hpp"
 #include "oops/methodCounters.hpp"
+#include "runtime/runtimeUpcalls.hpp"
 #include "runtime/sharedRuntime.hpp"
 #include "runtime/stubRoutines.hpp"
 #include "runtime/vm_version.hpp"
@@ -2632,6 +2634,17 @@ void LIRGenerator::do_Base(Base* x) {
     call_runtime(&signature, args, CAST_FROM_FN_PTR(address, SharedRuntime::dtrace_method_entry), voidType, nullptr);
   }
 
+  MethodDetails method_details(method());
+  RuntimeUpcallInfo* upcall = RuntimeUpcalls::get_first_upcall(RuntimeUpcallType::onMethodEntry, method_details);
+  while (upcall != nullptr) {
+    BasicTypeList signature;
+    signature.append(LP64_ONLY(T_LONG) NOT_LP64(T_INT));    // thread
+    LIR_OprList* args = new LIR_OprList();
+    args->append(getThreadPointer());
+    call_runtime(&signature, args, upcall->upcall_address(), voidType, nullptr);
+    upcall = RuntimeUpcalls::get_next_upcall(RuntimeUpcallType::onMethodEntry, method_details, upcall);
+  }
+
   if (method()->is_synchronized()) {
     LIR_Opr obj;
     if (method()->is_static()) {
@@ -3224,6 +3237,10 @@ void LIRGenerator::increment_event_counter(CodeEmitInfo* info, LIR_Opr step, int
 void LIRGenerator::increment_event_counter_impl(CodeEmitInfo* info,
                                                 ciMethod *method, LIR_Opr step, int frequency,
                                                 int bci, bool backedge, bool notify) {
+  if (PreloadOnly) {
+    // Nothing to do if we only use preload code.
+    return;
+  }
   assert(frequency == 0 || is_power_of_2(frequency + 1), "Frequency must be x^2 - 1 or 0");
   int level = _compilation->env()->comp_level();
   assert(level > CompLevel_simple, "Shouldn't be here");
@@ -3236,8 +3253,13 @@ void LIRGenerator::increment_event_counter_impl(CodeEmitInfo* info,
       bailout("method counters allocation failed");
       return;
     }
+if (SCCache::is_on()) {
+    counter_holder = new_register(T_METADATA);
+    __ metadata2reg(counters_adr, counter_holder);
+} else {
     counter_holder = new_pointer_register();
     __ move(LIR_OprFact::intptrConst(counters_adr), counter_holder);
+}
     offset = in_bytes(backedge ? MethodCounters::backedge_counter_offset() :
                                  MethodCounters::invocation_counter_offset());
   } else if (level == CompLevel_full_profile) {

@@ -32,6 +32,7 @@
 #include "cds/filemap.hpp"
 #include "cds/heapShared.hpp"
 #include "cds/metaspaceShared.hpp"
+#include "classfile/classLoader.hpp"
 #include "classfile/systemDictionaryShared.hpp"
 #include "classfile/vmClasses.hpp"
 #include "interpreter/bootstrapInfo.hpp"
@@ -49,6 +50,7 @@
 CHeapBitMap* ArchivePtrMarker::_ptrmap = nullptr;
 CHeapBitMap* ArchivePtrMarker::_rw_ptrmap = nullptr;
 CHeapBitMap* ArchivePtrMarker::_ro_ptrmap = nullptr;
+CHeapBitMap* ArchivePtrMarker::_cc_ptrmap = nullptr;
 VirtualSpace* ArchivePtrMarker::_vs;
 
 bool ArchivePtrMarker::_compacted;
@@ -57,6 +59,7 @@ void ArchivePtrMarker::initialize(CHeapBitMap* ptrmap, VirtualSpace* vs) {
   assert(_ptrmap == nullptr, "initialize only once");
   assert(_rw_ptrmap == nullptr, "initialize only once");
   assert(_ro_ptrmap == nullptr, "initialize only once");
+  assert(_cc_ptrmap == nullptr, "initialize only once");
   _vs = vs;
   _compacted = false;
   _ptrmap = ptrmap;
@@ -72,35 +75,53 @@ void ArchivePtrMarker::initialize(CHeapBitMap* ptrmap, VirtualSpace* vs) {
   _ptrmap->initialize(estimated_archive_size / sizeof(intptr_t));
 }
 
-void ArchivePtrMarker::initialize_rw_ro_maps(CHeapBitMap* rw_ptrmap, CHeapBitMap* ro_ptrmap) {
+void ArchivePtrMarker::initialize_rw_ro_cc_maps(CHeapBitMap* rw_ptrmap, CHeapBitMap* ro_ptrmap, CHeapBitMap* cc_ptrmap) {
   address* rw_bottom = (address*)ArchiveBuilder::current()->rw_region()->base();
   address* ro_bottom = (address*)ArchiveBuilder::current()->ro_region()->base();
+  address* cc_bottom = (address*)ArchiveBuilder::current()->cc_region()->base();
 
   _rw_ptrmap = rw_ptrmap;
   _ro_ptrmap = ro_ptrmap;
+  _cc_ptrmap = cc_ptrmap;
 
   size_t rw_size = ArchiveBuilder::current()->rw_region()->used() / sizeof(address);
   size_t ro_size = ArchiveBuilder::current()->ro_region()->used() / sizeof(address);
+  size_t cc_size = ArchiveBuilder::current()->cc_region()->used() / sizeof(address);
   // ro_start is the first bit in _ptrmap that covers the pointer that would sit at ro_bottom.
   // E.g., if rw_bottom = (address*)100
   //          ro_bottom = (address*)116
   //       then for 64-bit platform:
   //          ro_start = ro_bottom - rw_bottom = (116 - 100) / sizeof(address) = 2;
   size_t ro_start = ro_bottom - rw_bottom;
+  size_t cc_start = cc_bottom - rw_bottom;
 
-  // Note: ptrmap is big enough only to cover the last pointer in ro_region.
+  // Note: ptrmap is big enough only to cover the last pointer in cc_region or ro_region.
   // See ArchivePtrMarker::compact()
+  if (ro_start + ro_size >_ptrmap->size()) {
+    ro_size = _ptrmap->size() - ro_start; // ro is smaller than we thought
+    cc_size = 0;                          // cc is empty
+  } else if (cc_size != 0 && cc_start + cc_size > _ptrmap->size()) {
+    cc_size = _ptrmap->size() - cc_start; // ro is smaller than we thought
+  }
+
+  assert(rw_size < _ptrmap->size(), "sanity");
+  assert(ro_size < _ptrmap->size(), "sanity");
+  assert(cc_size < _ptrmap->size(), "sanity");
+  assert(rw_size + ro_size + cc_size <= _ptrmap->size(), "sanity");
+
   _rw_ptrmap->initialize(rw_size);
-  _ro_ptrmap->initialize(_ptrmap->size() - ro_start);
+  _ro_ptrmap->initialize(ro_size);
+  _cc_ptrmap->initialize(cc_size);
 
-  for (size_t rw_bit = 0; rw_bit < _rw_ptrmap->size(); rw_bit++) {
-    _rw_ptrmap->at_put(rw_bit, _ptrmap->at(rw_bit));
+  for (size_t i = 0; i < rw_size; i++) {
+    _rw_ptrmap->at_put(i, _ptrmap->at(i));
   }
-
-  for(size_t ro_bit = ro_start; ro_bit < _ptrmap->size(); ro_bit++) {
-    _ro_ptrmap->at_put(ro_bit-ro_start, _ptrmap->at(ro_bit));
+  for (size_t i = 0; i < ro_size; i++) {
+    _ro_ptrmap->at_put(i, _ptrmap->at(ro_start + i));
   }
-  assert(_ptrmap->size() - ro_start == _ro_ptrmap->size(), "must be");
+  for (size_t i = 0; i < cc_size; i++) {
+    _cc_ptrmap->at_put(i, _ptrmap->at(cc_start + i));
+  }
 }
 
 void ArchivePtrMarker::mark_pointer(address* ptr_loc) {
@@ -264,9 +285,10 @@ void DumpRegion::append_intptr_t(intptr_t n, bool need_to_mark) {
 }
 
 void DumpRegion::print(size_t total_bytes) const {
+  char* base = used() > 0 ? ArchiveBuilder::current()->to_requested(_base) : nullptr;
   log_debug(cds)("%s space: %9zu [ %4.1f%% of total] out of %9zu bytes [%5.1f%% used] at " INTPTR_FORMAT,
                  _name, used(), percent_of(used(), total_bytes), reserved(), percent_of(used(), reserved()),
-                 p2i(ArchiveBuilder::current()->to_requested(_base)));
+                 p2i(base));
 }
 
 void DumpRegion::print_out_of_space_msg(const char* failing_region, size_t needed_bytes) {
@@ -289,9 +311,10 @@ void DumpRegion::init(ReservedSpace* rs, VirtualSpace* vs) {
 }
 
 void DumpRegion::pack(DumpRegion* next) {
-  assert(!is_packed(), "sanity");
-  _end = (char*)align_up(_top, MetaspaceShared::core_region_alignment());
-  _is_packed = true;
+  if (!is_packed()) {
+    _end = (char*)align_up(_top, MetaspaceShared::core_region_alignment());
+    _is_packed = true;
+  }
   if (next != nullptr) {
     next->_rs = _rs;
     next->_vs = _vs;
@@ -368,6 +391,56 @@ void ArchiveUtils::log_to_classlist(BootstrapInfo* bootstrap_specifier, TRAPS) {
         w.stream()->cr();
       }
     }
+  }
+}
+
+
+// "boot", "platform", "app" or nullptr
+const char* ArchiveUtils::builtin_loader_name_or_null(oop loader) {
+  if (loader == nullptr) {
+    return "boot";
+  } else if (loader == SystemDictionary::java_platform_loader()) {
+    return "platform";
+  } else if (loader == SystemDictionary::java_system_loader()) {
+    return "app";
+  } else {
+    return nullptr;
+  }
+}
+
+// "boot", "platform", "app". Asserts if not a built-in-loader
+const char* ArchiveUtils::builtin_loader_name(oop loader) {
+  const char* name = builtin_loader_name_or_null(loader);
+  assert(name != nullptr, "must be a built-in loader");
+  return name;
+}
+
+bool ArchiveUtils::builtin_loader_from_type(const char* loader_type, oop* value_ret) {
+  if (strcmp(loader_type, "boot") == 0) {
+    *value_ret = nullptr;
+    return true;
+  } else if (strcmp(loader_type, "platform") == 0) {
+    *value_ret = SystemDictionary::java_platform_loader();
+    return true;
+  } else if (strcmp(loader_type, "app") == 0) {
+    *value_ret = SystemDictionary::java_system_loader();
+    return true;
+  } else {
+    DEBUG_ONLY(*value_ret = cast_to_oop((void*)badOopVal));
+    return false;
+  }
+}
+
+oop ArchiveUtils::builtin_loader_from_type(int loader_type) {
+  if (loader_type == ClassLoader::BOOT_LOADER) {
+    return nullptr;
+  } else if (loader_type == ClassLoader::PLATFORM_LOADER)  {
+    return SystemDictionary::java_platform_loader();
+  } else if (loader_type == ClassLoader::APP_LOADER) {
+    return SystemDictionary::java_system_loader();
+  } else {
+    ShouldNotReachHere();
+    return nullptr;
   }
 }
 

@@ -22,15 +22,18 @@
  *
  */
 
+#include "compiler/compiler_globals.hpp"
 #include "gc/shared/gc_globals.hpp"
 #include "logging/log.hpp"
 #include "logging/logStream.hpp"
 #include "memory/resourceArea.hpp"
 #include "memory/universe.hpp"
+#include "runtime/java.hpp"
 #include "runtime/javaThread.hpp"
 #include "runtime/mutexLocker.hpp"
 #include "runtime/safepoint.hpp"
 #include "runtime/vmThread.hpp"
+#include "services/management.hpp"
 #include "utilities/vmError.hpp"
 
 // Mutexes used in the VM (see comment in mutexLocker.hpp):
@@ -79,6 +82,11 @@ Mutex*   MonitoringSupport_lock       = nullptr;
 Monitor* ConcurrentGCBreakpoints_lock = nullptr;
 Mutex*   Compile_lock                 = nullptr;
 Monitor* MethodCompileQueue_lock      = nullptr;
+Monitor* MethodCompileQueueC1_lock    = nullptr;
+Monitor* MethodCompileQueueC2_lock    = nullptr;
+Monitor* MethodCompileQueueC3_lock    = nullptr;
+Monitor* MethodCompileQueueSC1_lock   = nullptr;
+Monitor* MethodCompileQueueSC2_lock   = nullptr;
 Monitor* CompileThread_lock           = nullptr;
 Monitor* Compilation_lock             = nullptr;
 Mutex*   CompileTaskAlloc_lock        = nullptr;
@@ -89,6 +97,8 @@ Monitor* InitCompleted_lock           = nullptr;
 Monitor* BeforeExit_lock              = nullptr;
 Monitor* Notify_lock                  = nullptr;
 Mutex*   ExceptionCache_lock          = nullptr;
+Mutex*   TrainingData_lock            = nullptr;
+Monitor* TrainingReplayQueue_lock     = nullptr;
 #ifndef PRODUCT
 Mutex*   FullGCALot_lock              = nullptr;
 #endif
@@ -147,6 +157,7 @@ Mutex*   ClassListFile_lock           = nullptr;
 Mutex*   UnregisteredClassesTable_lock= nullptr;
 Mutex*   LambdaFormInvokers_lock      = nullptr;
 Mutex*   ScratchObjects_lock          = nullptr;
+Mutex*   ArchivedObjectTables_lock    = nullptr;
 #endif // INCLUDE_CDS
 Mutex*   Bootclasspath_lock           = nullptr;
 
@@ -253,6 +264,21 @@ void mutex_init() {
 
   MUTEX_DEFN(CompiledIC_lock                 , PaddedMutex  , nosafepoint);  // locks VtableStubs_lock
   MUTEX_DEFN(MethodCompileQueue_lock         , PaddedMonitor, safepoint);
+  if (UseGlobalCompileQueueLock) {
+    MethodCompileQueueC1_lock  = MethodCompileQueue_lock;
+    MethodCompileQueueC2_lock  = MethodCompileQueue_lock;
+    MethodCompileQueueC3_lock  = MethodCompileQueue_lock;
+    MethodCompileQueueSC1_lock = MethodCompileQueue_lock;
+    MethodCompileQueueSC2_lock = MethodCompileQueue_lock;
+  } else {
+    MUTEX_DEFN(MethodCompileQueueC1_lock     , PaddedMonitor, safepoint);
+    MUTEX_DEFN(MethodCompileQueueC2_lock     , PaddedMonitor, safepoint);
+    MUTEX_DEFN(MethodCompileQueueC3_lock     , PaddedMonitor, safepoint);
+    MUTEX_DEFN(MethodCompileQueueSC1_lock    , PaddedMonitor, safepoint);
+    MUTEX_DEFN(MethodCompileQueueSC2_lock    , PaddedMonitor, safepoint);
+  }
+  MUTEX_DEFL(TrainingData_lock               , PaddedMutex  , MethodCompileQueue_lock);
+  MUTEX_DEFN(TrainingReplayQueue_lock        , PaddedMonitor, safepoint);
   MUTEX_DEFN(CompileStatistics_lock          , PaddedMutex  , safepoint);
   MUTEX_DEFN(DirectivesStack_lock            , PaddedMutex  , nosafepoint);
 
@@ -269,9 +295,7 @@ void mutex_init() {
   MUTEX_DEFN(Verify_lock                     , PaddedMutex  , safepoint);
   MUTEX_DEFN(ClassLoaderDataGraph_lock       , PaddedMutex  , safepoint);
 
-  if (WhiteBoxAPI) {
-    MUTEX_DEFN(Compilation_lock              , PaddedMonitor, nosafepoint);
-  }
+  MUTEX_DEFN(Compilation_lock                , PaddedMonitor, nosafepoint);
 
 #if INCLUDE_JFR
   MUTEX_DEFN(JfrBuffer_lock                  , PaddedMutex  , event);
@@ -299,6 +323,7 @@ void mutex_init() {
   MUTEX_DEFN(UnregisteredClassesTable_lock   , PaddedMutex  , nosafepoint-1);
   MUTEX_DEFN(LambdaFormInvokers_lock         , PaddedMutex  , safepoint);
   MUTEX_DEFN(ScratchObjects_lock             , PaddedMutex  , nosafepoint-1); // Holds DumpTimeTable_lock
+  MUTEX_DEFN(ArchivedObjectTables_lock       , PaddedMutex  , nosafepoint);
 #endif // INCLUDE_CDS
   MUTEX_DEFN(Bootclasspath_lock              , PaddedMutex  , nosafepoint);
 
@@ -319,7 +344,7 @@ void mutex_init() {
 
   MUTEX_DEFL(Threads_lock                   , PaddedMonitor, CompileThread_lock, true);
   MUTEX_DEFL(Compile_lock                   , PaddedMutex  , MethodCompileQueue_lock);
-  MUTEX_DEFL(Heap_lock                      , PaddedMonitor, AdapterHandlerLibrary_lock);
+  MUTEX_DEFL(Heap_lock                      , PaddedMonitor, TrainingData_lock  /*AdapterHandlerLibrary_lock*/);
 
   MUTEX_DEFL(PerfDataMemAlloc_lock          , PaddedMutex  , Heap_lock);
   MUTEX_DEFL(PerfDataManager_lock           , PaddedMutex  , Heap_lock);
@@ -356,6 +381,105 @@ void mutex_init() {
 #undef MUTEX_DEF
 #undef MUTEX_STORAGE
 #undef MUTEX_STORAGE_NAME
+
+static const int MAX_NAMES = 200;
+static const char* _names[MAX_NAMES] = { nullptr };
+static bool _is_unique[MAX_NAMES] = { false };
+static int _num_names = 0;
+
+PerfCounter** MutexLockerImpl::_perf_lock_count     = nullptr;
+PerfCounter** MutexLockerImpl::_perf_lock_wait_time = nullptr;
+PerfCounter** MutexLockerImpl::_perf_lock_hold_time = nullptr;
+
+void MutexLockerImpl::init_counters() {
+  if (ProfileVMLocks && UsePerfData) {
+    ResourceMark rm;
+    EXCEPTION_MARK;
+    _perf_lock_count     = NEW_C_HEAP_ARRAY(PerfCounter*, MAX_NAMES + 1, mtInternal);
+    _perf_lock_wait_time = NEW_C_HEAP_ARRAY(PerfCounter*, MAX_NAMES + 1, mtInternal);
+    _perf_lock_hold_time = NEW_C_HEAP_ARRAY(PerfCounter*, MAX_NAMES + 1, mtInternal);
+
+    NEWPERFEVENTCOUNTER(_perf_lock_count[0],     SUN_RT, PerfDataManager::counter_name("Other", "Count"));
+    NEWPERFEVENTCOUNTER(_perf_lock_wait_time[0], SUN_RT, PerfDataManager::counter_name("Other", "BeforeTime"));
+    NEWPERFEVENTCOUNTER(_perf_lock_hold_time[0], SUN_RT, PerfDataManager::counter_name("Other", "AfterTime"));
+    for (int i = 0; i < MAX_NAMES; i++) {
+      ResourceMark rm;
+      const char* counter_name = _names[i];
+      if (counter_name == nullptr) {
+        stringStream ss;
+        ss.print("UnnamedMutex#%d", i);
+        counter_name = ss.as_string();
+      }
+      NEWPERFEVENTCOUNTER(_perf_lock_count[i + 1],     SUN_RT, PerfDataManager::counter_name(counter_name, "Count"));
+      NEWPERFEVENTCOUNTER(_perf_lock_wait_time[i + 1], SUN_RT, PerfDataManager::counter_name(counter_name, "BeforeTime"));
+      NEWPERFEVENTCOUNTER(_perf_lock_hold_time[i + 1], SUN_RT, PerfDataManager::counter_name(counter_name, "AfterTime"));
+    }
+    if (HAS_PENDING_EXCEPTION) {
+      vm_exit_during_initialization("MutexLockerImpl::init_counters() failed unexpectedly");
+    }
+  }
+}
+
+int MutexLockerImpl::name2id(const char* name) {
+  if (ProfileVMLocks && UsePerfData) {
+    for (int i = 0; i < _num_names; i++) {
+      if (strcmp(_names[i], name) == 0) {
+        _is_unique[i] = false;
+        return i;
+      }
+    }
+    if (_num_names < MAX_NAMES) {
+      int new_id = _num_names++;
+      _names[new_id] = os::strdup(name, mtInternal);
+      _is_unique[new_id] = true;
+      return new_id;
+    }
+    log_debug(init)("Unnamed: %s", name); // no slots left
+  }
+  return -1;
+}
+
+void MutexLockerImpl::print_counter_on(outputStream* st, const char* name, bool is_unique, int idx) {
+  jlong count = _perf_lock_count[idx]->get_value();
+  if (count > 0) {
+    st->print_cr("  %3d: %s%40s = " JLONG_FORMAT_W(5) "us (" JLONG_FORMAT_W(5) "us) / " JLONG_FORMAT_W(9) " events",
+                 idx, (is_unique ? " " : "M"), name,
+                 Management::ticks_to_us(_perf_lock_hold_time[idx]->get_value()),
+                 Management::ticks_to_us(_perf_lock_wait_time[idx]->get_value()),
+                 count);
+  }
+}
+
+static jlong accumulate_lock_counters(PerfCounter** lock_counters) {
+  jlong acc = 0;
+  for (int i = 0; i < _num_names + 1; i++) { // 0 slot is reserved for unnamed locks
+    if (lock_counters[i] == nullptr) {
+      break;
+    }
+    acc += lock_counters[i]->get_value();
+  }
+  return acc;
+}
+
+void MutexLockerImpl::print_counters_on(outputStream* st) {
+  if (ProfileVMLocks && UsePerfData) {
+    jlong total_count     = accumulate_lock_counters(_perf_lock_count);
+    jlong total_wait_time = accumulate_lock_counters(_perf_lock_wait_time);
+    jlong total_hold_time = accumulate_lock_counters(_perf_lock_hold_time);
+
+    st->print_cr("MutexLocker: Total: %d named locks (%d unique names); hold = " JLONG_FORMAT "us (wait = " JLONG_FORMAT "us) / " JLONG_FORMAT " events for thread \"main\"",
+                 Mutex::num_mutex(), _num_names,
+                 Management::ticks_to_us(total_hold_time),
+                 Management::ticks_to_us(total_wait_time),
+                 total_count);
+    for (int i = 0; i < _num_names; i++) {
+      print_counter_on(st, _names[i], _is_unique[i], i+1);
+    }
+    print_counter_on(st, "Unnamed / Other", false /*is_unique*/, 0);
+  } else {
+    st->print_cr("MutexLocker: no info (%s is disabled)", (UsePerfData ? "ProfileVMLocks" : "UsePerfData"));
+  }
+}
 
 void MutexLockerImpl::post_initialize() {
   // Print mutex ranks if requested.

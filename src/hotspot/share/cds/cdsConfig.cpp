@@ -24,12 +24,17 @@
 
 #include "cds/archiveHeapLoader.hpp"
 #include "cds/cdsConfig.hpp"
+#include "cds/cds_globals.hpp"
 #include "cds/classListWriter.hpp"
 #include "cds/heapShared.hpp"
+#include "cds/metaspaceShared.hpp"
 #include "classfile/classLoaderDataShared.hpp"
 #include "classfile/moduleEntry.hpp"
+#include "classfile/systemDictionaryShared.hpp"
+#include "code/SCCache.hpp"
 #include "include/jvm_io.h"
 #include "logging/log.hpp"
+#include "prims/jvmtiExport.hpp"
 #include "memory/universe.hpp"
 #include "runtime/arguments.hpp"
 #include "runtime/globals_extension.hpp"
@@ -45,6 +50,9 @@ bool CDSConfig::_is_dumping_full_module_graph = true;
 bool CDSConfig::_is_using_full_module_graph = true;
 bool CDSConfig::_has_aot_linked_classes = false;
 bool CDSConfig::_has_archived_invokedynamic = false;
+bool CDSConfig::_is_loading_packages = false;
+bool CDSConfig::_is_loading_protection_domains = false;
+bool CDSConfig::_is_security_manager_allowed = false;
 bool CDSConfig::_old_cds_flags_used = false;
 bool CDSConfig::_disable_heap_dumping = false;
 
@@ -59,14 +67,15 @@ int CDSConfig::get_status() {
   return (is_dumping_archive()              ? IS_DUMPING_ARCHIVE : 0) |
          (is_dumping_static_archive()       ? IS_DUMPING_STATIC_ARCHIVE : 0) |
          (is_logging_lambda_form_invokers() ? IS_LOGGING_LAMBDA_FORM_INVOKERS : 0) |
-         (is_using_archive()                ? IS_USING_ARCHIVE : 0);
+         (is_using_archive()                ? IS_USING_ARCHIVE : 0) |
+         (is_dumping_heap()                 ? IS_DUMPING_HEAP : 0) |
+         (is_logging_dynamic_proxies()      ? IS_LOGGING_DYNAMIC_PROXIES : 0) |
+         (is_dumping_packages()             ? IS_DUMPING_PACKAGES : 0) |
+         (is_dumping_protection_domains()   ? IS_DUMPING_PROTECTION_DOMAINS : 0);
 }
 
 void CDSConfig::initialize() {
-  if (is_dumping_static_archive()) {
-    if (RequireSharedSpaces) {
-      warning("Cannot dump shared archive while using shared archive");
-    }
+  if (is_dumping_static_archive() && !is_dumping_final_static_archive()) {
     UseSharedSpaces = false;
   }
 
@@ -148,6 +157,13 @@ void CDSConfig::extract_shared_archive_paths(const char* archive_path,
   *top_archive_path = cur_path;
 }
 
+static void set_new_workflow_default_CachedCodeFile() {
+  size_t len = strlen(CacheDataStore) + 6;
+  char* file = AllocateHeap(len, mtArguments);
+  jio_snprintf(file, len, "%s.code", CacheDataStore);
+  FLAG_SET_ERGO(CachedCodeFile, file);
+}
+
 void CDSConfig::init_shared_archive_paths() {
   if (ArchiveClassesAtExit != nullptr) {
     assert(!RecordDynamicDumpInfo, "already checked");
@@ -171,6 +187,10 @@ void CDSConfig::init_shared_archive_paths() {
     if (is_dumping_archive() && archives > 1) {
       vm_exit_during_initialization(
         "Cannot have more than 1 archive file specified in -XX:SharedArchiveFile during CDS dumping");
+    }
+
+    if (CDSPreimage != nullptr && archives > 1) {
+      vm_exit_during_initialization("CDSPreimage must point to a single file", CDSPreimage);
     }
 
     if (is_dumping_static_archive()) {
@@ -197,6 +217,10 @@ void CDSConfig::init_shared_archive_paths() {
         bool success =
           FileMapInfo::get_base_archive_name_from_header(SharedArchiveFile, &base_archive_path);
         if (!success) {
+          if (CDSPreimage != nullptr) {
+            vm_exit_during_initialization("Unable to map shared spaces from CDSPreimage", CDSPreimage);
+          }
+
           // If +AutoCreateSharedArchive and the specified shared archive does not exist,
           // regenerate the dynamic archive base on default archive.
           if (AutoCreateSharedArchive && !os::file_exists(SharedArchiveFile)) {
@@ -249,10 +273,22 @@ void CDSConfig::init_shared_archive_paths() {
   }
 }
 
+static char* bad_module_prop_key   = nullptr;
+static char* bad_module_prop_value = nullptr;
+
 void CDSConfig::check_internal_module_property(const char* key, const char* value) {
   if (Arguments::is_incompatible_cds_internal_module_property(key)) {
     stop_using_optimized_module_handling();
-    log_info(cds)("optimized module handling: disabled due to incompatible property: %s=%s", key, value);
+    if (bad_module_prop_key == nullptr) {
+      // We don't want to print an unconditional warning here, as we are still processing the command line.
+      // A later argument may specify something like -Xshare:off, which makes such a warning irrelevant.
+      //
+      // Instead, we save the info so we can warn when necessary: we are doing it only during CacheDataStore
+      // creation for now, but could add it to other places.
+      bad_module_prop_key   = os::strdup(key);
+      bad_module_prop_value = os::strdup(value);
+    }
+    log_info(cds)("optimized module handling/full module graph: disabled due to incompatible property: %s=%s", key, value);
   }
 }
 
@@ -272,6 +308,12 @@ void CDSConfig::check_incompatible_property(const char* key, const char* value) 
     }
   }
 
+  // Match the logic in java/lang/System.java, but we need to know this before the System class is initialized.
+  if (strcmp(key, "java.security.manager") == 0) {
+    if (strcmp(value, "disallowed") != 0) {
+      _is_security_manager_allowed = true;
+    }
+  }
 }
 
 // Returns any JVM command-line option, such as "--patch-module", that's not supported by CDS.
@@ -417,7 +459,7 @@ void CDSConfig::check_flag_aliases() {
   }
 }
 
-bool CDSConfig::check_vm_args_consistency(bool patch_mod_javabase, bool mode_flag_cmd_line) {
+bool CDSConfig::check_vm_args_consistency(bool patch_mod_javabase, bool mode_flag_cmd_line, bool xshare_auto_cmd_line) {
   check_flag_aliases();
 
   if (!FLAG_IS_DEFAULT(AOTMode)) {
@@ -425,16 +467,148 @@ bool CDSConfig::check_vm_args_consistency(bool patch_mod_javabase, bool mode_fla
     FLAG_SET_ERGO_IF_DEFAULT(AOTClassLinking, true);
   }
 
-  if (AOTClassLinking) {
-    // If AOTClassLinking is specified, enable all AOT optimizations by default.
-    FLAG_SET_ERGO_IF_DEFAULT(AOTInvokeDynamicLinking, true);
+  if (CacheDataStore != nullptr) {
+    // Leyden temp work-around:
+    //
+    // By default, when using CacheDataStore, use the HeapBasedNarrowOop mode so that
+    // AOT code can be always work regardless of runtime heap range.
+    //
+    // If you are *absolutely sure* that the CompressedOops::mode() will be the same
+    // between training and production runs (e.g., if you specify -Xmx128m
+    // for both training and production runs, and you know the OS will always reserve
+    // the heap under 4GB), you can explicitly disable this with:
+    //     java -XX:-UseCompatibleCompressedOops -XX:CacheDataStore=...
+    // However, this is risky and there's a chance that the production run will be slower
+    // because it is unable to load the AOT code cache.
+#ifdef _LP64
+    // FLAG_SET_ERGO_IF_DEFAULT(UseCompatibleCompressedOops, true); // FIXME @iklam - merge with mainline - UseCompatibleCompressedOops
+#endif
+
+    // Leyden temp: make sure the user knows if CDS archive somehow fails to load.
+    if (UseSharedSpaces && !xshare_auto_cmd_line) {
+      log_info(cds)("Enabled -Xshare:on by default for troubleshooting Leyden prototype");
+      RequireSharedSpaces = true;
+    }
+
+    if (FLAG_IS_DEFAULT(AOTClassLinking)) {
+      // New workflow - enable AOTClassLinking by default.
+      // TODO: make new workflow work, even when AOTClassLinking is false.
+      //
+      // NOTE: in old workflow, we cannot enable AOTClassLinking by default. That
+      // should be an opt-in option, per JEP nnn.
+      FLAG_SET_ERGO(AOTClassLinking, true);
+    }
+
+    if (SharedArchiveFile != nullptr) {
+      vm_exit_during_initialization("CacheDataStore and SharedArchiveFile cannot be both specified");
+    }
+    if (!AOTClassLinking) {
+      // TODO: in the forked JVM, we should ensure all classes are loaded from the hotspot.cds.preimage.
+      // AOTClassLinking only loads the classes for built-in loaders. We need to load the classes
+      // for custom loaders as well.
+      vm_exit_during_initialization("CacheDataStore requires AOTClassLinking");
+    }
+
+    if (CDSPreimage == nullptr) {
+      if (os::file_exists(CacheDataStore) /* && TODO: CDS file is valid*/) {
+        // The CacheDataStore is already up to date. Use it. Also turn on cached code by default.
+        SharedArchiveFile = CacheDataStore;
+        FLAG_SET_ERGO_IF_DEFAULT(ReplayTraining, true);
+        FLAG_SET_ERGO_IF_DEFAULT(LoadCachedCode, true);
+        if (LoadCachedCode && FLAG_IS_DEFAULT(CachedCodeFile)) {
+          set_new_workflow_default_CachedCodeFile();
+        }
+      } else {
+        // The preimage dumping phase -- run the app and write the preimage file
+        size_t len = strlen(CacheDataStore) + 10;
+        char* preimage = AllocateHeap(len, mtArguments);
+        jio_snprintf(preimage, len, "%s.preimage", CacheDataStore);
+
+        UseSharedSpaces = false;
+        enable_dumping_static_archive();
+        SharedArchiveFile = preimage;
+        log_info(cds)("CacheDataStore needs to be updated. Writing %s file", SharedArchiveFile);
+
+        // At VM exit, the module graph may be contaminated with program states. We should rebuild the
+        // module graph when dumping the CDS final image.
+        log_info(cds)("full module graph: disabled when writing CDS preimage");
+        disable_heap_dumping();
+        stop_dumping_full_module_graph();
+        FLAG_SET_ERGO(ArchivePackages, false);
+        FLAG_SET_ERGO(ArchiveProtectionDomains, false);
+
+        FLAG_SET_ERGO_IF_DEFAULT(RecordTraining, true);
+      }
+    } else {
+      // The final image dumping phase -- load the preimage and write the final image file
+      SharedArchiveFile = CDSPreimage;
+      UseSharedSpaces = true;
+      log_info(cds)("Generate CacheDataStore %s from CDSPreimage %s", CacheDataStore, CDSPreimage);
+      // Force -Xbatch for AOT compilation.
+      if (FLAG_SET_CMDLINE(BackgroundCompilation, false) != JVMFlag::SUCCESS) {
+        return false;
+      }
+      RecordTraining = false; // This will be updated inside MetaspaceShared::preload_and_dump()
+
+      FLAG_SET_ERGO_IF_DEFAULT(ReplayTraining, true);
+      // Settings for AOT
+      FLAG_SET_ERGO_IF_DEFAULT(StoreCachedCode, true);
+      if (StoreCachedCode && FLAG_IS_DEFAULT(CachedCodeFile)) {
+        set_new_workflow_default_CachedCodeFile();
+        // Cannot dump cached code until metadata and heap are dumped.
+        disable_dumping_cached_code();
+      }
+      if (StoreCachedCode) {
+        log_info(cds)("ArchiveAdapters is enabled");
+        FLAG_SET_ERGO_IF_DEFAULT(ArchiveAdapters, true);
+      }
+    }
   } else {
-    // AOTInvokeDynamicLinking depends on AOTClassLinking.
-    FLAG_SET_ERGO(AOTInvokeDynamicLinking, false);
+    // Old workflow
+    if (CDSPreimage != nullptr) {
+      vm_exit_during_initialization("CDSPreimage must be specified only when CacheDataStore is specified");
+    }
   }
 
+  if (FLAG_IS_DEFAULT(UsePermanentHeapObjects)) {
+    if (StoreCachedCode || AOTClassLinking) {
+      FLAG_SET_ERGO(UsePermanentHeapObjects, true);
+    }
+  }
+
+  if (LoadCachedCode) {
+    // This must be true. Cached code is hard-wired to use permanent objects.
+    UsePermanentHeapObjects = true;
+  }
+
+  if (AOTClassLinking) {
+    // If AOTClassLinking is specified, enable all these optimizations by default.
+    FLAG_SET_ERGO_IF_DEFAULT(AOTInvokeDynamicLinking, true);
+    FLAG_SET_ERGO_IF_DEFAULT(ArchiveDynamicProxies, true);
+    FLAG_SET_ERGO_IF_DEFAULT(ArchiveLoaderLookupCache, true);
+    FLAG_SET_ERGO_IF_DEFAULT(ArchivePackages, true);
+    FLAG_SET_ERGO_IF_DEFAULT(ArchiveProtectionDomains, true);
+    FLAG_SET_ERGO_IF_DEFAULT(ArchiveReflectionData, true);
+  } else {
+    // All of these *might* depend on AOTClassLinking. Better be safe than sorry.
+    // TODO: more fine-grained handling.
+    FLAG_SET_ERGO(AOTInvokeDynamicLinking, false);
+    FLAG_SET_ERGO(ArchiveDynamicProxies, false);
+    FLAG_SET_ERGO(ArchiveLoaderLookupCache, false);
+    FLAG_SET_ERGO(ArchivePackages, false);
+    FLAG_SET_ERGO(ArchiveProtectionDomains, false);
+    FLAG_SET_ERGO(ArchiveReflectionData, false);
+  }
+
+#ifdef _WINDOWS
+  // This optimization is not working on Windows for some reason. See JDK-8338604.
+  FLAG_SET_ERGO(ArchiveReflectionData, false);
+#endif
+
   if (is_dumping_static_archive()) {
-    if (!mode_flag_cmd_line) {
+    if (is_dumping_preimage_static_archive() || is_dumping_final_static_archive()) {
+      // Don't tweak execution mode
+    } else if (!mode_flag_cmd_line) {
       // By default, -Xshare:dump runs in interpreter-only mode, which is required for deterministic archive.
       //
       // If your classlist is large and you don't care about deterministic dumping, you can use
@@ -451,9 +625,6 @@ bool CDSConfig::check_vm_args_consistency(bool patch_mod_javabase, bool mode_fla
     // run to another which resulting in non-determinstic CDS archives.
     // Disable UseStringDeduplication while dumping CDS archive.
     UseStringDeduplication = false;
-
-    // Don't use SoftReferences so that objects used by java.lang.invoke tables can be archived.
-    Arguments::PropertyList_add(new SystemProperty("java.lang.invoke.MethodHandleNatives.USE_SOFT_CACHE", "false", false));
   }
 
   // RecordDynamicDumpInfo is not compatible with ArchiveClassesAtExit
@@ -495,12 +666,69 @@ bool CDSConfig::check_vm_args_consistency(bool patch_mod_javabase, bool mode_fla
     }
   }
 
+  if (AOTClassLinking) {
+    if ((is_dumping_preimage_static_archive() && !is_using_optimized_module_handling()) ||
+        (is_dumping_final_static_archive()    && !is_dumping_full_module_graph())) {
+      if (bad_module_prop_key != nullptr) {
+        log_warning(cds)("optimized module handling/full module graph: disabled due to incompatible property: %s=%s",
+                         bad_module_prop_key, bad_module_prop_value);
+      }
+      vm_exit_during_initialization("CacheDataStore cannot be created because AOTClassLinking is enabled but full module graph is disabled");
+    }
+  }
+
   return true;
+}
+
+bool CDSConfig::is_dumping_classic_static_archive() {
+  return _is_dumping_static_archive && CacheDataStore == nullptr && CDSPreimage == nullptr;
+}
+
+bool CDSConfig::is_dumping_preimage_static_archive() {
+  return _is_dumping_static_archive && CacheDataStore != nullptr && CDSPreimage == nullptr;
+}
+
+bool CDSConfig::is_dumping_preimage_static_archive_with_triggers() {
+  return (!FLAG_IS_DEFAULT(AOTEndTrainingOnMethodEntry)) && is_dumping_preimage_static_archive();
+}
+
+bool CDSConfig::is_dumping_final_static_archive() {
+  if (CDSPreimage != nullptr) {
+    assert(CacheDataStore != nullptr, "must be"); // should have been properly initialized by arguments.cpp
+  }
+
+  // Note: _is_dumping_static_archive is false! // FIXME -- refactor this so it makes more sense!
+  return CacheDataStore != nullptr && CDSPreimage != nullptr;
 }
 
 bool CDSConfig::allow_only_single_java_thread() {
   // See comments in JVM_StartThread()
-  return is_dumping_static_archive();
+  return is_dumping_classic_static_archive() || is_dumping_final_static_archive();
+}
+
+bool CDSConfig::is_dumping_regenerated_lambdaform_invokers() {
+  if (is_dumping_final_static_archive()) {
+    // Not yet supported in new workflow -- the training data may point
+    // to a method in a lambdaform holder class that was not regenerated
+    // due to JDK-8318064.
+    return false;
+  } else {
+    return is_dumping_archive();
+  }
+}
+
+bool CDSConfig::is_logging_dynamic_proxies() {
+  return ClassListWriter::is_enabled() || is_dumping_preimage_static_archive();
+}
+
+// Preserve all states that were examined used during dumptime verification, such
+// that the verification result (pass or fail) cannot be changed at runtime.
+//
+// For example, if the verification of ik requires that class A must be a subtype of B,
+// then this relationship between A and B cannot be changed at runtime. I.e., the app
+// cannot load alternative versions of A and B such that A is not a subtype of B.
+bool CDSConfig::preserve_all_dumptime_verification_states(const InstanceKlass* ik) {
+  return is_dumping_aot_linked_classes() && SystemDictionaryShared::is_builtin(ik);
 }
 
 bool CDSConfig::is_using_archive() {
@@ -508,7 +736,7 @@ bool CDSConfig::is_using_archive() {
 }
 
 bool CDSConfig::is_logging_lambda_form_invokers() {
-  return ClassListWriter::is_enabled() || is_dumping_dynamic_archive();
+  return ClassListWriter::is_enabled() || is_dumping_dynamic_archive() || is_dumping_preimage_static_archive();
 }
 
 void CDSConfig::stop_using_optimized_module_handling() {
@@ -573,7 +801,7 @@ bool CDSConfig::are_vm_options_incompatible_with_dumping_heap() {
 
 
 bool CDSConfig::is_dumping_heap() {
-  if (!is_dumping_static_archive() // heap dump is not supported in dynamic dump
+  if (!(is_dumping_classic_static_archive() || is_dumping_final_static_archive())
       || are_vm_options_incompatible_with_dumping_heap()
       || _disable_heap_dumping) {
     return false;
@@ -626,7 +854,9 @@ void CDSConfig::stop_using_full_module_graph(const char* reason) {
 }
 
 bool CDSConfig::is_dumping_aot_linked_classes() {
-  if (is_dumping_dynamic_archive()) {
+  if (is_dumping_preimage_static_archive()) {
+    return AOTClassLinking;
+  } else if (is_dumping_dynamic_archive()) {
     return is_using_full_module_graph() && AOTClassLinking;
   } else if (is_dumping_static_archive()) {
     return is_dumping_full_module_graph() && AOTClassLinking;
@@ -636,9 +866,18 @@ bool CDSConfig::is_dumping_aot_linked_classes() {
 }
 
 bool CDSConfig::is_using_aot_linked_classes() {
+  if (is_dumping_final_static_archive()) {
+    // We assume that the final image is being dumped with the exact same module graph as the training run,
+    // so all aot-linked classes can be loaded.
+    return _has_aot_linked_classes;
+  }
   // Make sure we have the exact same module graph as in the assembly phase, or else
   // some aot-linked classes may not be visible so cannot be loaded.
   return is_using_full_module_graph() && _has_aot_linked_classes;
+}
+
+bool CDSConfig::is_dumping_dynamic_proxies() {
+  return is_dumping_full_module_graph() && is_dumping_invokedynamic() && ArchiveDynamicProxies;
 }
 
 void CDSConfig::set_has_aot_linked_classes(bool has_aot_linked_classes) {
@@ -655,8 +894,59 @@ bool CDSConfig::is_dumping_invokedynamic() {
   return AOTInvokeDynamicLinking && is_dumping_aot_linked_classes() && is_dumping_heap();
 }
 
+bool CDSConfig::is_dumping_packages() {
+  return ArchivePackages && is_dumping_heap();
+}
+
+bool CDSConfig::is_loading_packages() {
+  return UseSharedSpaces && is_using_full_module_graph() && _is_loading_packages;
+}
+
+bool CDSConfig::is_dumping_protection_domains() {
+  if (_is_security_manager_allowed) {
+    // For sanity, don't archive PDs. TODO: can this be relaxed?
+    return false;
+  }
+  // Archived PDs for the modules will reference their java.lang.Module, which must
+  // also be archived.
+  return ArchiveProtectionDomains && is_dumping_full_module_graph();
+}
+
+bool CDSConfig::is_loading_protection_domains() {
+  if (_is_security_manager_allowed) {
+    // For sanity, don't used any archived PDs. TODO: can this be relaxed?
+    return false;
+  }
+  return UseSharedSpaces && is_using_full_module_graph() && _is_loading_protection_domains;
+}
+
+bool CDSConfig::is_dumping_reflection_data() {
+  // reflection data use LambdaForm classes
+  return ArchiveReflectionData && is_dumping_invokedynamic();
+}
+
 bool CDSConfig::is_loading_invokedynamic() {
   return UseSharedSpaces && is_using_full_module_graph() && _has_archived_invokedynamic;
 }
 
 #endif // INCLUDE_CDS_JAVA_HEAP
+
+// This is allowed by default. We disable it only in the final image dump before the
+// metadata and heap are dumped.
+static bool _is_dumping_cached_code = true;
+
+bool CDSConfig::is_dumping_cached_code() {
+  return _is_dumping_cached_code;
+}
+
+void CDSConfig::disable_dumping_cached_code() {
+  _is_dumping_cached_code = false;
+}
+
+void CDSConfig::enable_dumping_cached_code() {
+  _is_dumping_cached_code = true;
+}
+
+bool CDSConfig::is_dumping_adapters() {
+  return (ArchiveAdapters && is_dumping_final_static_archive());
+}

@@ -79,6 +79,7 @@
 #include "runtime/lockStack.inline.hpp"
 #include "runtime/objectMonitor.inline.hpp"
 #include "runtime/osThread.hpp"
+#include "runtime/perfData.inline.hpp"
 #include "runtime/safepointVerifiers.hpp"
 #include "runtime/sharedRuntime.hpp"
 #include "runtime/signature.hpp"
@@ -93,6 +94,7 @@
 #include "runtime/vframeArray.hpp"
 #include "runtime/vframe_hp.hpp"
 #include "runtime/vmOperations.hpp"
+#include "services/management.hpp"
 #include "utilities/checkedCast.hpp"
 #include "utilities/events.hpp"
 #include "utilities/growableArray.hpp"
@@ -280,7 +282,7 @@ void Deoptimization::UnrollBlock::print() {
 // analysis, the method was changed from JRT_LEAF to JRT_BLOCK_ENTRY.
 // The actual reallocation of previously eliminated objects occurs in realloc_objects,
 // which is called from the method fetch_unroll_info_helper below.
-JRT_BLOCK_ENTRY(Deoptimization::UnrollBlock*, Deoptimization::fetch_unroll_info(JavaThread* current, int exec_mode))
+JRT_BLOCK_ENTRY_PROF(Deoptimization::UnrollBlock*, Deoptimization, fetch_unroll_info, Deoptimization::fetch_unroll_info(JavaThread* current, int exec_mode))
   // fetch_unroll_info() is called at the beginning of the deoptimization
   // handler. Note this fact before we start generating temporary frames
   // that can confuse an asynchronous stack walker. This counter is
@@ -849,7 +851,7 @@ static bool falls_through(Bytecodes::Code bc) {
 #endif
 
 // Return BasicType of value being returned
-JRT_LEAF(BasicType, Deoptimization::unpack_frames(JavaThread* thread, int exec_mode))
+JRT_LEAF_PROF_NO_THREAD(BasicType, Deoptimization, unpack_frames, Deoptimization::unpack_frames(JavaThread* thread, int exec_mode))
   assert(thread == JavaThread::current(), "pre-condition");
 
   // We are already active in the special DeoptResourceMark any ResourceObj's we
@@ -1760,12 +1762,15 @@ void Deoptimization::pop_frames_failed_reallocs(JavaThread* thread, vframeArray*
 void Deoptimization::deoptimize_single_frame(JavaThread* thread, frame fr, Deoptimization::DeoptReason reason) {
   assert(fr.can_be_deoptimized(), "checking frame type");
 
-  gather_statistics(reason, Action_none, Bytecodes::_illegal);
+  nmethod* nm = fr.cb()->as_nmethod_or_null();
+  assert(nm != nullptr, "only compiled methods can deopt");
+  DeoptAction action = (nm->is_not_entrant() ? Action_make_not_entrant : Action_none);
+  ScopeDesc* cur_sd = nm->scope_desc_at(fr.pc());
+  Bytecodes::Code bc = (cur_sd->bci() == -1 ? Bytecodes::_nop // deopt on method entry
+                                            : cur_sd->method()->java_code_at(cur_sd->bci()));
+  gather_statistics(nm, reason, action, bc);
 
   if (LogCompilation && xtty != nullptr) {
-    nmethod* nm = fr.cb()->as_nmethod_or_null();
-    assert(nm != nullptr, "only compiled methods can deopt");
-
     ttyLocker ttyl;
     xtty->begin_head("deoptimized thread='%zu' reason='%s' pc='" INTPTR_FORMAT "'",(uintx)thread->osthread()->thread_id(), trap_reason_name(reason), p2i(fr.pc()));
     nm->log_identity(xtty);
@@ -2015,7 +2020,7 @@ static void log_deopt(nmethod* nm, Method* tm, intptr_t pc, frame& fr, int trap_
   }
 }
 
-JRT_ENTRY(void, Deoptimization::uncommon_trap_inner(JavaThread* current, jint trap_request)) {
+JRT_ENTRY_PROF(void, Deoptimization, uncommon_trap_inner, Deoptimization::uncommon_trap_inner(JavaThread* current, jint trap_request)) {
   HandleMark hm(current);
 
   // uncommon_trap() is called at the beginning of the uncommon trap
@@ -2091,7 +2096,7 @@ JRT_ENTRY(void, Deoptimization::uncommon_trap_inner(JavaThread* current, jint tr
 
     Bytecodes::Code trap_bc     = trap_method->java_code_at(trap_bci);
     // Record this event in the histogram.
-    gather_statistics(reason, action, trap_bc);
+    gather_statistics(nm, reason, action, trap_bc);
 
     // Ensure that we can record deopt. history:
     bool create_if_missing = ProfileTraps;
@@ -2602,7 +2607,7 @@ Deoptimization::update_method_data_from_interpreter(MethodData* trap_mdo, int tr
                            ignore_maybe_prior_recompile);
 }
 
-Deoptimization::UnrollBlock* Deoptimization::uncommon_trap(JavaThread* current, jint trap_request, jint exec_mode) {
+PROF_ENTRY(Deoptimization::UnrollBlock*, Deoptimization, uncommon_trap, Deoptimization::uncommon_trap(JavaThread* current, jint trap_request, jint exec_mode))
   // Enable WXWrite: current function is called from methods compiled by C2 directly
   MACOS_AARCH64_ONLY(ThreadWXEnable wx(WXWrite, current));
 
@@ -2613,7 +2618,7 @@ Deoptimization::UnrollBlock* Deoptimization::uncommon_trap(JavaThread* current, 
   }
   HandleMark hm(current);
   return fetch_unroll_info_helper(current, exec_mode);
-}
+PROF_END
 
 // Local derived constants.
 // Further breakdown of DataLayout::trap_state, as promised by DataLayout.
@@ -2802,6 +2807,7 @@ const char* Deoptimization::format_trap_request(char* buf, size_t buflen,
 }
 
 juint Deoptimization::_deoptimization_hist
+        [1 + 4 + 5] // total + online + archived
         [Deoptimization::Reason_LIMIT]
     [1 + Deoptimization::Action_LIMIT]
         [Deoptimization::BC_CASE_LIMIT]
@@ -2812,18 +2818,12 @@ enum {
   LSB_MASK = right_n_bits(LSB_BITS)
 };
 
-void Deoptimization::gather_statistics(DeoptReason reason, DeoptAction action,
-                                       Bytecodes::Code bc) {
-  assert(reason >= 0 && reason < Reason_LIMIT, "oob");
-  assert(action >= 0 && action < Action_LIMIT, "oob");
-  _deoptimization_hist[Reason_none][0][0] += 1;  // total
-  _deoptimization_hist[reason][0][0]      += 1;  // per-reason total
-  juint* cases = _deoptimization_hist[reason][1+action];
+static void update(juint* cases, Bytecodes::Code bc) {
   juint* bc_counter_addr = nullptr;
   juint  bc_counter      = 0;
   // Look for an unused counter, or an exact match to this BC.
   if (bc != Bytecodes::_illegal) {
-    for (int bc_case = 0; bc_case < BC_CASE_LIMIT; bc_case++) {
+    for (int bc_case = 0; bc_case < Deoptimization::BC_CASE_LIMIT; bc_case++) {
       juint* counter_addr = &cases[bc_case];
       juint  counter = *counter_addr;
       if ((counter == 0 && bc_counter_addr == nullptr)
@@ -2836,14 +2836,30 @@ void Deoptimization::gather_statistics(DeoptReason reason, DeoptAction action,
   }
   if (bc_counter_addr == nullptr) {
     // Overflow, or no given bytecode.
-    bc_counter_addr = &cases[BC_CASE_LIMIT-1];
+    bc_counter_addr = &cases[Deoptimization::BC_CASE_LIMIT-1];
     bc_counter = (*bc_counter_addr & ~LSB_MASK);  // clear LSB
   }
   *bc_counter_addr = bc_counter + (1 << LSB_BITS);
 }
 
+
+void Deoptimization::gather_statistics(nmethod* nm, DeoptReason reason, DeoptAction action,
+                                       Bytecodes::Code bc) {
+  assert(reason >= 0 && reason < Reason_LIMIT, "oob");
+  assert(action >= 0 && action < Action_LIMIT, "oob");
+  _deoptimization_hist[0][Reason_none][0][0] += 1;  // total
+  _deoptimization_hist[0][reason][0][0]      += 1;  // per-reason total
+
+  update(_deoptimization_hist[0][reason][1+action], bc);
+
+  uint lvl = nm->comp_level() + (nm->is_scc() ? 4 : 0) + (nm->preloaded() ? 1 : 0);
+  _deoptimization_hist[lvl][Reason_none][0][0] += 1;  // total
+  _deoptimization_hist[lvl][reason][0][0]      += 1;  // per-reason total
+  update(_deoptimization_hist[lvl][reason][1+action], bc);
+}
+
 jint Deoptimization::total_deoptimization_count() {
-  return _deoptimization_hist[Reason_none][0][0];
+  return _deoptimization_hist[0][Reason_none][0][0];
 }
 
 // Get the deopt count for a specific reason and a specific action. If either
@@ -2859,7 +2875,7 @@ jint Deoptimization::deoptimization_count(const char *reason_str, const char *ac
     if (reason_str == nullptr || !strcmp(reason_str, trap_reason_name(reason))) {
       for (int action = 0; action < Action_LIMIT; action++) {
         if (action_str == nullptr || !strcmp(action_str, trap_action_name(action))) {
-          juint* cases = _deoptimization_hist[reason][1+action];
+          juint* cases = _deoptimization_hist[0][reason][1+action];
           for (int bc_case = 0; bc_case < BC_CASE_LIMIT; bc_case++) {
             counter += cases[bc_case] >> LSB_BITS;
           }
@@ -2871,33 +2887,40 @@ jint Deoptimization::deoptimization_count(const char *reason_str, const char *ac
 }
 
 void Deoptimization::print_statistics() {
-  juint total = total_deoptimization_count();
+  ttyLocker ttyl;
+  if (xtty != nullptr)  xtty->head("statistics type='deoptimization'");
+  tty->print_cr("Deoptimization traps recorded:");
+  print_statistics_on(tty);
+  if (xtty != nullptr)  xtty->tail("statistics");
+}
+
+void Deoptimization::print_statistics_on(const char* title, int lvl, outputStream* st) {
+  juint total = _deoptimization_hist[lvl][Reason_none][0][0];
   juint account = total;
-  if (total != 0) {
-    ttyLocker ttyl;
-    if (xtty != nullptr)  xtty->head("statistics type='deoptimization'");
-    tty->print_cr("Deoptimization traps recorded:");
-    #define PRINT_STAT_LINE(name, r) \
-      tty->print_cr("  %4d (%4.1f%%) %s", (int)(r), ((r) * 100.0) / total, name);
+#define PRINT_STAT_LINE(name, r) \
+      st->print_cr("    %d (%4.1f%%) %s", (int)(r), ((r) == total ? 100.0 : (((r) * 100.0) / total)), name);
+  if (total > 0) {
+    st->print("  %s: ", title);
     PRINT_STAT_LINE("total", total);
     // For each non-zero entry in the histogram, print the reason,
     // the action, and (if specifically known) the type of bytecode.
     for (int reason = 0; reason < Reason_LIMIT; reason++) {
       for (int action = 0; action < Action_LIMIT; action++) {
-        juint* cases = _deoptimization_hist[reason][1+action];
+        juint* cases = Deoptimization::_deoptimization_hist[lvl][reason][1+action];
         for (int bc_case = 0; bc_case < BC_CASE_LIMIT; bc_case++) {
           juint counter = cases[bc_case];
           if (counter != 0) {
-            char name[1*K];
             Bytecodes::Code bc = (Bytecodes::Code)(counter & LSB_MASK);
-            if (bc_case == BC_CASE_LIMIT && (int)bc == 0)
-              bc = Bytecodes::_illegal;
-            os::snprintf_checked(name, sizeof(name), "%s/%s/%s",
-                    trap_reason_name(reason),
-                    trap_action_name(action),
-                    Bytecodes::is_defined(bc)? Bytecodes::name(bc): "other");
+            const char* bc_name = "other";
+            if (bc_case == (BC_CASE_LIMIT-1) && bc == Bytecodes::_nop) {
+              // overwritten
+            } else if (Bytecodes::is_defined(bc)) {
+              bc_name = Bytecodes::name(bc);
+            }
             juint r = counter >> LSB_BITS;
-            tty->print_cr("  %40s: " UINT32_FORMAT " (%.1f%%)", name, r, (r * 100.0) / total);
+            st->print_cr("    %-34s %16s %16s: " UINT32_FORMAT_W(5) " (%4.1f%%)",
+                         trap_reason_name(reason), trap_action_name(action), bc_name,
+                         r, (r * 100.0) / total);
             account -= r;
           }
         }
@@ -2906,10 +2929,65 @@ void Deoptimization::print_statistics() {
     if (account != 0) {
       PRINT_STAT_LINE("unaccounted", account);
     }
-    #undef PRINT_STAT_LINE
-    if (xtty != nullptr)  xtty->tail("statistics");
+#undef PRINT_STAT_LINE
   }
 }
+
+void Deoptimization::print_statistics_on(outputStream* st) {
+//  print_statistics_on("Total", 0, st);
+  print_statistics_on("Tier1", 1, st);
+  print_statistics_on("Tier2", 2, st);
+  print_statistics_on("Tier3", 3, st);
+  print_statistics_on("Tier4", 4, st);
+
+  print_statistics_on("SC Tier1", 5, st);
+  print_statistics_on("SC Tier2", 6, st);
+  print_statistics_on("SC Tier4", 8, st);
+  print_statistics_on("SC Tier5 (preloaded)", 9, st);
+}
+
+#define DO_COUNTERS(macro) \
+  macro(Deoptimization, fetch_unroll_info)   \
+  macro(Deoptimization, unpack_frames) \
+  macro(Deoptimization, uncommon_trap_inner) \
+  macro(Deoptimization, uncommon_trap)
+
+#define INIT_COUNTER(sub, name) \
+  NEWPERFTICKCOUNTERS(_perf_##sub##_##name##_timer, SUN_RT, #sub "::" #name) \
+  NEWPERFEVENTCOUNTER(_perf_##sub##_##name##_count, SUN_RT, #sub "::" #name "_count");
+
+void Deoptimization::init_counters() {
+  if (ProfileRuntimeCalls && UsePerfData) {
+    EXCEPTION_MARK;
+
+    DO_COUNTERS(INIT_COUNTER)
+
+    if (HAS_PENDING_EXCEPTION) {
+      vm_exit_during_initialization("jvm_perf_init failed unexpectedly");
+    }
+  }
+}
+#undef INIT_COUNTER
+
+#define PRINT_COUNTER(sub, name) { \
+  jlong count = _perf_##sub##_##name##_count->get_value(); \
+  if (count > 0) { \
+    st->print_cr("  %-50s = " JLONG_FORMAT_W(6) "us (elapsed) " JLONG_FORMAT_W(6) "us (thread) (" JLONG_FORMAT_W(5) " events)", #sub "::" #name, \
+                 _perf_##sub##_##name##_timer->elapsed_counter_value_us(), \
+                 _perf_##sub##_##name##_timer->thread_counter_value_us(), \
+                 count); \
+  }}
+
+void Deoptimization::print_counters_on(outputStream* st) {
+  if (ProfileRuntimeCalls && UsePerfData) {
+    DO_COUNTERS(PRINT_COUNTER)
+  } else {
+    st->print_cr("  Deoptimization: no info (%s is disabled)", (UsePerfData ? "ProfileRuntimeCalls" : "UsePerfData"));
+  }
+}
+
+#undef PRINT_COUNTER
+#undef DO_COUNTERS
 
 #else // COMPILER2_OR_JVMCI
 
@@ -2944,7 +3022,7 @@ int Deoptimization::trap_state_has_reason(int trap_state, int reason) {
   return 0;
 }
 
-void Deoptimization::gather_statistics(DeoptReason reason, DeoptAction action,
+void Deoptimization::gather_statistics(nmethod* nm, DeoptReason reason, DeoptAction action,
                                        Bytecodes::Code bc) {
   // no update
 }
@@ -2953,6 +3031,18 @@ const char* Deoptimization::format_trap_state(char* buf, size_t buflen,
                                               int trap_state) {
   jio_snprintf(buf, buflen, "#%d", trap_state);
   return buf;
+}
+
+void Deoptimization::init_counters() {
+  // nothing to do
+}
+
+void Deoptimization::print_counters_on(outputStream* st) {
+  // no output
+}
+
+void Deoptimization::print_statistics_on(outputStream* st) {
+  // no output
 }
 
 #endif // COMPILER2_OR_JVMCI

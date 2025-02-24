@@ -26,26 +26,88 @@
 #include "cds/aotClassLinker.hpp"
 #include "cds/aotLinkedClassBulkLoader.hpp"
 #include "cds/aotLinkedClassTable.hpp"
+#include "cds/archiveBuilder.hpp"
+#include "cds/archiveUtils.inline.hpp"
+#include "cds/cdsAccess.hpp"
 #include "cds/cdsConfig.hpp"
+#include "cds/cdsProtectionDomain.hpp"
 #include "cds/heapShared.hpp"
+#include "cds/lambdaFormInvokers.inline.hpp"
+#include "classfile/classLoaderDataGraph.hpp"
 #include "classfile/classLoaderData.hpp"
+#include "classfile/classLoaderExt.hpp"
+#include "classfile/classLoader.hpp"
+#include "classfile/dictionary.hpp"
+#include "classfile/javaClasses.hpp"
 #include "classfile/systemDictionary.hpp"
 #include "classfile/systemDictionaryShared.hpp"
 #include "classfile/vmClasses.hpp"
+#include "compiler/compilationPolicy.hpp"
 #include "gc/shared/gcVMOperations.hpp"
 #include "memory/resourceArea.hpp"
+#include "oops/constantPool.inline.hpp"
 #include "oops/instanceKlass.hpp"
 #include "oops/klass.inline.hpp"
+#include "oops/trainingData.hpp"
 #include "runtime/handles.inline.hpp"
+#include "runtime/javaCalls.hpp"
 #include "runtime/java.hpp"
+#include "runtime/perfData.inline.hpp"
+#include "runtime/timer.hpp"
+#include "services/management.hpp"
 
 bool AOTLinkedClassBulkLoader::_boot2_completed = false;
 bool AOTLinkedClassBulkLoader::_platform_completed = false;
 bool AOTLinkedClassBulkLoader::_app_completed = false;
 bool AOTLinkedClassBulkLoader::_all_completed = false;
 
+Array<InstanceKlass*>* AOTLinkedClassBulkLoader::_unregistered_classes_from_preimage = nullptr;
+
+static PerfCounter* _perf_classes_preloaded = nullptr;
+static PerfTickCounters* _perf_class_preload_counters = nullptr;
+
+void AOTLinkedClassBulkLoader::record_unregistered_classes() {
+  if (CDSConfig::is_dumping_preimage_static_archive()) {
+    GrowableArray<InstanceKlass*> unreg_classes;
+    GrowableArray<Klass*>* klasses = ArchiveBuilder::current()->klasses();
+    for (int i = 0; i < klasses->length(); i++) {
+      Klass* k = klasses->at(i);
+      if (k->is_instance_klass()) {
+        InstanceKlass* ik = InstanceKlass::cast(k);
+        if (ik->is_shared_unregistered_class()) {
+          unreg_classes.append((InstanceKlass*)ArchiveBuilder::get_buffered_klass(ik));
+        }
+      }
+    }
+    _unregistered_classes_from_preimage = ArchiveUtils::archive_array(&unreg_classes);
+  } else {
+    _unregistered_classes_from_preimage = nullptr;
+  }
+}
+
 void AOTLinkedClassBulkLoader::serialize(SerializeClosure* soc, bool is_static_archive) {
   AOTLinkedClassTable::get(is_static_archive)->serialize(soc);
+
+  if (is_static_archive) {
+    soc->do_ptr((void**)&_unregistered_classes_from_preimage);
+
+    if (soc->reading() && UsePerfData) {
+      JavaThread* THREAD = JavaThread::current();
+      NEWPERFEVENTCOUNTER(_perf_classes_preloaded, SUN_CLS, "preloadedClasses");
+      NEWPERFTICKCOUNTERS(_perf_class_preload_counters, SUN_CLS, "classPreload");
+    }
+  }
+}
+
+bool AOTLinkedClassBulkLoader::class_preloading_finished() {
+  if (!CDSConfig::is_using_aot_linked_classes()) {
+    return true;
+  } else {
+    // The ConstantPools of preloaded classes have references to other preloaded classes. We don't
+    // want any Java code (including JVMCI compiler) to use these classes until all of them
+    // are loaded.
+    return Atomic::load_acquire(&_all_completed);
+  }
 }
 
 void AOTLinkedClassBulkLoader::load_javabase_classes(JavaThread* current) {
@@ -59,7 +121,9 @@ void AOTLinkedClassBulkLoader::load_non_javabase_classes(JavaThread* current) {
   // is_using_aot_linked_classes() requires is_using_full_module_graph(). As a result,
   // the platform/system class loader should already have been initialized as part
   // of the FMG support.
-  assert(CDSConfig::is_using_full_module_graph(), "must be");
+  if (!CDSConfig::is_dumping_final_static_archive()) {
+    assert(CDSConfig::is_using_full_module_graph(), "must be");
+  }
   assert(SystemDictionary::java_platform_loader() != nullptr, "must be");
   assert(SystemDictionary::java_system_loader() != nullptr,   "must be");
 
@@ -70,8 +134,27 @@ void AOTLinkedClassBulkLoader::load_non_javabase_classes(JavaThread* current) {
   _platform_completed = true;
 
   load_classes_in_loader(current, AOTLinkedClassCategory::APP, SystemDictionary::java_system_loader());
+
+  if (PrintTrainingInfo) {
+    tty->print_cr("==================== archived_training_data ** after all classes preloaded ====================");
+    TrainingData::print_archived_training_data_on(tty);
+  }
+
+  if (log_is_enabled(Info, cds, jit)) {
+    CDSAccess::test_heap_access_api();
+  }
+
+  if (CDSConfig::is_dumping_final_static_archive()) {
+    assert(_unregistered_classes_from_preimage != nullptr, "must be");
+    for (int i = 0; i < _unregistered_classes_from_preimage->length(); i++) {
+      InstanceKlass* ik = _unregistered_classes_from_preimage->at(i);
+      SystemDictionaryShared::init_dumptime_info(ik);
+      SystemDictionaryShared::add_unregistered_class(current, ik);
+    }
+  }
+
   _app_completed = true;
-  _all_completed = true;
+  Atomic::release_store(&_all_completed, true);
 }
 
 void AOTLinkedClassBulkLoader::load_classes_in_loader(JavaThread* current, AOTLinkedClassCategory class_category, oop class_loader_oop) {
@@ -178,6 +261,9 @@ void AOTLinkedClassBulkLoader::load_classes_impl(AOTLinkedClassCategory class_ca
   ClassLoaderData* loader_data = ClassLoaderData::class_loader_data(loader());
 
   for (int i = 0; i < classes->length(); i++) {
+    if (UsePerfData) {
+      _perf_classes_preloaded->inc();
+    }
     InstanceKlass* ik = classes->at(i);
     if (log_is_enabled(Info, cds, aot, load)) {
       ResourceMark rm(THREAD);
@@ -337,7 +423,11 @@ void AOTLinkedClassBulkLoader::init_required_classes_for_loader(Handle class_loa
         // Some cached heap objects may hold references to methods in aot-linked
         // classes (via MemberName). We need to make sure all classes are
         // linked to allow such MemberNames to be invoked.
-        ik->link_class(CHECK);
+        if (ik->is_rewritten()) {
+          // (ik->is_rewritten() == false) means the class failed verification
+          // during the assembly phase, so there's no need to link it here.
+          ik->link_class(CHECK);
+        }
       }
     }
   }
@@ -392,5 +482,38 @@ bool AOTLinkedClassBulkLoader::is_pending_aot_linked_class(Klass* k) {
     return !_app_completed;
   } else {
     return false;
+  }
+}
+
+void AOTLinkedClassBulkLoader::replay_training_at_init(Array<InstanceKlass*>* classes, TRAPS) {
+  if (classes != nullptr) {
+    for (int i = 0; i < classes->length(); i++) {
+      InstanceKlass* ik = classes->at(i);
+      if (ik->has_aot_initialized_mirror() && ik->is_initialized() && !ik->has_init_deps_processed()) {
+        CompilationPolicy::replay_training_at_init(ik, CHECK);
+      }
+    }
+  }
+}
+
+void AOTLinkedClassBulkLoader::replay_training_at_init_for_preloaded_classes(TRAPS) {
+  if (CDSConfig::is_using_aot_linked_classes() && TrainingData::have_data()) {
+    AOTLinkedClassTable* table = AOTLinkedClassTable::for_static_archive(); // not applicable for dynamic archive (?? why??)
+    replay_training_at_init(table->boot(),     CHECK);
+    replay_training_at_init(table->boot2(),    CHECK);
+    replay_training_at_init(table->platform(), CHECK);
+    replay_training_at_init(table->app(),      CHECK);
+
+    CompilationPolicy::replay_training_at_init(false, CHECK);
+  }
+}
+
+void AOTLinkedClassBulkLoader::print_counters_on(outputStream* st) {
+  if (UsePerfData && _perf_class_preload_counters != nullptr) {
+    st->print_cr("AOTLinkedClassBulkLoader:");
+    st->print_cr("  preload:           " JLONG_FORMAT_W(6) "us (elapsed) " JLONG_FORMAT_W(6) " (thread) / " JLONG_FORMAT_W(5) " events",
+                 _perf_class_preload_counters->elapsed_counter_value_us(),
+                 _perf_class_preload_counters->thread_counter_value_us(),
+                 _perf_classes_preloaded->get_value());
   }
 }

@@ -809,9 +809,9 @@ void TemplateInterpreterGenerator::bang_stack_shadow_pages(bool native_call) {
 // Interpreter stub for calling a native method. (asm interpreter)
 // This sets up a somewhat different looking stack for calling the
 // native method than the typical interpreter frame setup.
-address TemplateInterpreterGenerator::generate_native_entry(bool synchronized) {
+address TemplateInterpreterGenerator::generate_native_entry(bool synchronized, bool runtime_upcalls) {
   // determine code generation flags
-  bool inc_counter  = UseCompiler || CountCompiledCalls;
+  bool inc_counter = (UseCompiler || CountCompiledCalls) && !PreloadOnly;
 
   // rbx: Method*
   // rbcp: sender sp
@@ -934,6 +934,11 @@ address TemplateInterpreterGenerator::generate_native_entry(bool synchronized) {
 
   // jvmti support
   __ notify_method_entry();
+
+  // runtime upcalls
+  if (runtime_upcalls) {
+    __ generate_runtime_upcalls_on_method_entry();
+  }
 
   // work registers
   const Register method = rbx;
@@ -1373,9 +1378,9 @@ address TemplateInterpreterGenerator::generate_abstract_entry(void) {
 //
 // Generic interpreted method entry to (asm) interpreter
 //
-address TemplateInterpreterGenerator::generate_normal_entry(bool synchronized) {
+address TemplateInterpreterGenerator::generate_normal_entry(bool synchronized, bool runtime_upcalls) {
   // determine code generation flags
-  bool inc_counter  = UseCompiler || CountCompiledCalls;
+  bool inc_counter = (UseCompiler || CountCompiledCalls) && !PreloadOnly;
 
   // ebx: Method*
   // rbcp: sender sp (set in InterpreterMacroAssembler::prepare_to_jump_from_interpreted / generate_call_stub)
@@ -1514,6 +1519,10 @@ address TemplateInterpreterGenerator::generate_normal_entry(bool synchronized) {
 
   // jvmti support
   __ notify_method_entry();
+
+  if (runtime_upcalls) {
+    __ generate_runtime_upcalls_on_method_entry();
+  }
 
   __ dispatch_next(vtos);
 
@@ -1831,6 +1840,18 @@ void TemplateInterpreterGenerator::set_vtos_entry_points(Template* t,
 
 //-----------------------------------------------------------------------------
 
+void TemplateInterpreterGenerator::count_bytecode() {
+#ifdef _LP64
+  __ incrementq(ExternalAddress((address) &BytecodeCounter::_counter_value), rscratch1);
+#else
+  Unimplemented();
+#endif
+}
+
+void TemplateInterpreterGenerator::histogram_bytecode(Template* t) {
+  __ incrementl(ExternalAddress((address) &BytecodeHistogram::_counters[t->bytecode()]), rscratch1);
+}
+
 // Non-product code
 #ifndef PRODUCT
 
@@ -1871,14 +1892,6 @@ address TemplateInterpreterGenerator::generate_trace_code(TosState state) {
 #endif // _LP64
 
   return entry;
-}
-
-void TemplateInterpreterGenerator::count_bytecode() {
-  __ incrementl(ExternalAddress((address) &BytecodeCounter::_counter_value), rscratch1);
-}
-
-void TemplateInterpreterGenerator::histogram_bytecode(Template* t) {
-  __ incrementl(ExternalAddress((address) &BytecodeHistogram::_counters[t->bytecode()]), rscratch1);
 }
 
 void TemplateInterpreterGenerator::histogram_bytecode_pair(Template* t) {

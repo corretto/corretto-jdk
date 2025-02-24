@@ -634,6 +634,7 @@ Compile::Compile(ciEnv* ci_env, ciMethod* target, int osr_bci,
 #endif
       _has_method_handle_invokes(false),
       _clinit_barrier_on_entry(false),
+      _has_clinit_barriers(false),
       _stress_seed(0),
       _comp_arena(mtCompiler),
       _barrier_set_state(BarrierSet::barrier_set()->barrier_set_c2()->create_barrier_state(comp_arena())),
@@ -911,6 +912,7 @@ Compile::Compile(ciEnv* ci_env,
 #endif
       _has_method_handle_invokes(false),
       _clinit_barrier_on_entry(false),
+      _has_clinit_barriers(false),
       _stress_seed(0),
       _comp_arena(mtCompiler),
       _barrier_set_state(BarrierSet::barrier_set()->barrier_set_c2()->create_barrier_state(comp_arena())),
@@ -1070,8 +1072,12 @@ void Compile::Init(bool aliasing) {
 
   _max_node_limit = _directive->MaxNodeLimitOption;
 
-  if (VM_Version::supports_fast_class_init_checks() && has_method() && !is_osr_compilation() && method()->needs_clinit_barrier()) {
+  if (VM_Version::supports_fast_class_init_checks() && has_method() && !is_osr_compilation() &&
+      (method()->needs_clinit_barrier() || (do_clinit_barriers() && method()->is_static()))) {
     set_clinit_barrier_on_entry(true);
+    if (do_clinit_barriers()) {
+      set_has_clinit_barriers(true); // Entry clinit barrier is in prolog code.
+    }
   }
   if (debug_info()->recording_non_safepoints()) {
     set_node_note_array(new(comp_arena()) GrowableArray<Node_Notes*>
@@ -4041,6 +4047,9 @@ bool Compile::final_graph_reshaping() {
 bool Compile::too_many_traps(ciMethod* method,
                              int bci,
                              Deoptimization::DeoptReason reason) {
+  if (method->has_trap_at(bci)) {
+    return true;
+  }
   ciMethodData* md = method->method_data();
   if (md->is_empty()) {
     // Assume the trap has not occurred, or that it occurred only
@@ -4155,10 +4164,10 @@ bool Compile::needs_clinit_barrier(ciField* field, ciMethod* accessing_method) {
 }
 
 bool Compile::needs_clinit_barrier(ciInstanceKlass* holder, ciMethod* accessing_method) {
-  if (holder->is_initialized()) {
+  if (holder->is_initialized() && !do_clinit_barriers()) {
     return false;
   }
-  if (holder->is_being_initialized()) {
+  if (holder->is_being_initialized() || do_clinit_barriers()) {
     if (accessing_method->holder() == holder) {
       // Access inside a class. The barrier can be elided when access happens in <clinit>,
       // <init>, or a static method. In all those cases, there was an initialization
@@ -4432,7 +4441,7 @@ void Compile::dump_print_inlining() {
 
 void Compile::log_late_inline(CallGenerator* cg) {
   if (log() != nullptr) {
-    log()->head("late_inline method='%d'  inline_id='" JLONG_FORMAT "'", log()->identify(cg->method()),
+    log()->head("late_inline method='%d' inline_id='" JLONG_FORMAT "'", log()->identify(cg->method()),
                 cg->unique_id());
     JVMState* p = cg->call_node()->jvms();
     while (p != nullptr) {

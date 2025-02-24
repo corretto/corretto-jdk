@@ -25,6 +25,7 @@
 #ifndef SHARE_CDS_CLASSLISTPARSER_HPP
 #define SHARE_CDS_CLASSLISTPARSER_HPP
 
+#include "interpreter/bytecodes.hpp"
 #include "utilities/exceptions.hpp"
 #include "utilities/globalDefinitions.hpp"
 #include "utilities/growableArray.hpp"
@@ -66,10 +67,16 @@ public:
 
 class ClassListParser : public StackObj {
   static const char* CONSTANT_POOL_TAG;
+  static const char* DYNAMIC_PROXY_TAG;
   static const char* LAMBDA_FORM_TAG;
   static const char* LAMBDA_PROXY_TAG;
 
 public:
+  static const char* ARRAY_TAG;
+
+  static const char* CLASS_REFLECTION_DATA_TAG;
+  static const char* LOADER_NEGATIVE_CACHE_TAG;
+
   enum ParseMode {
     _parse_all,
     _parse_lambda_forms_invokers_only,
@@ -128,6 +135,10 @@ private:
   void parse_class_name_and_attributes(TRAPS);
   Klass* load_current_class(Symbol* class_name_symbol, TRAPS);
   void parse_constant_pool_tag();
+  void parse_class_reflection_data_tag();
+  void parse_dynamic_proxy_tag();
+  void parse_loader_negative_cache_tag();
+  void parse_array_dimension_tag();
 
   size_t lineno() { return _input_stream.lineno(); }
   FILE* do_open(const char* file);
@@ -137,6 +148,7 @@ private:
   void print_diagnostic_info(outputStream* st, const char* msg, ...) ATTRIBUTE_PRINTF(3, 0);
   void constant_pool_resolution_warning(const char* msg, ...) ATTRIBUTE_PRINTF(2, 0);
   void error(const char* msg, ...) ATTRIBUTE_PRINTF(2, 0);
+  oop loader_from_type(const char* loader_name);
   objArrayOop get_specified_interfaces(TRAPS);
 
 public:

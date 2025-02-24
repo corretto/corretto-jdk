@@ -987,9 +987,9 @@ void TemplateInterpreterGenerator::bang_stack_shadow_pages(bool native_call) {
 // Interpreter stub for calling a native method. (asm interpreter)
 // This sets up a somewhat different looking stack for calling the
 // native method than the typical interpreter frame setup.
-address TemplateInterpreterGenerator::generate_native_entry(bool synchronized) {
+address TemplateInterpreterGenerator::generate_native_entry(bool synchronized, bool runtime_upcalls) {
   // determine code generation flags
-  bool inc_counter = UseCompiler || CountCompiledCalls;
+  bool inc_counter = (UseCompiler || CountCompiledCalls) && !PreloadOnly;
 
   // x11: Method*
   // x30: sender sp
@@ -1410,10 +1410,10 @@ address TemplateInterpreterGenerator::generate_native_entry(bool synchronized) {
 //
 // Generic interpreted method entry to (asm) interpreter
 //
-address TemplateInterpreterGenerator::generate_normal_entry(bool synchronized) {
+address TemplateInterpreterGenerator::generate_normal_entry(bool synchronized, bool runtime_upcalls) {
 
   // determine code generation flags
-  const bool inc_counter  = UseCompiler || CountCompiledCalls;
+  const bool inc_counter = (UseCompiler || CountCompiledCalls) && !PreloadOnly;
 
   // t0: sender sp
   address entry_point = __ pc();
@@ -1826,6 +1826,16 @@ void TemplateInterpreterGenerator::set_vtos_entry_points(Template* t,
 
 //-----------------------------------------------------------------------------
 
+void TemplateInterpreterGenerator::count_bytecode() {
+  __ mv(x7, (address) &BytecodeCounter::_counter_value);
+  __ atomic_addw(noreg, 1, x7);
+}
+
+void TemplateInterpreterGenerator::histogram_bytecode(Template* t) {
+  __ mv(x7, (address) &BytecodeHistogram::_counters[t->bytecode()]);
+  __ atomic_addw(noreg, 1, x7);
+}
+
 // Non-product code
 #ifndef PRODUCT
 address TemplateInterpreterGenerator::generate_trace_code(TosState state) {
@@ -1842,16 +1852,6 @@ address TemplateInterpreterGenerator::generate_trace_code(TosState state) {
   __ ret();                                   // return from result handler
 
   return entry;
-}
-
-void TemplateInterpreterGenerator::count_bytecode() {
-  __ mv(x7, (address) &BytecodeCounter::_counter_value);
-  __ atomic_addw(noreg, 1, x7);
-}
-
-void TemplateInterpreterGenerator::histogram_bytecode(Template* t) {
-  __ mv(x7, (address) &BytecodeHistogram::_counters[t->bytecode()]);
-  __ atomic_addw(noreg, 1, x7);
 }
 
 void TemplateInterpreterGenerator::histogram_bytecode_pair(Template* t) {

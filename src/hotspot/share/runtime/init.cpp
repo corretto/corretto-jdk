@@ -22,8 +22,11 @@
  *
  */
 
+#include "cds/metaspaceShared.hpp"
 #include "classfile/stringTable.hpp"
 #include "classfile/symbolTable.hpp"
+#include "classfile/systemDictionary.hpp"
+#include "code/SCCache.hpp"
 #include "compiler/compiler_globals.hpp"
 #include "gc/shared/collectedHeap.hpp"
 #include "gc/shared/gcHeapSummary.hpp"
@@ -31,6 +34,7 @@
 #include "logging/logAsyncWriter.hpp"
 #include "memory/universe.hpp"
 #include "nmt/memTracker.hpp"
+#include "oops/trainingData.hpp"
 #include "prims/downcallLinker.hpp"
 #include "prims/jvmtiExport.hpp"
 #include "prims/methodHandles.hpp"
@@ -45,6 +49,7 @@
 #include "runtime/sharedRuntime.hpp"
 #include "sanitizers/leak.hpp"
 #include "utilities/macros.hpp"
+#include "utilities/xmlstream.hpp"
 #if INCLUDE_JVMCI
 #include "jvmci/jvmci.hpp"
 #endif
@@ -87,6 +92,14 @@ bool compileBroker_init();
 void dependencyContext_init();
 void dependencies_init();
 
+// initialize upcalls before class loading
+bool runtimeUpcalls_open_registration();
+bool runtimeUpcallNop_register_upcalls();
+#if INCLUDE_CDS
+bool cdsEndTrainingUpcall_register_upcalls();
+#endif // INCLUDE_CDS
+void runtimeUpcalls_close_registration();
+
 // Initialization after compiler initialization
 bool universe_post_init();  // must happen after compiler_init
 void javaClasses_init();    // must happen after vtable initialization
@@ -98,6 +111,8 @@ void final_stubs_init();    // final StubRoutines stubs
 // during VM shutdown
 void perfMemory_exit();
 void ostream_exit();
+
+void perf_jvm_init();
 
 void vm_init_globals() {
   check_ThreadShadow();
@@ -112,6 +127,9 @@ void vm_init_globals() {
 
 
 jint init_globals() {
+  perf_jvm_init();
+  MethodHandles::init_counters();
+
   management_init();
   JvmtiExport::initialize_oop_storage();
 #if INCLUDE_JVMTI
@@ -123,6 +141,7 @@ jint init_globals() {
   bytecodes_init();
   classLoader_init1();
   compilationPolicy_init();
+  MetaspaceShared::open_static_archive();
   codeCache_init();
   VM_Version_init();              // depends on codeCache_init for emitting code
   // stub routines in initial blob are referenced by later generated code
@@ -133,7 +152,6 @@ jint init_globals() {
                                   // initial_stubs_init and metaspace_init.
   if (status != JNI_OK)
     return status;
-
 #ifdef LEAK_SANITIZER
   {
     // Register the Java heap with LSan.
@@ -141,7 +159,7 @@ jint init_globals() {
     LSAN_REGISTER_ROOT_REGION(summary.start(), summary.reserved_size());
   }
 #endif // LEAK_SANITIZER
-
+  SCCache::init2();        // depends on universe_init
   AsyncLogWriter::initialize();
   gc_barrier_stubs_init();   // depends on universe_init, must be before interpreter_init
   continuations_init();      // must precede continuation stub generation
@@ -154,11 +172,26 @@ jint init_globals() {
   InterfaceSupport_init();
   VMRegImpl::set_regName();  // need this before generate_stubs (for printing oop maps).
   SharedRuntime::generate_stubs();
+  SCCache::init_shared_blobs_table();  // need this after generate_stubs
+  SharedRuntime::init_adapter_library(); // do this after SCCache::init_shared_blobs_table
   return JNI_OK;
 }
 
 jint init_globals2() {
   universe2_init();          // dependent on codeCache_init and initial_stubs_init
+
+  // initialize upcalls before class loading / initialization
+  runtimeUpcalls_open_registration();
+  if (!runtimeUpcallNop_register_upcalls()) {
+    return JNI_EINVAL;
+  }
+#if INCLUDE_CDS
+  if (!cdsEndTrainingUpcall_register_upcalls()) {
+    return JNI_EINVAL;
+  }
+#endif // INCLUDE_CDS
+  runtimeUpcalls_close_registration();
+
   javaClasses_init();        // must happen after vtable initialization, before referenceProcessor_init
   interpreter_init_code();   // after javaClasses_init and before any method gets linked
   referenceProcessor_init();
@@ -183,17 +216,24 @@ jint init_globals2() {
   }
 #endif
 
+  if (TrainingData::have_data() || TrainingData::need_data()) {
+    TrainingData::initialize();
+  }
+
   if (!universe_post_init()) {
     return JNI_ERR;
   }
   compiler_stubs_init(false /* in_compiler_thread */); // compiler's intrinsics stubs
   final_stubs_init();    // final StubRoutines stubs
+  SCCache::init_stubs_table();
   MethodHandles::generate_adapters();
 
   // All the flags that get adjusted by VM_Version_init and os::init_2
   // have been set so dump the flags now.
   if (PrintFlagsFinal || PrintFlagsRanges) {
     JVMFlag::printFlags(tty, false, PrintFlagsRanges);
+  } else if (RecordTraining && xtty != nullptr) {
+    JVMFlag::printFlags(xtty->log_only(), false, PrintFlagsRanges);
   }
 
   return JNI_OK;

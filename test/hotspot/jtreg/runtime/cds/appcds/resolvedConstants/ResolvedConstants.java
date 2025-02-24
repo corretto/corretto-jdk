@@ -87,13 +87,14 @@ public class ResolvedConstants {
             // Always resolve reference when a class references a super interface
             .shouldMatch(ALWAYS("klass.* ResolvedConstantsApp app => java/lang/Runnable boot"))
 
+/** premain allows static method pre-resolution
             // Without -XX:+AOTClassLinking:
             //   java/lang/System is in the boot loader but ResolvedConstantsApp is loaded by the app loader.
             //   Even though System is in the vmClasses list, when ResolvedConstantsApp looks up
             //   "java/lang/System" in its ConstantPool, the app loader may not have resolved the System
             //   class yet (i.e., there's no initiaited class entry for System in the app loader's dictionary)
             .shouldMatch(AOTLINK_ONLY("klass.* ResolvedConstantsApp .*java/lang/System"))
-
+**/
           // Field References ---
 
             // Always resolve references to fields in the current class or super class(es)
@@ -124,9 +125,10 @@ public class ResolvedConstants {
             .shouldMatch(ALWAYS("method.*: ResolvedConstantsBar ResolvedConstantsBar.doBar:"))
             .shouldMatch(ALWAYS("method.*: ResolvedConstantsApp ResolvedConstantsApp.privateInstanceCall:"))
             .shouldMatch(ALWAYS("method.*: ResolvedConstantsApp ResolvedConstantsApp.publicInstanceCall:"))
-
+/** premain allows static method pre-resolution
             // Should not resolve references to static method
             .shouldNotMatch(ALWAYS("method.*: ResolvedConstantsApp ResolvedConstantsApp.staticCall:"))
+**/
 
             // Should resolve references to method in super type
             .shouldMatch(ALWAYS("method.*: ResolvedConstantsBar ResolvedConstantsFoo.doBar:"))
@@ -148,6 +150,7 @@ public class ResolvedConstants {
 
         // Indy References ---
         if (aotClassLinking) {
+/** premain allows Old classes to be linked
             out.shouldContain("Cannot aot-resolve Lambda proxy because OldConsumer is excluded")
                .shouldContain("Cannot aot-resolve Lambda proxy because OldProvider is excluded")
                .shouldContain("Cannot aot-resolve Lambda proxy because OldClass is excluded")
@@ -156,6 +159,7 @@ public class ResolvedConstants {
                .shouldNotMatch("klasses.* app *SubOfOldClass[$][$]Lambda/")
                .shouldMatch("archived indy *CP entry.*StringConcatTest .* => java/lang/invoke/StringConcatFactory.makeConcatWithConstants")
                .shouldNotMatch("archived indy *CP entry.*StringConcatTestOld .* => java/lang/invoke/StringConcatFactory.makeConcatWithConstants");
+**/
         }
     }
 

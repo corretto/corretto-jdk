@@ -1061,6 +1061,12 @@ void StringTable::set_shared_strings_array_index(int root_index) {
 }
 
 void StringTable::serialize_shared_table_header(SerializeClosure* soc) {
+  if (soc->writing() && !CDSConfig::is_dumping_heap()) {
+    _shared_table.reset();
+    _is_two_dimensional_shared_strings_array = false;
+    _shared_strings_array_root_index = -1;
+  }
+
   _shared_table.serialize_header(soc);
 
   if (soc->writing()) {

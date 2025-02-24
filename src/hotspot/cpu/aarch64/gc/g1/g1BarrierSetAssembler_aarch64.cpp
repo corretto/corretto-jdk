@@ -23,6 +23,9 @@
  */
 
 #include "asm/macroAssembler.inline.hpp"
+#if INCLUDE_CDS
+#include "code/SCCache.hpp"
+#endif
 #include "gc/g1/g1BarrierSet.hpp"
 #include "gc/g1/g1BarrierSetAssembler.hpp"
 #include "gc/g1/g1BarrierSetRuntime.hpp"
@@ -207,15 +210,46 @@ static void generate_post_barrier_fast_path(MacroAssembler* masm,
                                             Label& done,
                                             bool new_val_may_be_null) {
   // Does store cross heap regions?
-  __ eor(tmp1, store_addr, new_val);                     // tmp1 := store address ^ new value
-  __ lsr(tmp1, tmp1, G1HeapRegion::LogOfHRGrainBytes);   // tmp1 := ((store address ^ new value) >> LogOfHRGrainBytes)
-  __ cbz(tmp1, done);
+#if INCLUDE_CDS
+  // AOT code needs to load the barrier grain shift from the aot
+  // runtime constants area in the code cache otherwise we can compile
+  // it as an immediate operand
+  if (SCCache::is_on_for_write()) {
+    address grain_shift_address = (address)AOTRuntimeConstants::grain_shift_address();
+    __ eor(tmp1, store_addr, new_val);
+    __ lea(tmp2, ExternalAddress(grain_shift_address));
+    __ ldrb(tmp2, tmp2);
+    __ lsrv(tmp1, tmp1, tmp2);
+    __ cbz(tmp1, done);
+  } else
+#endif
+  {
+    __ eor(tmp1, store_addr, new_val);                     // tmp1 := store address ^ new value
+    __ lsr(tmp1, tmp1, G1HeapRegion::LogOfHRGrainBytes);   // tmp1 := ((store address ^ new value) >> LogOfHRGrainBytes)
+    __ cbz(tmp1, done);
+  }
+
   // Crosses regions, storing null?
   if (new_val_may_be_null) {
     __ cbz(new_val, done);
   }
   // Storing region crossing non-null, is card young?
-  __ lsr(tmp1, store_addr, CardTable::card_shift());     // tmp1 := card address relative to card table base
+
+#if INCLUDE_CDS
+  // AOT code needs to load the barrier card shift from the aot
+  // runtime constants area in the code cache otherwise we can compile
+  // it as an immediate operand
+  if (SCCache::is_on_for_write()) {
+    address card_shift_address = (address)AOTRuntimeConstants::card_shift_address();
+    __ lea(tmp2, ExternalAddress(card_shift_address));
+    __ ldrb(tmp2, tmp2);
+    __ lsrv(tmp1, store_addr, tmp2);                        // tmp1 := card address relative to card table base
+  } else
+#endif
+  {
+    __ lsr(tmp1, store_addr, CardTable::card_shift());     // tmp1 := card address relative to card table base
+  }
+
   __ load_byte_map_base(tmp2);                           // tmp2 := card table base address
   __ add(tmp1, tmp1, tmp2);                              // tmp1 := card address
   __ ldrb(tmp2, Address(tmp1));                          // tmp2 := card
@@ -281,7 +315,7 @@ static void generate_c2_barrier_runtime_call(MacroAssembler* masm, G1BarrierStub
     __ mov(c_rarg0, arg);
   }
   __ mov(c_rarg1, rthread);
-  __ mov(rscratch1, runtime_path);
+  __ lea(rscratch1, RuntimeAddress(runtime_path));
   __ blr(rscratch1);
 }
 

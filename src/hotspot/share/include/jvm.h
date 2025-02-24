@@ -87,6 +87,12 @@ JVM_InternString(JNIEnv *env, jstring str);
 /*
  * java.lang.System
  */
+JNIEXPORT jboolean JNICALL
+JVM_AOTIsTraining(JNIEnv *env);
+
+JNIEXPORT void JNICALL
+JVM_AOTEndTraining(JNIEnv *env);
+
 JNIEXPORT jlong JNICALL
 JVM_CurrentTimeMillis(JNIEnv *env, jclass ignored);
 
@@ -211,6 +217,9 @@ JVM_GetRandomSeedForDumping();
 
 JNIEXPORT void JNICALL
 JVM_LogLambdaFormInvoker(JNIEnv* env, jstring line);
+
+JNIEXPORT void JNICALL
+JVM_LogDynamicProxy(JNIEnv *env, jobject loader, jstring proxy_name, jobjectArray interfaces, jint accessFlags);
 
 JNIEXPORT void JNICALL
 JVM_DumpClassListToFile(JNIEnv* env, jstring fileName);

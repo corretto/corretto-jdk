@@ -26,6 +26,7 @@
 #include "gc/shared/cardTableBarrierSet.hpp"
 #include "gc/shared/cardTable.hpp"
 #include "gc/shared/collectedHeap.hpp"
+#include "memory/universe.hpp"
 
 // ciUtilities
 //
@@ -46,4 +47,14 @@ CardTable::CardValue* ci_card_table_address() {
   CardTableBarrierSet* ctbs = barrier_set_cast<CardTableBarrierSet>(bs);
   CardTable* ct = ctbs->card_table();
   return ct->byte_map_base();
+}
+
+bool is_card_table_address(address adr) {
+  if (Universe::is_fully_initialized()) {
+    BarrierSet* bs = BarrierSet::barrier_set(); 
+    if (bs->is_a(BarrierSet::CardTableBarrierSet)) {
+      return adr == ci_card_table_address_as<address>();
+    }
+  }
+  return false;
 }

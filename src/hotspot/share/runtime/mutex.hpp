@@ -99,6 +99,7 @@ class Mutex : public CHeapObj<mtSynchronizer> {
  protected:                              // Monitor-Mutex metadata
   PlatformMonitor _lock;                 // Native monitor implementation
   const char* _name;                     // Name of mutex/monitor
+  int _id;                               // ID for named mutexes
 
   // Debugging fields for naming, deadlock detection, etc. (some only used in debug mode)
 #ifndef PRODUCT
@@ -198,6 +199,9 @@ class Mutex : public CHeapObj<mtSynchronizer> {
 
   const char *name() const                  { return _name; }
 
+  int      id() const { return _id; }
+//  void set_id(int id) { _id = id; }
+
   static void  add_mutex(Mutex* var);
 
   void print_on_error(outputStream* st) const;
@@ -210,6 +214,8 @@ class Mutex : public CHeapObj<mtSynchronizer> {
   // by fatal error handler.
   static void print_owned_locks_on_error(outputStream* st);
   static void print_lock_ranks(outputStream* st);
+
+  static int num_mutex() { return _num_mutex; }
 };
 
 class Monitor : public Mutex {

@@ -25,6 +25,7 @@
 #include "cds/cds_globals.hpp"
 #include "cds/cdsConfig.hpp"
 #include "cds/filemap.hpp"
+#include "cds/heapShared.hpp"
 #include "classfile/classLoader.hpp"
 #include "classfile/javaAssertions.hpp"
 #include "classfile/moduleEntry.hpp"
@@ -1772,7 +1773,7 @@ static bool patch_mod_javabase = false;
 // Check the consistency of vm_init_args
 bool Arguments::check_vm_args_consistency() {
   // This may modify compiler flags. Must be called before CompilerConfig::check_args_consistency()
-  if (!CDSConfig::check_vm_args_consistency(patch_mod_javabase, mode_flag_cmd_line)) {
+  if (!CDSConfig::check_vm_args_consistency(patch_mod_javabase, mode_flag_cmd_line, xshare_auto_cmd_line)) {
     return false;
   }
 
@@ -2952,6 +2953,9 @@ jint Arguments::finalize_vm_init_args() {
     return JNI_ERR;
   }
 
+  if (StoreCachedCode) {
+    FLAG_SET_ERGO_IF_DEFAULT(CachedCodeMaxSize, 512*M);
+  }
 
 #ifndef CAN_SHOW_REGISTERS_ON_ASSERT
   UNSUPPORTED_OPTION(ShowRegistersOnAssert);
@@ -3728,6 +3732,7 @@ jint Arguments::apply_ergo() {
     warning("UseSecondarySupersTable is not supported");
     FLAG_SET_DEFAULT(UseSecondarySupersTable, false);
   }
+  UseSecondarySupersTable = false; // FIXME: Disabled for Leyden. Neet to fix SCAddressTable::id_for_address()
   if (!UseSecondarySupersTable) {
     FLAG_SET_DEFAULT(StressSecondarySupers, false);
     FLAG_SET_DEFAULT(VerifySecondarySupers, false);
@@ -3789,10 +3794,36 @@ jint Arguments::apply_ergo() {
   }
 #endif // COMPILER2_OR_JVMCI
 
-  if (log_is_enabled(Info, perf, class, link)) {
-    if (!UsePerfData) {
-      warning("Disabling -Xlog:perf+class+link since UsePerfData is turned off.");
+  if (log_is_enabled(Info, init)) {
+    if (FLAG_IS_DEFAULT(ProfileVMLocks)) {
+      FLAG_SET_DEFAULT(ProfileVMLocks, true);
+    }
+    if (UsePerfData && !log_is_enabled(Info, perf, class, link)) {
+      // automatically enable -Xlog:perf+class+link
+      LogConfiguration::configure_stdout(LogLevel::Info, true, LOG_TAGS(perf, class, link));
+    }
+    // Don't turn on ProfileVMCalls and ProfileRuntimeCalls by default.
+  } else {
+    if (!FLAG_IS_DEFAULT(ProfileVMLocks) && ProfileVMLocks) {
+      warning("Disabling ProfileVMLocks since logging is turned off.");
+      FLAG_SET_DEFAULT(ProfileVMLocks, false);
+    }
+    if (!FLAG_IS_DEFAULT(ProfileVMCalls) && ProfileVMCalls) {
+      warning("Disabling ProfileVMCalls since logging is turned off.");
+      FLAG_SET_DEFAULT(ProfileVMCalls, false);
+    }
+    if (!FLAG_IS_DEFAULT(ProfileRuntimeCalls) && ProfileRuntimeCalls) {
+      warning("Disabling ProfileRuntimeCalls since logging is turned off.");
+      FLAG_SET_DEFAULT(ProfileRuntimeCalls, false);
+    }
+    if (log_is_enabled(Info, perf, class, link)) {
+      warning("Disabling -Xlog:perf+class+link since logging is turned off.");
       LogConfiguration::configure_stdout(LogLevel::Off, false, LOG_TAGS(perf, class, link));
+    }
+  }
+  if (FLAG_IS_DEFAULT(PerfDataMemorySize)) {
+    if (ProfileVMLocks || ProfileVMCalls || ProfileRuntimeCalls) {
+      FLAG_SET_DEFAULT(PerfDataMemorySize, 128*K); // reserve more space for extra perf counters
     }
   }
 

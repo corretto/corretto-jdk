@@ -314,8 +314,13 @@ class MetaspaceObj {
   f(ConstantPoolCache) \
   f(Annotations) \
   f(MethodCounters) \
+  f(RecordComponent) \
+  f(KlassTrainingData) \
+  f(MethodTrainingData) \
+  f(CompileTrainingData) \
   f(SharedClassPathEntry) \
-  f(RecordComponent)
+  f(AdapterHandlerEntry) \
+  f(AdapterFingerPrint)
 
 #define METASPACE_OBJ_TYPE_DECLARE(name) name ## Type,
 #define METASPACE_OBJ_TYPE_NAME_CASE(name) case name ## Type: return #name;
@@ -333,6 +338,12 @@ class MetaspaceObj {
       ShouldNotReachHere();
       return nullptr;
     }
+  }
+
+  static bool is_training_data(Type type) {
+    return (type == Type::KlassTrainingDataType)  ||
+           (type == Type::MethodTrainingDataType) ||
+           (type == Type::CompileTrainingDataType);
   }
 
   static MetaspaceObj::Type array_type(size_t elem_size) {
@@ -353,6 +364,8 @@ class MetaspaceObj {
   void* operator new(size_t size, ClassLoaderData* loader_data,
                      size_t word_size,
                      Type type) throw();
+  // HACK -- this is used for allocating training data. See JDK-8331086
+  void* operator new(size_t size, MemTag flags) throw();
   void operator delete(void* p) = delete;
 
   // Declare a *static* method with the same signature in any subclass of MetaspaceObj

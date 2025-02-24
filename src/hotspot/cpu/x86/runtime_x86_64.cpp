@@ -25,6 +25,7 @@
 #ifdef COMPILER2
 #include "asm/macroAssembler.hpp"
 #include "asm/macroAssembler.inline.hpp"
+#include "code/SCCache.hpp"
 #include "code/vmreg.hpp"
 #include "interpreter/interpreter.hpp"
 #include "opto/runtime.hpp"
@@ -265,9 +266,17 @@ void OptoRuntime::generate_exception_blob() {
   ResourceMark rm;
   // Setup code generation tools
   CodeBuffer buffer("exception_blob", 2048, 1024);
+  int pc_offset = 0;
+  if (SCCache::load_exception_blob(&buffer, &pc_offset)) {
+    OopMapSet* oop_maps = new OopMapSet();
+    oop_maps->add_gc_map(pc_offset, new OopMap(SimpleRuntimeFrame::framesize, 0));
+
+    // Set exception blob
+    _exception_blob =  ExceptionBlob::create(&buffer, oop_maps, SimpleRuntimeFrame::framesize >> 1);
+    return;
+  }
+
   MacroAssembler* masm = new MacroAssembler(&buffer);
-
-
   address start = __ pc();
 
   // Exception pc is 'return address' for stack walker
@@ -313,7 +322,8 @@ void OptoRuntime::generate_exception_blob() {
 
   OopMapSet* oop_maps = new OopMapSet();
 
-  oop_maps->add_gc_map(the_pc - start, new OopMap(SimpleRuntimeFrame::framesize, 0));
+  pc_offset = the_pc - start;
+  oop_maps->add_gc_map(pc_offset, new OopMap(SimpleRuntimeFrame::framesize, 0));
 
   __ reset_last_Java_frame(false);
 
@@ -354,6 +364,7 @@ void OptoRuntime::generate_exception_blob() {
   // Make sure all code is generated
   masm->flush();
 
+  SCCache::store_exception_blob(&buffer, pc_offset);
   // Set exception blob
   _exception_blob =  ExceptionBlob::create(&buffer, oop_maps, SimpleRuntimeFrame::framesize >> 1);
 }

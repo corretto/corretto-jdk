@@ -24,11 +24,12 @@
 
 #include "cds/aotConstantPoolResolver.hpp"
 #include "cds/archiveUtils.hpp"
+#include "cds/cdsConfig.hpp"
 #include "cds/classListParser.hpp"
 #include "cds/lambdaFormInvokers.hpp"
 #include "cds/metaspaceShared.hpp"
 #include "cds/unregisteredClasses.hpp"
-#include "classfile/classLoaderExt.hpp"
+#include "classfile/classLoader.hpp"
 #include "classfile/javaClasses.inline.hpp"
 #include "classfile/symbolTable.hpp"
 #include "classfile/systemDictionary.hpp"
@@ -36,7 +37,7 @@
 #include "classfile/vmClasses.hpp"
 #include "classfile/vmSymbols.hpp"
 #include "interpreter/bytecode.hpp"
-#include "interpreter/bytecodeStream.hpp"
+#include "interpreter/interpreterRuntime.hpp"
 #include "interpreter/linkResolver.hpp"
 #include "jimage.hpp"
 #include "jvm.h"
@@ -45,6 +46,7 @@
 #include "memory/oopFactory.hpp"
 #include "memory/resourceArea.hpp"
 #include "oops/constantPool.inline.hpp"
+#include "oops/cpCache.inline.hpp"
 #include "runtime/atomic.hpp"
 #include "runtime/globals_extension.hpp"
 #include "runtime/handles.inline.hpp"
@@ -54,9 +56,13 @@
 #include "utilities/macros.hpp"
 #include "utilities/utf8.hpp"
 
+const char* ClassListParser::CLASS_REFLECTION_DATA_TAG = "@class-reflection-data";
 const char* ClassListParser::CONSTANT_POOL_TAG = "@cp";
+const char* ClassListParser::DYNAMIC_PROXY_TAG = "@dynamic-proxy";
 const char* ClassListParser::LAMBDA_FORM_TAG = "@lambda-form-invoker";
 const char* ClassListParser::LAMBDA_PROXY_TAG = "@lambda-proxy";
+const char* ClassListParser::LOADER_NEGATIVE_CACHE_TAG = "@loader-negative-cache";
+const char* ClassListParser::ARRAY_TAG = "@array";
 
 volatile Thread* ClassListParser::_parsing_thread = nullptr;
 ClassListParser* ClassListParser::_instance = nullptr;
@@ -318,6 +324,18 @@ void ClassListParser::parse_at_tags(TRAPS) {
   } else if (strcmp(_token, CONSTANT_POOL_TAG) == 0) {
     _token = _line + offset;
     parse_constant_pool_tag();
+  } else if (strcmp(_token, ARRAY_TAG) == 0) {
+    _token = _line + offset;
+    parse_array_dimension_tag();
+  } else if (strcmp(_token, CLASS_REFLECTION_DATA_TAG) == 0) {
+    _token = _line + offset;
+    parse_class_reflection_data_tag();
+  } else if (strcmp(_token, DYNAMIC_PROXY_TAG) == 0) {
+    _token = _line + offset;
+    parse_dynamic_proxy_tag();
+  } else if (strcmp(_token, LOADER_NEGATIVE_CACHE_TAG) == 0) {
+    _token = _line + offset;
+    parse_loader_negative_cache_tag();
   } else {
     error("Invalid @ tag at the beginning of line \"%s\" line #%zu", _token, lineno());
   }
@@ -781,6 +799,42 @@ InstanceKlass* ClassListParser::find_builtin_class(JavaThread* current, const ch
   }
 }
 
+void ClassListParser::parse_array_dimension_tag() {
+  if (parse_lambda_forms_invokers_only()) {
+    return;
+  }
+
+  skip_whitespaces();
+  char* class_name = _token;
+  skip_non_whitespaces();
+  *_token = '\0';
+  _token ++;
+
+  skip_whitespaces();
+  int dim;
+  parse_uint(&dim);
+
+  JavaThread* THREAD = JavaThread::current();
+  InstanceKlass* ik = find_builtin_class(THREAD, class_name);
+  if (ik == nullptr) {
+    _token = class_name;
+    if (strstr(class_name, "/$Proxy") != nullptr ||
+        strstr(class_name, "MethodHandle$Species_") != nullptr) {
+      // ignore -- TODO: we should filter these out in classListWriter.cpp
+    } else {
+      constant_pool_resolution_warning("class %s is not (yet) loaded by one of the built-in loaders", class_name);
+    }
+    return;
+  }
+
+  if (dim > 0) {
+    ik->array_klass(dim, THREAD);
+    if (HAS_PENDING_EXCEPTION) {
+      error("Array klass allocation failed: %s %d", _class_name, dim);
+    }
+  }
+}
+
 void ClassListParser::parse_constant_pool_tag() {
   if (parse_lambda_forms_invokers_only()) {
     return;
@@ -850,9 +904,181 @@ void ClassListParser::parse_constant_pool_tag() {
     AOTConstantPoolResolver::preresolve_class_cp_entries(THREAD, ik, &preresolve_list);
   }
   if (preresolve_fmi) {
+// FIXME: too coarse; doesn't cover resolution of Class entries
+//    JavaThread::NoJavaCodeMark no_java_code(THREAD); // ensure no clinits are exectued
     AOTConstantPoolResolver::preresolve_field_and_method_cp_entries(THREAD, ik, &preresolve_list);
   }
   if (preresolve_indy) {
     AOTConstantPoolResolver::preresolve_indy_cp_entries(THREAD, ik, &preresolve_list);
   }
 }
+
+void ClassListParser::parse_class_reflection_data_tag() {
+  if (parse_lambda_forms_invokers_only()) {
+    return;
+  }
+
+  JavaThread* THREAD = JavaThread::current();
+  skip_whitespaces();
+  char* class_name = _token;
+  skip_non_whitespaces();
+  *_token = '\0';
+  _token ++;
+
+  InstanceKlass* ik = find_builtin_class(THREAD, class_name);
+  if (ik == nullptr) {
+    _token = class_name;
+    if (strstr(class_name, "/$Proxy") != nullptr ||
+        strstr(class_name, "MethodHandle$Species_") != nullptr) {
+      // ignore -- TODO: we should filter these out in classListWriter.cpp
+    } else {
+      warning("%s: class not found: %s", CLASS_REFLECTION_DATA_TAG, class_name);
+    }
+    return;
+  }
+
+  ResourceMark rm(THREAD);
+
+  int rd_flags = _unspecified;
+  while (*_token) {
+    skip_whitespaces();
+    if (rd_flags != _unspecified) {
+      error("rd_flags specified twice");
+      return;
+    }
+    parse_uint(&rd_flags);
+  }
+  if (rd_flags == _unspecified) {
+    error("no rd_flags specified");
+    return;
+  }
+
+  if (CDSConfig::is_dumping_reflection_data()) {
+    AOTConstantPoolResolver::generate_reflection_data(THREAD, ik, rd_flags);
+  }
+}
+
+oop ClassListParser::loader_from_type(const char* loader_type) {
+  oop loader;
+  if (!ArchiveUtils::builtin_loader_from_type(loader_type, &loader)) {
+    error("Unknown loader %s", loader_type);
+  }
+  return loader;
+}
+
+void ClassListParser::parse_dynamic_proxy_tag() {
+  if (parse_lambda_forms_invokers_only()) {
+    return;
+  }
+
+  skip_whitespaces();
+  char* loader_type = _token;
+  skip_non_whitespaces();
+  *_token = '\0';
+  _token ++;
+
+  skip_whitespaces();
+  char* proxy_name_str = _token;
+  skip_non_whitespaces();
+  *_token = '\0';
+  _token ++;
+
+  skip_whitespaces();
+  int access_flags;
+  parse_uint(&access_flags);
+
+  skip_whitespaces();
+  int num_intfs;
+  parse_uint(&num_intfs);
+
+  JavaThread* THREAD = JavaThread::current();
+  Handle loader(THREAD, loader_from_type(loader_type));
+  Handle proxy_name(THREAD, java_lang_String::create_oop_from_str(proxy_name_str, THREAD));
+  if (HAS_PENDING_EXCEPTION) {
+    error("Out of memory");
+  }
+
+  objArrayHandle interfaces(THREAD, oopFactory::new_objArray(vmClasses::Class_klass(), num_intfs, THREAD));
+  if (HAS_PENDING_EXCEPTION) {
+    error("Out of memory");
+  }
+
+  for (int i = 0; i < num_intfs; i++) {
+    skip_whitespaces();
+    char* intf_name = _token;
+    skip_non_whitespaces();
+    *_token = '\0';
+    _token ++;
+
+    InstanceKlass* ik = find_builtin_class(THREAD, intf_name);
+    if (ik != nullptr) {
+      interfaces()->obj_at_put(i, ik->java_mirror());
+    } else {
+      error("Unknown class %s", intf_name);
+    }
+  }
+
+  if (strncmp("jdk.proxy", proxy_name_str, 9) != 0) {
+    return;
+  }
+
+  AOTConstantPoolResolver::define_dynamic_proxy_class(loader, proxy_name, interfaces, access_flags, THREAD);
+  if (HAS_PENDING_EXCEPTION) {
+    PENDING_EXCEPTION->print_on(tty);
+    error("defineProxyClassForCDS failed");
+  }
+}
+
+void ClassListParser::parse_loader_negative_cache_tag() {
+  skip_whitespaces();
+  char* loader_type = _token;
+  skip_non_whitespaces();
+  *_token = '\0';
+  _token ++;
+
+  oop loader;
+  Klass* loader_klass;
+  if (!strcmp(loader_type, "app")) {
+    loader = SystemDictionary::java_system_loader();
+    loader_klass = vmClasses::jdk_internal_loader_ClassLoaders_AppClassLoader_klass();
+  } else if (!strcmp(loader_type, "platform")) {
+    loader = SystemDictionary::java_platform_loader();
+    loader_klass = vmClasses::jdk_internal_loader_ClassLoaders_PlatformClassLoader_klass();
+  } else {
+    warning("%s: unrecognized loader type %s is ignored", LOADER_NEGATIVE_CACHE_TAG, loader_type);
+    return;
+  }
+
+  char* contents = _token;
+  skip_non_whitespaces();
+  *_token = '\0';
+  _token ++;
+
+  if (ArchiveLoaderLookupCache) {
+    TempNewSymbol method = SymbolTable::new_symbol("generateNegativeLookupCache");
+    TempNewSymbol signature = SymbolTable::new_symbol("(Ljava/lang/String;)V");
+
+    EXCEPTION_MARK;
+    HandleMark hm(THREAD);
+    JavaCallArguments args(Handle(THREAD, loader));
+    Handle contents_h = java_lang_String::create_from_str(contents, THREAD);
+    args.push_oop(contents_h);
+    JavaValue result(T_VOID);
+    JavaCalls::call_virtual(&result,
+                            loader_klass,
+                            method,
+                            signature,
+                            &args, THREAD);
+    if (HAS_PENDING_EXCEPTION) {
+      Handle exc_handle(THREAD, PENDING_EXCEPTION);
+      CLEAR_PENDING_EXCEPTION;
+
+      log_warning(cds)("Exception during BuiltinClassLoader::generateNegativeLookupCache() call for %s loader", loader_type);
+      LogStreamHandle(Debug, cds) log;
+      if (log.is_enabled()) {
+        java_lang_Throwable::print_stack_trace(exc_handle, &log);
+      }
+    }
+  }
+}
+

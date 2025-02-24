@@ -87,7 +87,8 @@
   product(ccstr, ExtraSharedClassListFile, nullptr,                         \
           "Extra classlist for building the CDS archive file")              \
                                                                             \
-  product(int, ArchiveRelocationMode, 1, DIAGNOSTIC,                        \
+  /*FIXME - AOT code has direct pointers to metadata that's not relocated*/ \
+  product(int, ArchiveRelocationMode, 0, DIAGNOSTIC,                        \
            "(0) first map at preferred address, and if "                    \
            "unsuccessful, map at alternative address; "                     \
            "(1) always map at alternative address (default); "              \
@@ -121,6 +122,64 @@
   product(bool, AOTCacheParallelRelocation, true, DIAGNOSTIC,               \
           "Use parallel relocation code to speed up startup.")              \
                                                                             \
+  /*========== New options added by Leyden =============================*/  \
+                                                                            \
+  product(ccstrlist, AOTEndTrainingOnMethodEntry, "",                       \
+          "List of methods (pkg/class.name) to trigger end of AOT "         \
+          "training run.  Optional ',count=N' where N is > 0")              \
+                                                                            \
+  product(ccstr, CacheOnlyClassesIn, nullptr,                               \
+          "If set, only classes loaded from these JAR files will be "       \
+          "stored in the AOTCache")                                         \
+                                                                            \
+  product(ccstr, CacheDataStore, nullptr,                                   \
+          "If valid, use the specified file for SharedArchiveFile; "        \
+          "otherwise the specified file is generated at program exit")      \
+                                                                            \
+  product(ccstr, CDSPreimage, nullptr,                                      \
+          "(** internal use only **) -- used by a child JVM process to "    \
+          "create the CacheDataStore final image")                          \
+                                                                            \
+  product(bool, CDSManualFinalImage, false, DIAGNOSTIC,                     \
+          "(** internal use only **) -- if false, automatically launch a "  \
+          "child process to create the final image.")                       \
+                                                                            \
+  product(bool, PrelinkSharedClasses, true,                                 \
+          "Link all shared classes for the boot/platform/app loaders "      \
+          "immediately at VM start-up")                                     \
+                                                                            \
+  product(bool, ArchiveDynamicProxies, false,                               \
+          "Archive classes generated for java/lang/reflect/Proxy")          \
+                                                                            \
+  product(bool, ArchiveLoaderLookupCache, false,                            \
+          "Archive app loader's positive and negative lookup cache")        \
+                                                                            \
+  product(bool, ArchivePackages, false,                                     \
+          "Archive the java.lang.ClassLoader::{packages,package2certs} "    \
+          "tables")                                                         \
+                                                                            \
+  product(bool, ArchiveProtectionDomains, false,                            \
+          "Archive the java.security.SecureClassLoader::pdcache table")     \
+                                                                            \
+  product(bool, ArchiveReflectionData, false,                               \
+          "Archive Class::reflectionData field")                            \
+                                                                            \
+  product(bool, TempDisableAddJVMCIModule, false,                           \
+          "Do not add jdk.internal.vm.ci module even for -XX:+EnableJVMCI") \
+                                                                            \
+  product(bool, UsePermanentHeapObjects, false, DIAGNOSTIC,                 \
+          "Allow AOT code to access permanent archived heap objects")       \
+                                                                            \
+  product(bool, VerifyTrainingData, trueInDebug, DIAGNOSTIC,                \
+          "Verify archived training data")                                  \
+                                                                            \
+  product(bool, SkipArchiveHeapVerification, false,                         \
+          "Skip verification of CDS archive heap")                          \
+                                                                            \
+  product(bool, ArchiveAdapters, false,                                     \
+          "Archive AdapterFingerPrint and AdapterHandlerEntry."             \
+          "Requires AOT code cache")                                        \
+
 // end of CDS_FLAGS
 
 DECLARE_FLAGS(CDS_FLAGS)

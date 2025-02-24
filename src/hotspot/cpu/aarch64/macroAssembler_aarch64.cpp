@@ -26,7 +26,11 @@
 #include "asm/assembler.hpp"
 #include "asm/assembler.inline.hpp"
 #include "ci/ciEnv.hpp"
+#include "ci/ciUtilities.hpp"
 #include "code/compiledIC.hpp"
+#if INCLUDE_CDS
+#include "code/SCCache.hpp"
+#endif
 #include "compiler/compileTask.hpp"
 #include "compiler/disassembler.hpp"
 #include "compiler/oopMap.hpp"
@@ -348,6 +352,16 @@ public:
     return 2;
   }
   virtual int immediate(address insn_addr, address &target) {
+    // Metadata pointers are either narrow (32 bits) or wide (48 bits).
+    // We encode narrow ones by setting the upper 16 bits in the first
+    // instruction.
+    if (Instruction_aarch64::extract(_insn, 31, 21) == 0b11010010101) {
+      assert(nativeInstruction_at(insn_addr+4)->is_movk(), "wrong insns in patch");
+      narrowKlass nk = CompressedKlassPointers::encode((Klass*)target);
+      Instruction_aarch64::patch(insn_addr, 20, 5, nk >> 16);
+      Instruction_aarch64::patch(insn_addr+4, 20, 5, nk & 0xffff);
+      return 2;
+    }
     assert(Instruction_aarch64::extract(_insn, 31, 21) == 0b11010010100, "must be");
     uint64_t dest = (uint64_t)target;
     // Move wide constant
@@ -478,6 +492,16 @@ public:
   }
   virtual int immediate(address insn_addr, address &target) {
     uint32_t *insns = (uint32_t *)insn_addr;
+    // Metadata pointers are either narrow (32 bits) or wide (48 bits).
+    // We encode narrow ones by setting the upper 16 bits in the first
+    // instruction.
+    if (Instruction_aarch64::extract(_insn, 31, 21) == 0b11010010101) {
+      assert(nativeInstruction_at(insn_addr+4)->is_movk(), "wrong insns in patch");
+      narrowKlass nk = (narrowKlass)((uint32_t(Instruction_aarch64::extract(_insn, 20, 5)) << 16)
+                                   +  uint32_t(Instruction_aarch64::extract(insns[1], 20, 5)));
+      target = (address)CompressedKlassPointers::decode(nk);
+      return 2;
+    }
     assert(Instruction_aarch64::extract(_insn, 31, 21) == 0b11010010100, "must be");
     // Move wide constant: movz, movk, movk.  See movptr().
     assert(nativeInstruction_at(insns+1)->is_movk(), "wrong insns in patch");
@@ -675,6 +699,9 @@ void MacroAssembler::set_last_Java_frame(Register last_java_sp,
 }
 
 static inline bool target_needs_far_branch(address addr) {
+  if (SCCache::is_on_for_write()) {
+    return true;
+  }
   // codecache size <= 128M
   if (!MacroAssembler::far_branches()) {
     return false;
@@ -859,6 +886,9 @@ void MacroAssembler::call_VM_helper(Register oop_result, address entry_point, in
 
 // Check the entry target is always reachable from any branch.
 static bool is_always_within_branch_range(Address entry) {
+  if (SCCache::is_on_for_write()) {
+    return false;
+  }
   const address target = entry.target();
 
   if (!CodeCache::contains(target)) {
@@ -2157,7 +2187,7 @@ void MacroAssembler::call_VM_leaf_base(address entry_point,
 
   stp(rscratch1, rmethod, Address(pre(sp, -2 * wordSize)));
 
-  mov(rscratch1, entry_point);
+  mov(rscratch1, RuntimeAddress(entry_point));
   blr(rscratch1);
   if (retaddr)
     bind(*retaddr);
@@ -3235,8 +3265,11 @@ void MacroAssembler::resolve_global_jobject(Register value, Register tmp1, Regis
 
 void MacroAssembler::stop(const char* msg) {
   BLOCK_COMMENT(msg);
+  // load msg into r0 so we can access it from the signal handler
+  // ExternalAddress enables saving and restoring via the code cache
+  lea(c_rarg0, ExternalAddress((address) msg));
   dcps1(0xdeae);
-  emit_int64((uintptr_t)msg);
+  SCCache::add_C_string(msg);
 }
 
 void MacroAssembler::unimplemented(const char* what) {
@@ -3334,7 +3367,7 @@ void MacroAssembler::subw(Register Rd, Register Rn, RegisterOrConstant decrement
 void MacroAssembler::reinit_heapbase()
 {
   if (UseCompressedOops) {
-    if (Universe::is_fully_initialized()) {
+    if (Universe::is_fully_initialized() && !SCCache::is_on_for_write()) {
       mov(rheapbase, CompressedOops::base());
     } else {
       lea(rheapbase, ExternalAddress(CompressedOops::base_addr()));
@@ -5703,7 +5736,30 @@ void MacroAssembler::load_byte_map_base(Register reg) {
 
   // Strictly speaking the byte_map_base isn't an address at all, and it might
   // even be negative. It is thus materialised as a constant.
-  mov(reg, (uint64_t)byte_map_base);
+#if INCLUDE_CDS
+  if (SCCache::is_on_for_write()) {
+    // SCA needs relocation info for card table base
+    lea(reg, ExternalAddress(reinterpret_cast<address>(byte_map_base)));
+  } else {
+#endif
+    mov(reg, (uint64_t)byte_map_base);
+#if INCLUDE_CDS
+  }
+#endif
+}
+
+void MacroAssembler::load_aotrc_address(Register reg, address a) {
+#if INCLUDE_CDS
+  assert(AOTRuntimeConstants::contains(a), "address out of range for data area");
+  if (SCCache::is_on_for_write()) {
+    // all aotrc field addresses should be registered in the SCC address table
+    lea(reg, ExternalAddress(a));
+  } else {
+    mov(reg, (uint64_t)a);
+  }
+#else
+  ShouldNotReachHere();
+#endif
 }
 
 void MacroAssembler::build_frame(int framesize) {

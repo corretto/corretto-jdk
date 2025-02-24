@@ -285,14 +285,15 @@ void MethodMatcher::parse_method_pattern(char*& line, const char*& error_msg, Me
     // method_name points to an option type or option name because the method name is not specified by users.
     // In very rare case, the method name happens to be same as option type/name, so look ahead to make sure
     // it doesn't show up again.
-    if ((OptionType::Unknown != CompilerOracle::parse_option_type(method_name) ||
-        CompileCommandEnum::Unknown != CompilerOracle::parse_option_name(method_name)) &&
-        *(line + bytes_read) != '\0' &&
-        strstr(line + bytes_read, method_name) == nullptr) {
-      error_msg = "Did not specify any method name";
-      method_name[0] = '\0';
-      return;
-    }
+    // !!! FIXME !!! rejects TooManyTrapsAtBCI,CLS::print()V,199 command
+//    if ((OptionType::Unknown != CompilerOracle::parse_option_type(method_name) ||
+//        CompileCommandEnum::Unknown != CompilerOracle::parse_option_name(method_name)) &&
+//        *(line + bytes_read) != '\0' &&
+//        strstr(line + bytes_read, method_name) == nullptr) {
+//      error_msg = "Did not specify any method name";
+//      method_name[0] = '\0';
+//      return;
+//    }
 
     if ((strchr(class_name, JVM_SIGNATURE_SPECIAL) != nullptr) ||
         (strchr(class_name, JVM_SIGNATURE_ENDSPECIAL) != nullptr)) {
@@ -359,6 +360,15 @@ bool MethodMatcher::matches(const methodHandle& method) const {
   return false;
 }
 
+bool MethodMatcher::matches(MethodDetails& method_details) const {
+  if (match(method_details.class_name(), this->class_name(), _class_mode) &&
+      match(method_details.method_name(), this->method_name(), _method_mode) &&
+      ((this->signature() == nullptr) || match(method_details.signature(), this->signature(), Prefix))) {
+    return true;
+  }
+  return false;
+}
+
 void MethodMatcher::print_symbol(outputStream* st, Symbol* h, Mode mode) {
   if (mode == Suffix || mode == Substring || mode == Any) {
     st->print("*");
@@ -401,6 +411,15 @@ BasicMatcher* BasicMatcher::parse_method_pattern(char* line, const char*& error_
     }
   }
   return bm;
+}
+
+bool BasicMatcher::match(MethodDetails& method_details) {
+  for (BasicMatcher* current = this; current != nullptr; current = current->next()) {
+    if (current->matches(method_details)) {
+      return true;
+    }
+  }
+  return false;
 }
 
 bool BasicMatcher::match(const methodHandle& method) {

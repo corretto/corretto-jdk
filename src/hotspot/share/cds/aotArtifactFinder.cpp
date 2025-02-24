@@ -32,6 +32,7 @@
 #include "memory/metaspaceClosure.hpp"
 #include "oops/instanceKlass.hpp"
 #include "oops/objArrayKlass.hpp"
+#include "oops/trainingData.hpp"
 #include "utilities/resourceHash.hpp"
 
 // All the classes that should be included in the AOT cache (in at least the "allocated" state)
@@ -157,6 +158,8 @@ void AOTArtifactFinder::find_artifacts() {
   });
 
   end_scanning_for_oops();
+
+  TrainingData::cleanup_training_data();
 }
 
 void AOTArtifactFinder::start_scanning_for_oops() {
@@ -207,6 +210,10 @@ void AOTArtifactFinder::add_cached_instance_class(InstanceKlass* ik) {
   _seen_classes->put_if_absent(ik, &created);
   if (created) {
     _all_cached_classes->append(ik);
+    if (CDSConfig::is_dumping_final_static_archive() && ik->is_shared_unregistered_class()) {
+      // The following are not appliable to unregistered classes
+      return;
+    }
     scan_oops_in_instance_class(ik);
     if (ik->is_hidden() && CDSConfig::is_initing_classes_at_dump_time()) {
       bool succeed = AOTClassLinker::try_add_candidate(ik);

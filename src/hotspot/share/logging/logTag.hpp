@@ -111,6 +111,7 @@ class outputStream;
   LOG_TAG(jvmci) \
   LOG_TAG(jvmti) \
   LOG_TAG(lambda) \
+  LOG_TAG(leyden) \
   LOG_TAG(library) \
   LOG_TAG(link) \
   LOG_TAG(liveness) \
@@ -120,7 +121,8 @@ class outputStream;
   LOG_TAG(malloc) \
   LOG_TAG(map) \
   LOG_TAG(mark) \
-  LOG_TAG(marking) \
+  LOG_TAG(marking)   \
+  LOG_TAG(mdo) \
   LOG_TAG(membername) \
   LOG_TAG(memops) \
   LOG_TAG(metadata) \
@@ -158,10 +160,14 @@ class outputStream;
   LOG_TAG(phases) \
   LOG_TAG(plab) \
   LOG_TAG(placeholders) \
+  LOG_TAG(precompile) \
   LOG_TAG(preempt) \
   LOG_TAG(preorder)  /* Trace all classes loaded in order referenced (not loaded) */ \
   LOG_TAG(preview)   /* Trace loading of preview feature types */ \
+  LOG_TAG(profiling) \
   LOG_TAG(promotion) \
+  LOG_TAG(protectiondomain) /* "Trace protection domain verification" */ \
+  LOG_TAG(proxy) \
   LOG_TAG(ptrqueue) \
   LOG_TAG(purge) \
   LOG_TAG(record) \
@@ -175,6 +181,7 @@ class outputStream;
   LOG_TAG(safepoint) \
   LOG_TAG(sampling) \
   LOG_TAG(scavenge) \
+  LOG_TAG(scc) \
   LOG_TAG(sealed) \
   LOG_TAG(setting) \
   LOG_TAG(smr) \
@@ -205,6 +212,7 @@ class outputStream;
   LOG_TAG(timer) \
   LOG_TAG(tlab) \
   LOG_TAG(tracking) \
+  LOG_TAG(training) \
   LOG_TAG(trimnative) /* trim native heap */ \
   LOG_TAG(unload) /* Trace unloading of classes */ \
   LOG_TAG(unmap) \

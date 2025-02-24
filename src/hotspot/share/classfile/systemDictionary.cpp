@@ -35,6 +35,7 @@
 #include "classfile/javaClasses.inline.hpp"
 #include "classfile/klassFactory.hpp"
 #include "classfile/loaderConstraints.hpp"
+#include "classfile/modules.hpp"
 #include "classfile/packageEntry.hpp"
 #include "classfile/placeholders.hpp"
 #include "classfile/resolutionErrors.hpp"
@@ -157,6 +158,10 @@ void SystemDictionary::compute_java_loaders(TRAPS) {
       oop system_loader = get_system_class_loader_impl(CHECK);
       assert(_java_system_loader.resolve() == system_loader, "must be");
     )
+  }
+
+  if (CDSConfig::is_dumping_final_static_archive()) {
+    AOTLinkedClassBulkLoader::load_non_javabase_classes(THREAD);
   }
 }
 
@@ -989,7 +994,11 @@ bool SystemDictionary::is_shared_class_visible_impl(Symbol* class_name,
   bool was_archived_from_named_module = scp_entry->in_named_module();
   bool visible;
 
-  if (was_archived_from_named_module) {
+  if (mod_entry != nullptr && mod_entry->location() == nullptr && mod_entry->is_named()) {
+    // Archived module for dynamic proxies. It's always visible.
+    assert(Modules::is_dynamic_proxy_module(mod_entry), "must be");
+    visible = true;
+  } else if (was_archived_from_named_module) {
     if (should_be_in_named_module) {
       // Is the module loaded from the same location as during dump time?
       visible = mod_entry->shared_path_index() == scp_index;
@@ -1171,11 +1180,28 @@ void SystemDictionary::load_shared_class_misc(InstanceKlass* ik, ClassLoaderData
   // package was loaded.
   if (loader_data->is_the_null_class_loader_data()) {
     s2 path_index = ik->shared_classpath_index();
-    ik->set_classpath_index(path_index);
+    if (path_index >= 0) { // FIXME ... for lambda form classes
+      ik->set_classpath_index(path_index);
+
+      if (CDSConfig::is_dumping_final_static_archive()) {
+        if (path_index > ClassLoaderExt::max_used_path_index()) {
+          ClassLoaderExt::set_max_used_path_index(path_index);
+        }
+      }
+    }
   }
 
   // notify a class loaded from shared object
   ClassLoadingService::notify_class_loaded(ik, true /* shared class */);
+
+  if (CDSConfig::is_dumping_final_static_archive()) {
+    SystemDictionaryShared::init_dumptime_info(ik);
+    if (SystemDictionary::is_platform_class_loader(loader_data->class_loader())) {
+      ClassLoaderExt::set_has_platform_classes();
+    } else if (SystemDictionary::is_system_class_loader(loader_data->class_loader())) {
+      ClassLoaderExt::set_has_app_classes();
+    }
+  }
 }
 
 #endif // INCLUDE_CDS
@@ -1250,7 +1276,7 @@ InstanceKlass* SystemDictionary::load_instance_class_impl(Symbol* class_name, Ha
 #if INCLUDE_CDS
     if (CDSConfig::is_using_archive())
     {
-      PerfTraceTime vmtimer(ClassLoader::perf_shared_classload_time());
+      PerfTraceElapsedTime vmtimer(ClassLoader::perf_shared_classload_time());
       InstanceKlass* ik = SystemDictionaryShared::find_builtin_class(class_name);
       if (ik != nullptr && ik->is_shared_boot_class() && !ik->shared_loading_failed()) {
         SharedClassLoadingMark slm(THREAD, ik);
@@ -1261,7 +1287,7 @@ InstanceKlass* SystemDictionary::load_instance_class_impl(Symbol* class_name, Ha
 
     if (k == nullptr) {
       // Use VM class loader
-      PerfTraceTime vmtimer(ClassLoader::perf_sys_classload_time());
+      PerfTraceElapsedTime vmtimer(ClassLoader::perf_sys_classload_time());
       k = ClassLoader::load_class(class_name, pkg_entry, search_only_bootloader_append, CHECK_NULL);
     }
 

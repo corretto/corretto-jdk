@@ -1184,9 +1184,9 @@ void TemplateInterpreterGenerator::bang_stack_shadow_pages(bool native_call) {
 // Interpreter stub for calling a native method. (asm interpreter)
 // This sets up a somewhat different looking stack for calling the
 // native method than the typical interpreter frame setup.
-address TemplateInterpreterGenerator::generate_native_entry(bool synchronized) {
+address TemplateInterpreterGenerator::generate_native_entry(bool synchronized, bool runtime_upcalls) {
   // determine code generation flags
-  bool inc_counter  = UseCompiler || CountCompiledCalls;
+  bool inc_counter = (UseCompiler || CountCompiledCalls) && !PreloadOnly;
 
   // r1: Method*
   // rscratch1: sender sp
@@ -1302,6 +1302,10 @@ address TemplateInterpreterGenerator::generate_native_entry(bool synchronized) {
 
   // jvmti support
   __ notify_method_entry();
+
+  if (runtime_upcalls) {
+    __ generate_runtime_upcalls_on_method_entry();
+  }
 
   // work registers
   const Register t = r17;
@@ -1632,9 +1636,9 @@ address TemplateInterpreterGenerator::generate_native_entry(bool synchronized) {
 //
 // Generic interpreted method entry to (asm) interpreter
 //
-address TemplateInterpreterGenerator::generate_normal_entry(bool synchronized) {
+address TemplateInterpreterGenerator::generate_normal_entry(bool synchronized, bool runtime_upcalls) {
   // determine code generation flags
-  bool inc_counter  = UseCompiler || CountCompiledCalls;
+  bool inc_counter = (UseCompiler || CountCompiledCalls) && !PreloadOnly;
 
   // rscratch1: sender sp
   address entry_point = __ pc();
@@ -1776,6 +1780,11 @@ address TemplateInterpreterGenerator::generate_normal_entry(bool synchronized) {
 
   // jvmti support
   __ notify_method_entry();
+
+  // runtime upcalls
+  if (runtime_upcalls) {
+    __ generate_runtime_upcalls_on_method_entry();
+  }
 
   __ dispatch_next(vtos);
 
@@ -2078,6 +2087,24 @@ void TemplateInterpreterGenerator::set_vtos_entry_points(Template* t,
 
 //-----------------------------------------------------------------------------
 
+void TemplateInterpreterGenerator::count_bytecode() {
+  if (CountBytecodesPerThread) {
+    Address bc_counter_addr(rthread, Thread::bc_counter_offset());
+    __ ldr(r10, bc_counter_addr);
+    __ add(r10, r10, 1);
+    __ str(r10, bc_counter_addr);
+  }
+  if (CountBytecodes || TraceBytecodes || StopInterpreterAt > 0) {
+    __ mov(r10, (address) &BytecodeCounter::_counter_value);
+    __ atomic_add(noreg, 1, r10);
+  }
+}
+
+void TemplateInterpreterGenerator::histogram_bytecode(Template* t) {
+  __ mov(r10, (address) &BytecodeHistogram::_counters[t->bytecode()]);
+  __ atomic_addw(noreg, 1, r10);
+}
+
 // Non-product code
 #ifndef PRODUCT
 address TemplateInterpreterGenerator::generate_trace_code(TosState state) {
@@ -2098,16 +2125,6 @@ address TemplateInterpreterGenerator::generate_trace_code(TosState state) {
   __ ret(lr);                                   // return from result handler
 
   return entry;
-}
-
-void TemplateInterpreterGenerator::count_bytecode() {
-  __ mov(r10, (address) &BytecodeCounter::_counter_value);
-  __ atomic_addw(noreg, 1, r10);
-}
-
-void TemplateInterpreterGenerator::histogram_bytecode(Template* t) {
-  __ mov(r10, (address) &BytecodeHistogram::_counters[t->bytecode()]);
-  __ atomic_addw(noreg, 1, r10);
 }
 
 void TemplateInterpreterGenerator::histogram_bytecode_pair(Template* t) {

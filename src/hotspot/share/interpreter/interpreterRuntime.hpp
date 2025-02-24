@@ -103,9 +103,19 @@ class InterpreterRuntime: AllStatic {
                                         constantPoolHandle& pool, TRAPS);
 private:
   // Statics & fields
+  static void resolve_getfield(JavaThread* current);
+  static void resolve_putfield(JavaThread* current);
+  static void resolve_getstatic(JavaThread* current);
+  static void resolve_putstatic(JavaThread* current);
+
   static void resolve_get_put(JavaThread* current, Bytecodes::Code bytecode);
 
   // Calls
+  static void resolve_invokevirtual(JavaThread* current);
+  static void resolve_invokespecial(JavaThread* current);
+  static void resolve_invokestatic(JavaThread* current);
+  static void resolve_invokeinterface(JavaThread* current);
+
   static void resolve_invoke(JavaThread* current, Bytecodes::Code bytecode);
   static void resolve_invokehandle (JavaThread* current);
   static void resolve_invokedynamic(JavaThread* current);
@@ -170,6 +180,9 @@ private:
   static void    verify_mdp(Method* method, address bcp, address mdp);
 #endif // ASSERT
   static MethodCounters* build_method_counters(JavaThread* current, Method* m);
+
+  static void init_counters();
+  static void print_counters_on(outputStream* st);
 };
 
 

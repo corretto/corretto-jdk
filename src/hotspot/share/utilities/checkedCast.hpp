@@ -26,6 +26,7 @@
 #define SHARE_UTILITIES_CHECKEDCAST_HPP
 
 #include "utilities/debug.hpp"
+#include "utilities/globalDefinitions.hpp"
 
 // In many places we've added C-style casts to silence compiler
 // warnings, for example when truncating a size_t to an int when we
@@ -38,7 +39,7 @@
 template <typename T2, typename T1>
 constexpr T2 checked_cast(T1 thing) {
   T2 result = static_cast<T2>(thing);
-  assert(static_cast<T1>(result) == thing, "must be");
+  assert(static_cast<T1>(result) == thing, "must be, thing: " INTPTR_FORMAT ", result: " INTPTR_FORMAT, (intptr_t)thing, (intptr_t)result);
   return result;
 }
 

@@ -403,6 +403,7 @@ class GraphKit : public Phase {
   // Check the null_seen bit.
   bool seems_never_null(Node* obj, ciProfileData* data, bool& speculating);
 
+  void guard_klass_is_initialized(Node* klass);
   void guard_klass_being_initialized(Node* klass);
   void guard_init_thread(Node* klass);
 
@@ -632,6 +633,9 @@ class GraphKit : public Phase {
 
   // Return a load of array element at idx.
   Node* load_array_element(Node* ary, Node* idx, const TypeAryPtr* arytype, bool set_ctrl);
+
+  //----------- runtime upcalls support ----------------
+  void install_on_method_entry_runtime_upcalls(ciMethod* method);
 
   //---------------- Dtrace support --------------------
   void make_dtrace_method_entry_exit(ciMethod* method, bool is_entry);

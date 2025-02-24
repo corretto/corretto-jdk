@@ -38,6 +38,7 @@
 #include "opto/runtime.hpp"
 #include "opto/type.hpp"
 #include "runtime/handles.inline.hpp"
+#include "runtime/runtimeUpcalls.hpp"
 #include "runtime/safepointMechanism.hpp"
 #include "runtime/sharedRuntime.hpp"
 #include "utilities/bitMap.inline.hpp"
@@ -1133,9 +1134,18 @@ SafePointNode* Parse::create_entry_map() {
   _caller->map()->delete_replaced_nodes();
 
   // If this is an inlined method, we may have to do a receiver null check.
-  if (_caller->has_method() && is_normal_parse() && !method()->is_static()) {
+  if (_caller->has_method() && is_normal_parse()) {
     GraphKit kit(_caller);
-    kit.null_check_receiver_before_call(method());
+    if (!method()->is_static()) {
+      kit.null_check_receiver_before_call(method());
+    } else if (C->do_clinit_barriers() && C->needs_clinit_barrier(method()->holder(), _caller->method())) {
+      ciMethod* declared_method = kit.method()->get_method_at_bci(kit.bci());
+      const int nargs = declared_method->arg_size();
+      kit.inc_sp(nargs);
+      Node* holder = makecon(TypeKlassPtr::make(method()->holder(), Type::trust_interfaces));
+      kit.guard_klass_is_initialized(holder);
+      kit.dec_sp(nargs);
+    }
     _caller = kit.transfer_exceptions_into_jvms();
     if (kit.stopped()) {
       _exits.add_exception_states_from(_caller);
@@ -1200,6 +1210,8 @@ void Parse::do_method_entry() {
   if (C->env()->dtrace_method_probes()) {
     make_dtrace_method_entry(method());
   }
+
+  install_on_method_entry_runtime_upcalls(method());
 
 #ifdef ASSERT
   // Narrow receiver type when it is too broad for the method being parsed.
@@ -2169,6 +2181,9 @@ void Parse::call_register_finalizer() {
 
 // Add check to deoptimize once holder klass is fully initialized.
 void Parse::clinit_deopt() {
+  if (method()->holder()->is_initialized()) {
+    return; // in case do_clinit_barriers() is true
+  }
   assert(C->has_method(), "only for normal compilations");
   assert(depth() == 1, "only for main compiled method");
   assert(is_normal_parse(), "no barrier needed on osr entry");

@@ -31,6 +31,7 @@
 #include "classfile/classLoaderData.inline.hpp"
 #include "classfile/javaClasses.inline.hpp"
 #include "classfile/moduleEntry.hpp"
+#include "classfile/modules.hpp"
 #include "classfile/systemDictionary.hpp"
 #include "jni.h"
 #include "logging/log.hpp"
@@ -413,7 +414,13 @@ ModuleEntry* ModuleEntry::allocate_archived_entry() const {
   _archive_modules_entries->put(this, archived_entry);
   DEBUG_ONLY(_num_archived_module_entries++);
 
-  assert(archived_entry->shared_protection_domain() == nullptr, "never set during -Xshare:dump");
+  if (CDSConfig::is_dumping_final_static_archive()) {
+    OopHandle null_handle;
+    archived_entry->_shared_pd = null_handle;
+  } else {
+    assert(archived_entry->shared_protection_domain() == nullptr, "never set during -Xshare:dump");
+  }
+
   // Clear handles and restore at run time. Handles cannot be archived.
   OopHandle null_handle;
   archived_entry->_module = null_handle;
@@ -444,9 +451,16 @@ ModuleEntry* ModuleEntry::get_archived_entry(ModuleEntry* orig_entry) {
 // This function is used to archive ModuleEntry::_reads and PackageEntry::_qualified_exports.
 // GrowableArray cannot be directly archived, as it needs to be expandable at runtime.
 // Write it out as an Array, and convert it back to GrowableArray at runtime.
-Array<ModuleEntry*>* ModuleEntry::write_growable_array(GrowableArray<ModuleEntry*>* array) {
+Array<ModuleEntry*>* ModuleEntry::write_growable_array(ModuleEntry* module, GrowableArray<ModuleEntry*>* array) {
   Array<ModuleEntry*>* archived_array = nullptr;
   int length = (array == nullptr) ? 0 : array->length();
+  if (module->is_named()) {
+    if (Modules::is_dynamic_proxy_module(module)) {
+      // This is a dynamically generated module. Its opens and exports will be
+      // restored at runtime in the Java code. See comments in ArchivedData::restore().
+      return nullptr;
+    }
+  }
   if (length > 0) {
     archived_array = ArchiveBuilder::new_ro_array<ModuleEntry*>(length);
     for (int i = 0; i < length; i++) {
@@ -480,7 +494,7 @@ void ModuleEntry::iterate_symbols(MetaspaceClosure* closure) {
 }
 
 void ModuleEntry::init_as_archived_entry() {
-  set_archived_reads(write_growable_array(reads()));
+  set_archived_reads(write_growable_array(this, reads()));
 
   _loader_data = nullptr;  // re-init at runtime
   _shared_path_index = FileMapInfo::get_module_shared_path_index(_location);
@@ -510,14 +524,14 @@ void ModuleEntry::verify_archived_module_entries() {
 #endif // PRODUCT
 
 void ModuleEntry::load_from_archive(ClassLoaderData* loader_data) {
-  assert(CDSConfig::is_using_archive(), "runtime only");
+  assert(CDSConfig::is_using_full_module_graph(), "runtime only");
   set_loader_data(loader_data);
   set_reads(restore_growable_array(archived_reads()));
   JFR_ONLY(INIT_ID(this);)
 }
 
 void ModuleEntry::restore_archived_oops(ClassLoaderData* loader_data) {
-  assert(CDSConfig::is_using_archive(), "runtime only");
+  assert(CDSConfig::is_using_full_module_graph(), "runtime only");
   Handle module_handle(Thread::current(), HeapShared::get_root(_archived_module_index, /*clear=*/true));
   assert(module_handle.not_null(), "huh");
   set_module(loader_data->add_handle(module_handle));
@@ -538,7 +552,7 @@ void ModuleEntry::restore_archived_oops(ClassLoaderData* loader_data) {
 }
 
 void ModuleEntry::clear_archived_oops() {
-  assert(CDSConfig::is_using_archive(), "runtime only");
+  assert(CDSConfig::is_using_archive() && !CDSConfig::is_using_full_module_graph(), "runtime only");
   HeapShared::clear_root(_archived_module_index);
 }
 
@@ -583,7 +597,7 @@ void ModuleEntryTable::init_archived_entries(Array<ModuleEntry*>* archived_modul
 
 void ModuleEntryTable::load_archived_entries(ClassLoaderData* loader_data,
                                              Array<ModuleEntry*>* archived_modules) {
-  assert(CDSConfig::is_using_archive(), "runtime only");
+  assert(CDSConfig::is_using_full_module_graph(), "runtime only");
 
   for (int i = 0; i < archived_modules->length(); i++) {
     ModuleEntry* archived_entry = archived_modules->at(i);
@@ -593,7 +607,7 @@ void ModuleEntryTable::load_archived_entries(ClassLoaderData* loader_data,
 }
 
 void ModuleEntryTable::restore_archived_oops(ClassLoaderData* loader_data, Array<ModuleEntry*>* archived_modules) {
-  assert(CDSConfig::is_using_archive(), "runtime only");
+  assert(CDSConfig::is_using_full_module_graph(), "runtime only");
   for (int i = 0; i < archived_modules->length(); i++) {
     ModuleEntry* archived_entry = archived_modules->at(i);
     archived_entry->restore_archived_oops(loader_data);

@@ -148,6 +148,7 @@ class CodeCache : AllStatic {
   static const GrowableArray<CodeHeap*>* heaps() { return _heaps; }
   static const GrowableArray<CodeHeap*>* nmethod_heaps() { return _nmethod_heaps; }
 
+  static void* map_cached_code();
   // Allocation/administration
   static CodeBlob* allocate(uint size, CodeBlobType code_blob_type, bool handle_alloc_failure = true, CodeBlobType orig_code_blob_type = CodeBlobType::All); // allocates a new CodeBlob
   static void commit(CodeBlob* cb);                        // called when the allocated CodeBlob has been filled
@@ -222,6 +223,7 @@ class CodeCache : AllStatic {
   // Printing/debugging
   static void print();                           // prints summary
   static void print_internals();
+  static void print_nmethods_on(outputStream* st);
   static void print_memory_overhead();
   static void verify();                          // verifies the code cache
   static void print_trace(const char* event, CodeBlob* cb, uint size = 0) PRODUCT_RETURN;
@@ -230,6 +232,8 @@ class CodeCache : AllStatic {
   LINUX_ONLY(static void write_perf_map(const char* filename, outputStream* st);) // Prints warnings and error messages to outputStream
   static const char* get_code_heap_name(CodeBlobType code_blob_type)  { return (heap_available(code_blob_type) ? get_code_heap(code_blob_type)->name() : "Unused"); }
   static void report_codemem_full(CodeBlobType code_blob_type, bool print);
+
+  static void print_nmethod_statistics_on(outputStream* st);
 
   // Dcmd (Diagnostic commands)
   static void print_codelist(outputStream* st);

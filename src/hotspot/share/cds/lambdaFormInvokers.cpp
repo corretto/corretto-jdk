@@ -23,6 +23,7 @@
  */
 
 #include "cds/archiveBuilder.hpp"
+#include "cds/cdsConfig.hpp"
 #include "cds/lambdaFormInvokers.hpp"
 #include "cds/metaspaceShared.hpp"
 #include "cds/regeneratedClasses.hpp"
@@ -89,6 +90,9 @@ class PrintLambdaFormMessage {
 };
 
 void LambdaFormInvokers::regenerate_holder_classes(TRAPS) {
+  if (!CDSConfig::is_dumping_regenerated_lambdaform_invokers()) {
+    return;
+  }
   PrintLambdaFormMessage plm;
   if (_lambdaform_lines == nullptr || _lambdaform_lines->length() == 0) {
     log_info(cds)("Nothing to regenerate for holder classes");
@@ -181,7 +185,9 @@ void LambdaFormInvokers::regenerate_holder_classes(TRAPS) {
       char *buf = NEW_RESOURCE_ARRAY(char, len);
       memcpy(buf, (char*)h_bytes->byte_at_addr(0), len);
       ClassFileStream st((u1*)buf, len, nullptr);
-      regenerate_class(class_name, st, CHECK);
+      if (!CDSConfig::is_dumping_invokedynamic() /* work around JDK-8310831 */) {
+        regenerate_class(class_name, st, CHECK);
+      }
     }
   }
 }
@@ -220,6 +226,13 @@ void LambdaFormInvokers::regenerate_class(char* class_name, ClassFileStream& st,
 }
 
 void LambdaFormInvokers::dump_static_archive_invokers() {
+  if (CDSConfig::is_dumping_preimage_static_archive() ||
+      CDSConfig::is_dumping_final_static_archive()) {
+    // This function writes the "names" of the invokers.
+    // This is not supported in new CDS workflow for now.
+    return;
+  }
+
   if (_lambdaform_lines != nullptr && _lambdaform_lines->length() > 0) {
     int count = 0;
     int len   = _lambdaform_lines->length();

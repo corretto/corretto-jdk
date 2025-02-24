@@ -128,6 +128,11 @@ const size_t minimumSymbolTableSize = 1024;
           "Use 32-bit class pointers in 64-bit VM. "                        \
           "lp64_product means flag is always constant in 32 bit VM")        \
                                                                             \
+  /* Leyden */                                                              \
+  product(bool, UseCompatibleCompressedOops, false,                         \
+          "Always use HeapBasedNarrowOop mode, so that AOT code can be "    \
+          "always work regardless of runtime heap range")                   \
+                                                                            \
   product(bool, UseCompactObjectHeaders, false, EXPERIMENTAL,               \
           "Use compact 64-bit object headers in 64-bit VM")                 \
                                                                             \
@@ -376,6 +381,12 @@ const int ObjectAlignmentInBytes = 8;
          "Control intrinsics using a list of +/- (internal) names, "        \
          "separated by commas")                                             \
          constraint(ControlIntrinsicConstraintFunc,AfterErgo)               \
+                                                                            \
+  develop(ccstr, AddRuntimeUpcallsNOP, nullptr,                             \
+          "Register a runtime upcall for testing."                          \
+          "Format is '[upcallType]:[methodFilter]'"                         \
+          "where upcallType is one of 'onMethodEntry', 'onMethodExit'"      \
+          "and methodFilter is one of 'none', 'all'")                       \
                                                                             \
   develop(bool, TraceCallFixup, false,                                      \
           "Trace all call fixups")                                          \
@@ -1017,11 +1028,11 @@ const int ObjectAlignmentInBytes = 8;
                                                                             \
   product(ccstr, LogFile, nullptr, DIAGNOSTIC,                              \
           "If LogVMOutput or LogCompilation is on, save VM output to "      \
-          "this file [default: ./hotspot_pid%p.log] (%p replaced with pid)")\
+          "this file [default: ./hotspot_%p.log] (%p replaced with pidNNN)")\
                                                                             \
   product(ccstr, ErrorFile, nullptr,                                        \
           "If an error occurs, save the error data to this file "           \
-          "[default: ./hs_err_pid%p.log] (%p replaced with pid)")           \
+          "[default: ./hs_err_%p.log] (%p replaced with pidNNN)")           \
                                                                             \
   product(bool, ExtensiveErrorReports,                                      \
           PRODUCT_ONLY(false) NOT_PRODUCT(true),                            \
@@ -1141,11 +1152,18 @@ const int ObjectAlignmentInBytes = 8;
           "Use always interpreter stubs for native methods invoked via "    \
           "interpreter")                                                    \
                                                                             \
-  develop(bool, CountBytecodes, false,                                      \
+  product(bool, CountBytecodes, false, DIAGNOSTIC,                          \
           "Count number of bytecodes executed")                             \
                                                                             \
-  develop(bool, PrintBytecodeHistogram, false,                              \
+  product(bool, CountBytecodesPerThread, false, DIAGNOSTIC,                 \
+          "Count number of bytecodes executed per thread")                  \
+                                                                            \
+  product(bool, PrintBytecodeHistogram, false, DIAGNOSTIC,                  \
           "Print histogram of the executed bytecodes")                      \
+                                                                            \
+  product(double, PrintBytecodeHistogramCutoff, 0.01,                       \
+          "Print cutoff for histogram of the executed bytecodes")           \
+          range(0.0, 100.0)                                                 \
                                                                             \
   develop(bool, PrintBytecodePairHistogram, false,                          \
           "Print histogram of the executed bytecode pairs")                 \
@@ -1185,6 +1203,9 @@ const int ObjectAlignmentInBytes = 8;
           "number of method invocations/branches (expressed as % of "       \
           "CompileThreshold) before using the method's profile")            \
           range(0, 100)                                                     \
+                                                                            \
+  product(bool, ForceProfiling, false, DIAGNOSTIC,                          \
+          "Eagerly allocate MDOs")                                          \
                                                                             \
   product(bool, PrintMethodData, false, DIAGNOSTIC,                         \
           "Print the results of +ProfileInterpreter at end of run")         \
@@ -1723,7 +1744,7 @@ const int ObjectAlignmentInBytes = 8;
   product(bool, PerfDisableSharedMem, false,                                \
           "Store performance data in standard memory")                      \
                                                                             \
-  product(int, PerfDataMemorySize, 32*K,                                    \
+  product(int, PerfDataMemorySize, 64*K,                                    \
           "Size of performance data memory region. Will be rounded "        \
           "up to a multiple of the native os page size.")                   \
           range(128, 32*64*K)                                               \
@@ -1970,6 +1991,18 @@ const int ObjectAlignmentInBytes = 8;
           "(default) disables native heap trimming.")                       \
           range(0, UINT_MAX)                                                \
                                                                             \
+  product(bool, ProfileVMLocks, false, DIAGNOSTIC,                          \
+          "Profile VM locks usage on main thread")                          \
+                                                                            \
+  product(bool, ProfileVMCalls, false, DIAGNOSTIC,                          \
+          "Profile VM calls on main thread")                                \
+                                                                            \
+  product(bool, ProfileVMOps, true, DIAGNOSTIC,                             \
+          "Profile VM operations on main thread")                           \
+                                                                            \
+  product(bool, ProfileRuntimeCalls, false, DIAGNOSTIC,                     \
+          "Profile calls into VM runtime on main thread")                   \
+                                                                            \
   develop(bool, SimulateFullAddressSpace, false,                            \
           "Simulates a very populated, fragmented address space; no "       \
           "targeted reservations will succeed.")                            \
@@ -1981,6 +2014,9 @@ const int ObjectAlignmentInBytes = 8;
                 "Unconditionally record nmethod dependencies on class "     \
                 "rewriting/transformation independently of the JVMTI "      \
                 "can_{retransform/redefine}_classes capabilities.")         \
+                                                                            \
+  product(bool, TraceThreadTime, false,                                     \
+          "Enable tracing of thread time in Perf counters")                 \
                                                                             \
   product(bool, UseSecondarySupersCache, true, DIAGNOSTIC,                  \
                 "Use secondary supers cache during subtype checks.")        \
@@ -1994,9 +2030,13 @@ const int ObjectAlignmentInBytes = 8;
   product(bool, StressSecondarySupers, false, DIAGNOSTIC,                   \
           "Use a terrible hash function in order to generate many collisions.") \
                                                                             \
+  develop(bool, TestAdapterLinkFailure, false,                              \
+          "Test failure of adapter linking when loading from AOT cache.")   \
+                                                                            \
   product(bool, UseThreadsLockThrottleLock, true, DIAGNOSTIC,               \
           "Use an extra lock during Thread start and exit to alleviate"     \
           "contention on Threads_lock.")                                    \
+
 
 // end of RUNTIME_FLAGS
 

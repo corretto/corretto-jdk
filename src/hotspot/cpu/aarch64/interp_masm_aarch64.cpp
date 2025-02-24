@@ -43,6 +43,7 @@
 #include "runtime/basicLock.hpp"
 #include "runtime/frame.inline.hpp"
 #include "runtime/javaThread.hpp"
+#include "runtime/runtimeUpcalls.hpp"
 #include "runtime/safepointMechanism.hpp"
 #include "runtime/sharedRuntime.hpp"
 #include "utilities/powerOfTwo.hpp"
@@ -1403,6 +1404,16 @@ void InterpreterMacroAssembler::_interp_verify_oop(Register reg, TosState state,
 
 void InterpreterMacroAssembler::verify_FPU(int stack_depth, TosState state) { ; }
 
+void InterpreterMacroAssembler::generate_runtime_upcalls_on_method_entry()
+{
+  address upcall = RuntimeUpcalls::on_method_entry_upcall_address();
+  if (RuntimeUpcalls::does_upcall_need_method_parameter(upcall)) {
+    get_method(c_rarg1);
+    call_VM(noreg,upcall, c_rarg1);
+  } else {
+    call_VM(noreg,upcall);
+  }
+}
 
 void InterpreterMacroAssembler::notify_method_entry() {
   // Whenever JVMTI is interp_only_mode, method entry/exit events are sent to
@@ -1424,7 +1435,8 @@ void InterpreterMacroAssembler::notify_method_entry() {
   }
 
   // RedefineClasses() tracing support for obsolete method entry
-  if (log_is_enabled(Trace, redefine, class, obsolete)) {
+  if (log_is_enabled(Trace, redefine, class, obsolete) ||
+      log_is_enabled(Trace, interpreter, bytecode)) {
     get_method(c_rarg1);
     call_VM_leaf(
       CAST_FROM_FN_PTR(address, SharedRuntime::rc_trace_method_entry),

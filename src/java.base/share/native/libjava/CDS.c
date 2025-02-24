@@ -55,6 +55,12 @@ Java_jdk_internal_misc_CDS_logLambdaFormInvoker(JNIEnv *env, jclass jcls, jstrin
 }
 
 JNIEXPORT void JNICALL
+Java_jdk_internal_misc_CDS_logDynamicProxy0(JNIEnv *env, jclass jcls, jobject loader, jstring proxy_name,
+                                            jobjectArray interfaces, jint accessFlags) {
+    JVM_LogDynamicProxy(env, loader, proxy_name, interfaces, accessFlags);
+}
+
+JNIEXPORT void JNICALL
 Java_jdk_internal_misc_CDS_dumpClassList(JNIEnv *env, jclass jcls, jstring fileName) {
     JVM_DumpClassListToFile(env, fileName);
 }

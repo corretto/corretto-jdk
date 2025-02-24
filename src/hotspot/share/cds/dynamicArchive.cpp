@@ -30,6 +30,7 @@
 #include "cds/cds_globals.hpp"
 #include "cds/cdsConfig.hpp"
 #include "cds/dynamicArchive.hpp"
+#include "cds/metaspaceShared.hpp"
 #include "cds/regeneratedClasses.hpp"
 #include "classfile/classLoader.hpp"
 #include "classfile/classLoaderData.inline.hpp"
@@ -148,8 +149,10 @@ public:
 
       ArchiveBuilder::OtherROAllocMark mark;
       SystemDictionaryShared::write_to_archive(false);
+
       DynamicArchive::dump_array_klasses();
       AOTClassLinker::write_to_archive();
+      TrainingData::dump_training_data();
 
       serialized_data = ro_region()->top();
       WriteClosure wc(ro_region());
@@ -158,6 +161,9 @@ public:
 
     log_info(cds)("Adjust lambda proxy class dictionary");
     SystemDictionaryShared::adjust_lambda_proxy_class_dictionary();
+
+    log_info(cds)("Make training data shareable");
+    make_training_data_shareable();
 
     relocate_to_requested();
 
@@ -175,6 +181,7 @@ public:
     FileMapInfo::metaspace_pointers_do(it);
     AOTArtifactFinder::all_cached_classes_do(it);
     SystemDictionaryShared::dumptime_classes_do(it);
+    TrainingData::iterate_roots(it);
     iterate_primitive_array_klasses(it);
   }
 
@@ -503,11 +510,23 @@ void DynamicArchive::dump_at_exit(JavaThread* current, const char* archive_name)
   log_info(cds, dynamic)("Preparing for dynamic dump at exit in thread %s", current->name());
 
   JavaThread* THREAD = current; // For TRAPS processing related to link_shared_classes
+
+  {
+    // FIXME-HACK - make sure we have at least one class in the dynamic archive
+    TempNewSymbol class_name = SymbolTable::new_symbol("sun/nio/cs/IBM850"); // unusual class; shouldn't be used by our tests cases.
+    SystemDictionary::resolve_or_null(class_name, Handle(), THREAD);
+    guarantee(!HAS_PENDING_EXCEPTION, "must have this class");
+  }
+
   MetaspaceShared::link_shared_classes(false/*not from jcmd*/, THREAD);
   if (!HAS_PENDING_EXCEPTION) {
-    VM_PopulateDynamicDumpSharedSpace op(archive_name);
-    VMThread::execute(&op);
-    return;
+    // copy shared path table to saved.
+    TrainingData::init_dumptime_table(THREAD); // captures TrainingDataSetLocker
+    if (!HAS_PENDING_EXCEPTION) {
+      VM_PopulateDynamicDumpSharedSpace op(archive_name);
+      VMThread::execute(&op);
+      return;
+    }
   }
 
   // One of the prepatory steps failed
@@ -527,6 +546,7 @@ void DynamicArchive::dump_for_jcmd(const char* archive_name, TRAPS) {
   assert(CDSConfig::is_dumping_dynamic_archive(), "already checked by check_for_dynamic_dump() during VM startup");
   MetaspaceShared::link_shared_classes(true/*from jcmd*/, CHECK);
   // copy shared path table to saved.
+  TrainingData::init_dumptime_table(CHECK); // captures TrainingDataSetLocker
   VM_PopulateDynamicDumpSharedSpace op(archive_name);
   VMThread::execute(&op);
 }

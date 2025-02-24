@@ -25,7 +25,16 @@
 #include "cds/aotClassLinker.hpp"
 #include "cds/aotConstantPoolResolver.hpp"
 #include "cds/archiveBuilder.hpp"
+#include "cds/archiveUtils.inline.hpp"
 #include "cds/cdsConfig.hpp"
+#include "cds/classListWriter.hpp"
+#include "cds/finalImageRecipes.hpp"
+#include "cds/heapShared.hpp"
+#include "cds/lambdaFormInvokers.inline.hpp"
+#include "classfile/classLoader.hpp"
+#include "classfile/classLoaderExt.hpp"
+#include "classfile/dictionary.hpp"
+#include "classfile/symbolTable.hpp"
 #include "classfile/systemDictionary.hpp"
 #include "classfile/systemDictionaryShared.hpp"
 #include "classfile/vmClasses.hpp"
@@ -36,6 +45,7 @@
 #include "oops/instanceKlass.hpp"
 #include "oops/klass.inline.hpp"
 #include "runtime/handles.inline.hpp"
+#include "runtime/javaCalls.hpp"
 
 AOTConstantPoolResolver::ClassesTable* AOTConstantPoolResolver::_processed_classes = nullptr;
 
@@ -163,6 +173,29 @@ void AOTConstantPoolResolver::dumptime_resolve_constants(InstanceKlass* ik, TRAP
       break;
     }
   }
+
+  // Normally, we don't want to archive any CP entries that were not resolved
+  // in the training run. Otherwise the AOT/JIT may inline too much code that has not
+  // been executed.
+  //
+  // However, we want to aggressively resolve all klass/field/method constants for
+  // LambdaForm Invoker Holder classes, Lambda Proxy classes, and LambdaForm classes,
+  // so that the compiler can inline through them.
+  if (SystemDictionaryShared::is_builtin_loader(ik->class_loader_data())) {
+    bool eager_resolve = false;
+
+    if (LambdaFormInvokers::may_be_regenerated_class(ik->name())) {
+      eager_resolve = true;
+    }
+    if (ik->is_hidden() && HeapShared::is_archivable_hidden_klass(ik)) {
+      eager_resolve = true;
+    }
+
+    if (eager_resolve) {
+      preresolve_class_cp_entries(THREAD, ik, nullptr);
+      preresolve_field_and_method_cp_entries(THREAD, ik, nullptr);
+    }
+  }
 }
 
 // This works only for the boot/platform/app loaders
@@ -243,6 +276,8 @@ void AOTConstantPoolResolver::preresolve_field_and_method_cp_entries(JavaThread*
       bcs.next();
       Bytecodes::Code raw_bc = bcs.raw_code();
       switch (raw_bc) {
+      case Bytecodes::_getstatic:
+      case Bytecodes::_putstatic:
       case Bytecodes::_getfield:
       case Bytecodes::_putfield:
         maybe_resolve_fmi_ref(ik, m, raw_bc, bcs.get_index_u2(), preresolve_list, THREAD);
@@ -254,6 +289,7 @@ void AOTConstantPoolResolver::preresolve_field_and_method_cp_entries(JavaThread*
       case Bytecodes::_invokespecial:
       case Bytecodes::_invokevirtual:
       case Bytecodes::_invokeinterface:
+      case Bytecodes::_invokestatic:
         maybe_resolve_fmi_ref(ik, m, raw_bc, bcs.get_index_u2(), preresolve_list, THREAD);
         if (HAS_PENDING_EXCEPTION) {
           CLEAR_PENDING_EXCEPTION; // just ignore
@@ -290,11 +326,28 @@ void AOTConstantPoolResolver::maybe_resolve_fmi_ref(InstanceKlass* ik, Method* m
   }
 
   Klass* resolved_klass = cp->klass_ref_at(raw_index, bc, CHECK);
+  const char* is_static = "";
 
   switch (bc) {
+  case Bytecodes::_getstatic:
+  case Bytecodes::_putstatic:
+    if (!VM_Version::supports_fast_class_init_checks()) {
+      return; // Do not resolve since interpreter lacks fast clinit barriers support
+    }
+    InterpreterRuntime::resolve_get_put(bc, raw_index, mh, cp, false /*initialize_holder*/, CHECK);
+    is_static = " *** static";
+    break;
   case Bytecodes::_getfield:
   case Bytecodes::_putfield:
     InterpreterRuntime::resolve_get_put(bc, raw_index, mh, cp, false /*initialize_holder*/, CHECK);
+    break;
+
+  case Bytecodes::_invokestatic:
+    if (!VM_Version::supports_fast_class_init_checks()) {
+      return; // Do not resolve since interpreter lacks fast clinit barriers support
+    }
+    InterpreterRuntime::cds_resolve_invoke(bc, raw_index, cp, CHECK);
+    is_static = " *** static";
     break;
 
   case Bytecodes::_invokevirtual:
@@ -316,11 +369,11 @@ void AOTConstantPoolResolver::maybe_resolve_fmi_ref(InstanceKlass* ik, Method* m
     bool resolved = cp->is_resolved(raw_index, bc);
     Symbol* name = cp->name_ref_at(raw_index, bc);
     Symbol* signature = cp->signature_ref_at(raw_index, bc);
-    log_trace(cds, resolve)("%s %s [%3d] %s -> %s.%s:%s",
+    log_trace(cds, resolve)("%s %s [%3d] %s -> %s.%s:%s%s",
                             (resolved ? "Resolved" : "Failed to resolve"),
                             Bytecodes::name(bc), cp_index, ik->external_name(),
                             resolved_klass->external_name(),
-                            name->as_C_string(), signature->as_C_string());
+                            name->as_C_string(), signature->as_C_string(), is_static);
   }
 }
 
@@ -568,3 +621,152 @@ bool AOTConstantPoolResolver::is_in_archivebuilder_buffer(address p) {
   }
 }
 #endif
+
+int AOTConstantPoolResolver::class_reflection_data_flags(InstanceKlass* ik, TRAPS) {
+  assert(java_lang_Class::has_reflection_data(ik->java_mirror()), "must be");
+
+  HandleMark hm(THREAD);
+  JavaCallArguments args(Handle(THREAD, ik->java_mirror()));
+  JavaValue result(T_INT);
+  JavaCalls::call_special(&result,
+                          vmClasses::Class_klass(),
+                          vmSymbols::encodeReflectionData_name(),
+                          vmSymbols::void_int_signature(),
+                          &args, CHECK_0);
+  int flags = result.get_jint();
+  log_info(cds)("Encode ReflectionData: %s (flags=0x%x)", ik->external_name(), flags);
+  return flags;
+}
+
+void AOTConstantPoolResolver::generate_reflection_data(JavaThread* current, InstanceKlass* ik, int rd_flags) {
+  log_info(cds)("Generate ReflectionData: %s (flags=" INT32_FORMAT_X ")", ik->external_name(), rd_flags);
+  JavaThread* THREAD = current; // for exception macros
+  JavaCallArguments args(Handle(THREAD, ik->java_mirror()));
+  args.push_int(rd_flags);
+  JavaValue result(T_OBJECT);
+  JavaCalls::call_special(&result,
+                          vmClasses::Class_klass(),
+                          vmSymbols::generateReflectionData_name(),
+                          vmSymbols::int_void_signature(),
+                          &args, THREAD);
+  if (HAS_PENDING_EXCEPTION) {
+    Handle exc_handle(THREAD, PENDING_EXCEPTION);
+    CLEAR_PENDING_EXCEPTION;
+
+    log_warning(cds)("Exception during Class::generateReflectionData() call for %s", ik->external_name());
+    LogStreamHandle(Debug, cds) log;
+    if (log.is_enabled()) {
+      java_lang_Throwable::print_stack_trace(exc_handle, &log);
+    }
+  }
+}
+
+Klass* AOTConstantPoolResolver::resolve_boot_class_or_fail(const char* class_name, TRAPS) {
+  Handle class_loader;
+  TempNewSymbol class_name_sym = SymbolTable::new_symbol(class_name);
+  return SystemDictionary::resolve_or_fail(class_name_sym, class_loader, true, THREAD);
+}
+
+void AOTConstantPoolResolver::trace_dynamic_proxy_class(oop loader, const char* proxy_name, objArrayOop interfaces, int access_flags) {
+  if (interfaces->length() < 1) {
+    return;
+  }
+  if (ClassListWriter::is_enabled()) {
+    const char* loader_name = ArchiveUtils::builtin_loader_name_or_null(loader);
+    if (loader_name != nullptr) {
+      stringStream ss;
+      ss.print("%s %s %d %d", loader_name, proxy_name, access_flags, interfaces->length());
+      for (int i = 0; i < interfaces->length(); i++) {
+        oop mirror = interfaces->obj_at(i);
+        Klass* k = java_lang_Class::as_Klass(mirror);
+        ss.print(" %s", k->name()->as_C_string());
+      }
+      ClassListWriter w;
+      w.stream()->print_cr("@dynamic-proxy %s", ss.freeze());
+    }
+  }
+  if (CDSConfig::is_dumping_preimage_static_archive()) {
+    FinalImageRecipes::add_dynamic_proxy_class(loader, proxy_name, interfaces, access_flags);
+  }
+}
+
+void AOTConstantPoolResolver::init_dynamic_proxy_cache(TRAPS) {
+  static bool inited = false;
+  if (inited) {
+    return;
+  }
+  inited = true;
+
+  Klass* klass = resolve_boot_class_or_fail("java/lang/reflect/Proxy", CHECK);
+  TempNewSymbol method = SymbolTable::new_symbol("initCacheForCDS");
+  TempNewSymbol signature = SymbolTable::new_symbol("(Ljava/lang/ClassLoader;Ljava/lang/ClassLoader;)V");
+
+  JavaCallArguments args;
+  args.push_oop(Handle(THREAD, SystemDictionary::java_platform_loader()));
+  args.push_oop(Handle(THREAD, SystemDictionary::java_system_loader()));
+  JavaValue result(T_VOID);
+  JavaCalls::call_static(&result,
+                         klass,
+                         method,
+                         signature,
+                         &args, CHECK);
+}
+
+
+void AOTConstantPoolResolver::define_dynamic_proxy_class(Handle loader, Handle proxy_name, Handle interfaces, int access_flags, TRAPS) {
+  if (!CDSConfig::is_dumping_dynamic_proxies()) {
+    return;
+  }
+  init_dynamic_proxy_cache(CHECK);
+
+  Klass* klass = resolve_boot_class_or_fail("java/lang/reflect/Proxy$ProxyBuilder", CHECK);
+  TempNewSymbol method = SymbolTable::new_symbol("defineProxyClassForCDS");
+  TempNewSymbol signature = SymbolTable::new_symbol("(Ljava/lang/ClassLoader;Ljava/lang/String;[Ljava/lang/Class;I)Ljava/lang/Class;");
+
+  JavaCallArguments args;
+  args.push_oop(Handle(THREAD, loader()));
+  args.push_oop(Handle(THREAD, proxy_name()));
+  args.push_oop(Handle(THREAD, interfaces()));
+  args.push_int(access_flags);
+  JavaValue result(T_OBJECT);
+  JavaCalls::call_static(&result,
+                         klass,
+                         method,
+                         signature,
+                         &args, CHECK);
+
+  // Assumptions:
+  // FMG is archived, which means -modulepath and -Xbootclasspath are both not specified.
+  // All named modules are loaded from the system modules files.
+  // TODO: test support for -Xbootclasspath after JDK-8322322. Some of the code below need to be changed.
+  // TODO: we just give dummy shared_classpath_index for the generated class so that it will be archived.
+  //       The index is not used at runtime (see SystemDictionaryShared::load_shared_class_for_builtin_loader, which
+  //       uses a null ProtectionDomain for this class)
+  oop mirror = result.get_oop();
+  assert(mirror != nullptr, "class must have been generated if not OOM");
+  InstanceKlass* ik = InstanceKlass::cast(java_lang_Class::as_Klass(mirror));
+  if (ik->is_shared_boot_class() || ik->is_shared_platform_class()) {
+    assert(ik->module()->is_named(), "dynamic proxies defined in unnamed modules for boot/platform loaders not supported");
+    ik->set_shared_classpath_index(0);
+  } else {
+    assert(ik->is_shared_app_class(), "must be");
+    ik->set_shared_classpath_index(ClassLoaderExt::app_class_paths_start_index());
+  }
+
+  ArchiveBuilder::alloc_stats()->record_dynamic_proxy_class();
+  if (log_is_enabled(Info, cds, dynamic, proxy)) {
+    ResourceMark rm(THREAD);
+    stringStream ss;
+    const char* prefix = "";
+    ss.print("%s (%-7s, cp index = %d) implements ", ik->external_name(),
+             ArchiveUtils::builtin_loader_name(loader()), ik->shared_classpath_index());
+    objArrayOop intfs = (objArrayOop)interfaces();
+    for (int i = 0; i < intfs->length(); i++) {
+      oop intf_mirror = intfs->obj_at(i);
+      ss.print("%s%s", prefix, java_lang_Class::as_Klass(intf_mirror)->external_name());
+      prefix = ", ";
+    }
+
+    log_info(cds, dynamic, proxy)("%s", ss.freeze());
+  }
+}

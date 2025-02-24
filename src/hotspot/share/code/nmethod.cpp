@@ -29,6 +29,7 @@
 #include "code/nativeInst.hpp"
 #include "code/nmethod.inline.hpp"
 #include "code/scopeDesc.hpp"
+#include "code/SCCache.hpp"
 #include "compiler/abstractCompiler.hpp"
 #include "compiler/compilationLog.hpp"
 #include "compiler/compileBroker.hpp"
@@ -784,6 +785,8 @@ class CheckClass : public MetadataClosure {
       klass = ((Method*)md)->method_holder();
     } else if (md->is_methodData()) {
       klass = ((MethodData*)md)->method()->method_holder();
+    } else if (md->is_methodCounters()) {
+      klass = ((MethodCounters*)md)->method()->method_holder();
     } else {
       md->print();
       ShouldNotReachHere();
@@ -1132,6 +1135,7 @@ nmethod* nmethod::new_nmethod(const methodHandle& method,
   ImplicitExceptionTable* nul_chk_table,
   AbstractCompiler* compiler,
   CompLevel comp_level
+  , SCCEntry* scc_entry
 #if INCLUDE_JVMCI
   , char* speculations,
   int speculations_len,
@@ -1176,7 +1180,7 @@ nmethod* nmethod::new_nmethod(const methodHandle& method,
     nmethod(method(), compiler->type(), nmethod_size, immutable_data_size,
             compile_id, entry_bci, immutable_data, offsets, orig_pc_offset,
             debug_info, dependencies, code_buffer, frame_size, oop_maps,
-            handler_table, nul_chk_table, compiler, comp_level
+            handler_table, nul_chk_table, compiler, comp_level, scc_entry
 #if INCLUDE_JVMCI
             , speculations,
             speculations_len,
@@ -1212,6 +1216,18 @@ nmethod* nmethod::new_nmethod(const methodHandle& method,
   }
   // Do verification and logging outside CodeCache_lock.
   if (nm != nullptr) {
+
+#ifdef ASSERT
+    LogTarget(Debug, scc, nmethod) log;
+    if (log.is_enabled()) {
+      LogStream out(log);
+      out.print_cr("== new_nmethod 2");
+      FlagSetting fs(PrintRelocations, true);
+      nm->print_on_impl(&out);
+      nm->decode(&out);
+    }
+#endif
+
     // Safepoints in nmethod::verify aren't allowed because nm hasn't been installed yet.
     DEBUG_ONLY(nm->verify();)
     nm->log_new_nmethod();
@@ -1238,7 +1254,10 @@ void nmethod::init_defaults(CodeBuffer *code_buffer, CodeOffsets* offsets) {
   _has_flushed_dependencies   = 0;
   _is_unlinked                = 0;
   _load_reported              = 0; // jvmti state
+  _preloaded                  = 0;
+  _has_clinit_barriers        = 0;
 
+  _used                       = false;
   _deoptimization_status      = not_marked;
 
   // SECT_CONSTS is first in code buffer so the offset should be 0.
@@ -1310,6 +1329,8 @@ nmethod::nmethod(
     // something that will never match a pc like the nmethod vtable entry
     _deopt_handler_offset    = 0;
     _deopt_mh_handler_offset = 0;
+    _scc_entry               = nullptr;
+    _method_profiling_count  = 0;
     _unwind_handler_offset   = 0;
 
     CHECKED_CAST(_metadata_offset, uint16_t, (align_up(code_buffer->total_oop_size(), oopSize)));
@@ -1370,7 +1391,7 @@ nmethod::nmethod(
 #if defined(SUPPORT_DATA_STRUCTS)
     if (AbstractDisassembler::show_structs()) {
       if (PrintRelocations) {
-        print_relocations();
+        print_relocations_on(tty);
         tty->print_cr("- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - ");
       }
     }
@@ -1413,6 +1434,7 @@ nmethod::nmethod(
   ImplicitExceptionTable* nul_chk_table,
   AbstractCompiler* compiler,
   CompLevel comp_level
+  , SCCEntry* scc_entry
 #if INCLUDE_JVMCI
   , char* speculations,
   int speculations_len,
@@ -1432,6 +1454,8 @@ nmethod::nmethod(
     assert_locked_or_safepoint(CodeCache_lock);
 
     init_defaults(code_buffer, offsets);
+    _scc_entry      = scc_entry;
+    _method_profiling_count  = 0;
 
     _osr_entry_point = code_begin() + offsets->value(CodeOffsets::OSR_Entry);
     _entry_bci       = entry_bci;
@@ -1563,12 +1587,13 @@ nmethod::nmethod(
 // Print a short set of xml attributes to identify this nmethod.  The
 // output should be embedded in some other element.
 void nmethod::log_identity(xmlStream* log) const {
-  log->print(" compile_id='%d'", compile_id());
+  assert(log->inside_attrs_or_error(), "printing attributes");
+  log->print(" code_compile_id='%d'", compile_id());
   const char* nm_kind = compile_kind();
-  if (nm_kind != nullptr)  log->print(" compile_kind='%s'", nm_kind);
-  log->print(" compiler='%s'", compiler_name());
+  if (nm_kind != nullptr)  log->print(" code_compile_kind='%s'", nm_kind);
+  log->print(" code_compiler='%s'", compiler_name());
   if (TieredCompilation) {
-    log->print(" level='%d'", comp_level());
+    log->print(" code_compile_level='%d'", comp_level());
   }
 #if INCLUDE_JVMCI
   if (jvmci_nmethod_data() != nullptr) {
@@ -1689,7 +1714,7 @@ void nmethod::print_nmethod(bool printmethod) {
       tty->print_cr("- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - ");
     }
     if (printmethod || PrintRelocations || CompilerOracle::has_option(mh, CompileCommandEnum::PrintRelocations)) {
-      print_relocations();
+      print_relocations_on(tty);
       tty->print_cr("- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - ");
     }
     if (printmethod || PrintDependencies || CompilerOracle::has_option(mh, CompileCommandEnum::PrintDependencies)) {
@@ -1937,6 +1962,14 @@ void nmethod::inc_decompile_count() {
   mdo->inc_decompile_count();
 }
 
+void nmethod::inc_method_profiling_count() {
+  Atomic::inc(&_method_profiling_count);
+}
+
+uint64_t nmethod::method_profiling_count() {
+  return _method_profiling_count;
+}
+
 bool nmethod::try_transition(signed char new_state_int) {
   signed char new_state = new_state_int;
   assert_lock_strong(NMethodState_lock);
@@ -1982,7 +2015,7 @@ void nmethod::unlink_from_method() {
 }
 
 // Invalidate code
-bool nmethod::make_not_entrant() {
+bool nmethod::make_not_entrant(bool make_not_entrant) {
   // This can be called while the system is already at a safepoint which is ok
   NoSafepointVerifier nsv;
 
@@ -2045,6 +2078,13 @@ bool nmethod::make_not_entrant() {
     // Remove nmethod from method.
     unlink_from_method();
 
+    if (make_not_entrant) {
+      // Keep cached code if it was simply replaced
+      // otherwise make it not entrant too.
+      SCCache::invalidate(_scc_entry);
+    }
+
+    CompileBroker::log_not_entrant(this);
   } // leave critical region under NMethodState_lock
 
 #if INCLUDE_JVMCI
@@ -2187,6 +2227,12 @@ void nmethod::post_compiled_method(CompileTask* task) {
   task->set_nm_content_size(content_size());
   task->set_nm_insts_size(insts_size());
   task->set_nm_total_size(total_size());
+
+  // task->is_scc() is true only for loaded cached code.
+  // nmethod::_scc_entry is set for loaded and stored cached code
+  // to invalidate the entry when nmethod is deoptimized.
+  // There is option to not store in archive cached code.
+  guarantee((_scc_entry != nullptr) || !task->is_scc() || VerifyCachedCode, "sanity");
 
   // JVMTI -- compiled method notification (must be done outside lock)
   post_compiled_method_load_event();
@@ -3121,6 +3167,9 @@ void nmethod::print_on_impl(outputStream* st) const {
                                              p2i(speculations_end()),
                                              speculations_size());
 #endif
+  if (SCCache::is_on() && _scc_entry != nullptr) {
+    _scc_entry->print(st);
+  }
 }
 
 void nmethod::print_code() {
@@ -3220,11 +3269,11 @@ void nmethod::print_scopes_on(outputStream* st) {
 #endif
 
 #ifndef PRODUCT  // RelocIterator does support printing only then.
-void nmethod::print_relocations() {
+void nmethod::print_relocations_on(outputStream* st) {
   ResourceMark m;       // in case methods get printed via the debugger
-  tty->print_cr("relocations:");
+  st->print_cr("relocations:");
   RelocIterator iter(this);
-  iter.print();
+  iter.print_on(st);
 }
 #endif
 
@@ -3579,6 +3628,16 @@ const char* nmethod::reloc_string_for(u_char* begin, u_char* end) {
           st.print("runtime_call");
           CallRelocation* r = (CallRelocation*)iter.reloc();
           address dest = r->destination();
+          if (StubRoutines::contains(dest)) {
+            StubCodeDesc* desc = StubCodeDesc::desc_for(dest);
+            if (desc == nullptr) {
+              desc = StubCodeDesc::desc_for(dest + frame::pc_return_offset);
+            }
+            if (desc != nullptr) {
+              st.print(" Stub::%s", desc->name());
+              return st.as_string();
+            }
+          }
           CodeBlob* cb = CodeCache::find_blob(dest);
           if (cb != nullptr) {
             st.print(" %s", cb->name());

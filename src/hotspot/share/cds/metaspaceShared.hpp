@@ -48,6 +48,8 @@ enum MapArchiveResult {
   MAP_ARCHIVE_OTHER_FAILURE
 };
 
+class StaticArchiveBuilder;
+
 // Class Data Sharing Support
 class MetaspaceShared : AllStatic {
   static ReservedSpace _symbol_rs;  // used only during -Xshare:dump
@@ -59,6 +61,7 @@ class MetaspaceShared : AllStatic {
   static char* _requested_base_address;
   static bool _use_optimized_module_handling;
   static Array<Method*>* _archived_method_handle_intrinsics;
+  static int volatile _preimage_static_archive_dumped;
 
  public:
   enum {
@@ -67,8 +70,9 @@ class MetaspaceShared : AllStatic {
     ro = 1,  // read-only shared space
     bm = 2,  // relocation bitmaps (freed after file mapping is finished)
     hp = 3,  // heap region
+    cc = 4,  // cached code
     num_core_region = 2,       // rw and ro
-    n_regions = 4              // total number of regions
+    n_regions = 5              // total number of regions
   };
 
   static void prepare_for_dumping() NOT_CDS_RETURN;
@@ -88,6 +92,7 @@ public:
   }
 
   static void initialize_for_static_dump() NOT_CDS_RETURN;
+  static void open_static_archive() NOT_CDS_RETURN;
   static void initialize_runtime_shared_and_meta_spaces() NOT_CDS_RETURN;
   static void post_initialize(TRAPS) NOT_CDS_RETURN;
 
@@ -109,6 +114,8 @@ public:
 
   static bool is_shared_dynamic(void* p) NOT_CDS_RETURN_(false);
   static bool is_shared_static(void* p) NOT_CDS_RETURN_(false);
+
+  static bool is_recording_preimage_static_archive() NOT_CDS_RETURN_(false);
 
   static void unrecoverable_loading_error(const char* message = nullptr);
   static void unrecoverable_writing_error(const char* message = nullptr);
@@ -132,7 +139,6 @@ public:
 
   static bool try_link_class(JavaThread* current, InstanceKlass* ik);
   static void link_shared_classes(bool jcmd_request, TRAPS) NOT_CDS_RETURN;
-  static bool link_class_for_cds(InstanceKlass* ik, TRAPS) NOT_CDS_RETURN_(false);
   static bool may_be_eagerly_linked(InstanceKlass* ik) NOT_CDS_RETURN_(false);
 
 #if INCLUDE_CDS
@@ -178,8 +184,8 @@ public:
 
 private:
   static void read_extra_data(JavaThread* current, const char* filename) NOT_CDS_RETURN;
+  static void fork_and_dump_final_static_archive();
   static bool write_static_archive(ArchiveBuilder* builder, FileMapInfo* map_info, ArchiveHeapInfo* heap_info);
-  static FileMapInfo* open_static_archive();
   static FileMapInfo* open_dynamic_archive();
   // use_requested_addr: If true (default), attempt to map at the address the
   static MapArchiveResult map_archives(FileMapInfo* static_mapinfo, FileMapInfo* dynamic_mapinfo,

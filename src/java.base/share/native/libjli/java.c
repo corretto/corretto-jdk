@@ -1348,6 +1348,10 @@ ParseArguments(int *pargc, char ***pargv,
         if (JLI_StrCmp(arg, "-Xshare:dump") == 0) {
             dumpSharedSpaces = JNI_TRUE;
         }
+        if (JLI_StrCmp(arg, "-XX:AOTMode=create") == 0) {
+            // Alias for -Xshare:dump
+            dumpSharedSpaces = JNI_TRUE;
+        }
     }
 
     if (*pwhat == NULL && --argc >= 0) {

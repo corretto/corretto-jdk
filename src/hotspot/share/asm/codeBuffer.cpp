@@ -28,6 +28,7 @@
 #include "compiler/disassembler.hpp"
 #include "logging/log.hpp"
 #include "oops/klass.inline.hpp"
+#include "oops/methodCounters.hpp"
 #include "oops/methodData.hpp"
 #include "oops/oop.inline.hpp"
 #include "runtime/icache.hpp"
@@ -536,6 +537,9 @@ void CodeBuffer::finalize_oop_references(const methodHandle& mh) {
             if (m->is_methodData()) {
               m = ((MethodData*)m)->method();
             }
+            if (m->is_methodCounters()) {
+              m = ((MethodCounters*)m)->method();
+            }
             if (m->is_method()) {
               m = ((Method*)m)->method_holder();
             }
@@ -559,6 +563,9 @@ void CodeBuffer::finalize_oop_references(const methodHandle& mh) {
       if (oop_recorder()->is_real(m)) {
         if (m->is_methodData()) {
           m = ((MethodData*)m)->method();
+        }
+        if (m->is_methodCounters()) {
+          m = ((MethodCounters*)m)->method();
         }
         if (m->is_method()) {
           m = ((Method*)m)->method_holder();
@@ -722,7 +729,7 @@ void CodeBuffer::copy_code_to(CodeBlob* dest_blob) {
 #ifndef PRODUCT
   if (PrintNMethods && (WizardMode || Verbose)) {
     tty->print("done with CodeBuffer:");
-    ((CodeBuffer*)this)->print();
+    ((CodeBuffer*)this)->print_on(tty);
   }
 #endif //PRODUCT
 
@@ -861,7 +868,7 @@ void CodeBuffer::expand(CodeSection* which_cs, csize_t amount) {
 #ifndef PRODUCT
   if (PrintNMethods && (WizardMode || Verbose)) {
     tty->print("expanding CodeBuffer:");
-    this->print();
+    this->print_on(tty);
   }
 
   if (StressCodeBuffers && blob() != nullptr) {
@@ -949,7 +956,7 @@ void CodeBuffer::expand(CodeSection* which_cs, csize_t amount) {
   _decode_begin = nullptr;  // sanity
   if (PrintNMethods && (WizardMode || Verbose)) {
     tty->print("expanded CodeBuffer:");
-    this->print();
+    this->print_on(tty);
   }
 #endif //PRODUCT
 }
@@ -1001,8 +1008,8 @@ void CodeBuffer::verify_section_allocation() {
       }
       guarantee(other->disjoint(sect), "sanity");
     }
-    guarantee(sect->end() <= tend, "sanity");
-    guarantee(sect->end() <= sect->limit(), "sanity");
+    guarantee(sect->end() <= tend, "sanity, sect_end: " PTR_FORMAT " tend: " PTR_FORMAT " size: %d", p2i(sect->end()), p2i(tend), (int)_total_size);
+    guarantee(sect->end() <= sect->limit(), "sanity, sect_end: " PTR_FORMAT " sect_limit: " PTR_FORMAT, p2i(sect->end()), p2i(sect->limit()));
   }
 }
 
@@ -1010,14 +1017,14 @@ void CodeBuffer::log_section_sizes(const char* name) {
   if (xtty != nullptr) {
     ttyLocker ttyl;
     // log info about buffer usage
-    xtty->print_cr("<blob name='%s' total_size='%d'>", name, _total_size);
+    xtty->head("blob name='%s' total_size='%d'", name, _total_size);
     for (int n = (int) CodeBuffer::SECT_FIRST; n < (int) CodeBuffer::SECT_LIMIT; n++) {
       CodeSection* sect = code_section(n);
       if (!sect->is_allocated() || sect->is_empty())  continue;
-      xtty->print_cr("<sect index='%d' capacity='%d' size='%d' remaining='%d'/>",
-                     n, sect->capacity(), sect->size(), sect->remaining());
+      xtty->elem("sect index='%d' capacity='%d' size='%d' remaining='%d'",
+                 n, sect->capacity(), sect->size(), sect->remaining());
     }
-    xtty->print_cr("</blob>");
+    xtty->tail("blob");
   }
 }
 
@@ -1059,24 +1066,31 @@ void CodeBuffer::decode() {
   _decode_begin = insts_end();
 }
 
-void CodeSection::print(const char* name) {
+void CodeSection::print_on(outputStream* st, const char* name) {
   csize_t locs_size = locs_end() - locs_start();
-  tty->print_cr(" %7s.code = " PTR_FORMAT " : " PTR_FORMAT " : " PTR_FORMAT " (%d of %d)",
-                name, p2i(start()), p2i(end()), p2i(limit()), size(), capacity());
-  tty->print_cr(" %7s.locs = " PTR_FORMAT " : " PTR_FORMAT " : " PTR_FORMAT " (%d of %d) point=%d",
-                name, p2i(locs_start()), p2i(locs_end()), p2i(locs_limit()), locs_size, locs_capacity(), locs_point_off());
+  st->print_cr(" %7s.code = " PTR_FORMAT " : " PTR_FORMAT " : " PTR_FORMAT " (%d of %d)",
+               name, p2i(start()), p2i(end()), p2i(limit()), size(), capacity());
+  st->print_cr(" %7s.locs = " PTR_FORMAT " : " PTR_FORMAT " : " PTR_FORMAT " (%d of %d) point=%d",
+               name, p2i(locs_start()), p2i(locs_end()), p2i(locs_limit()), locs_size, locs_capacity(), locs_point_off());
   if (PrintRelocations && (locs_size != 0)) {
     RelocIterator iter(this);
-    iter.print();
+    iter.print_on(st);
   }
 }
 
-void CodeBuffer::print() {
-  tty->print_cr("CodeBuffer:");
+void CodeBuffer::print_on(outputStream* st) {
+#if 0
+  if (this == nullptr) { // gcc complains 'nonnull' argument 'this' compared to NULL 
+    st->print_cr("null CodeBuffer pointer");
+    return;
+  }
+#endif
+
+  st->print_cr("CodeBuffer:%s", name());
   for (int n = 0; n < (int)SECT_LIMIT; n++) {
     // print each section
     CodeSection* cs = code_section(n);
-    cs->print(code_section_name(n));
+    cs->print_on(st, code_section_name(n));
   }
 }
 

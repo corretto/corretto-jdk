@@ -334,6 +334,13 @@ void CompilerConfig::set_compilation_policy_flags() {
     }
   }
 
+  // Current Leyden implementation requires SegmentedCodeCache: the archive-backed code
+  // cache would be initialized only then. Force SegmentedCodeCache if we are loading/storing
+  // cached code. TODO: Resolve this in code cache initialization code.
+  if (!SegmentedCodeCache && (LoadCachedCode || StoreCachedCode)) {
+    FLAG_SET_ERGO(SegmentedCodeCache, true);
+  }
+
   if (CompileThresholdScaling < 0) {
     vm_exit_during_initialization("Negative value specified for CompileThresholdScaling", nullptr);
   }
@@ -579,6 +586,17 @@ void CompilerConfig::ergo_initialize() {
   // Do JVMCI specific settings
   set_jvmci_specific_flags();
 #endif
+
+  if (PreloadOnly) {
+    // Disable profiling/counter updates in interpreter and C1.
+    // This effectively disables most of the normal JIT (re-)compilations.
+    FLAG_SET_DEFAULT(ProfileInterpreter, false);
+    FLAG_SET_DEFAULT(UseOnStackReplacement, false);
+    FLAG_SET_DEFAULT(UseLoopCounter, false);
+
+    // Disable compilations through training data replay.
+    FLAG_SET_DEFAULT(ReplayTraining, false);
+  }
 
   if (UseOnStackReplacement && !UseLoopCounter) {
     warning("On-stack-replacement requires loop counters; enabling loop counters");

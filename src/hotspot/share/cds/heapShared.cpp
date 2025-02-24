@@ -28,6 +28,7 @@
 #include "cds/archiveHeapLoader.hpp"
 #include "cds/archiveHeapWriter.hpp"
 #include "cds/archiveUtils.hpp"
+#include "cds/cdsAccess.hpp"
 #include "cds/cdsConfig.hpp"
 #include "cds/cdsEnumKlass.hpp"
 #include "cds/cdsHeapVerifier.hpp"
@@ -86,6 +87,17 @@ struct ArchivableStaticFieldInfo {
   }
 };
 
+class HeapShared::ContextMark : public StackObj {
+  ResourceMark rm;
+public:
+  ContextMark(const char* c) : rm{} {
+    _context->push(c);
+  }
+  ~ContextMark() {
+    _context->pop();
+  }
+};
+
 DumpedInternedStrings *HeapShared::_dumped_interned_strings = nullptr;
 
 size_t HeapShared::_alloc_count[HeapShared::ALLOC_STAT_SLOTS];
@@ -119,6 +131,7 @@ static ArchivableStaticFieldInfo archive_subgraph_entry_fields[] = {
   {"java/lang/ModuleLayer",                       "EMPTY_LAYER"},
   {"java/lang/module/Configuration",              "EMPTY_CONFIGURATION"},
   {"jdk/internal/math/FDBigInteger",              "archivedCaches"},
+  {"java/lang/reflect/Proxy$ProxyBuilder",        "archivedData"},    // FIXME -- requires AOTClassLinking
 
 #ifndef PRODUCT
   {nullptr, nullptr}, // Extra slot for -XX:ArchiveHeapTestClass
@@ -136,7 +149,8 @@ static ArchivableStaticFieldInfo fmg_archive_subgraph_entry_fields[] = {
 
 KlassSubGraphInfo* HeapShared::_dump_time_special_subgraph;
 ArchivedKlassSubGraphInfoRecord* HeapShared::_run_time_special_subgraph;
-GrowableArrayCHeap<oop, mtClassShared>* HeapShared::_pending_roots = nullptr;
+GrowableArrayCHeap<OopHandle, mtClassShared>* HeapShared::_pending_roots = nullptr;
+GrowableArrayCHeap<const char*, mtClassShared>* HeapShared::_context = nullptr;
 GrowableArrayCHeap<OopHandle, mtClassShared>* HeapShared::_root_segments;
 int HeapShared::_root_segment_max_size_elems;
 OopHandle HeapShared::_scratch_basic_type_mirrors[T_VOID+1];
@@ -226,14 +240,15 @@ int HeapShared::append_root(oop obj) {
   assert(Thread::current() == (Thread*)VMThread::vm_thread(), "should be in vm thread");
 
   if (_pending_roots == nullptr) {
-    _pending_roots = new GrowableArrayCHeap<oop, mtClassShared>(500);
+    _pending_roots = new GrowableArrayCHeap<OopHandle, mtClassShared>(500);
   }
 
-  return _pending_roots->append(obj);
+  OopHandle oh(Universe::vm_global(), obj);
+  return _pending_roots->append(oh);
 }
 
 objArrayOop HeapShared::root_segment(int segment_idx) {
-  if (CDSConfig::is_dumping_heap()) {
+  if (CDSConfig::is_dumping_heap() && !CDSConfig::is_dumping_final_static_archive()) {
     assert(Thread::current() == (Thread*)VMThread::vm_thread(), "should be in vm thread");
   } else {
     assert(CDSConfig::is_using_archive(), "must be");
@@ -243,6 +258,174 @@ objArrayOop HeapShared::root_segment(int segment_idx) {
   assert(segment != nullptr, "should have been initialized");
   return segment;
 }
+
+inline unsigned int oop_handle_hash(const OopHandle& oh) {
+  oop o = oh.resolve();
+  if (o == nullptr) {
+    return 0;
+  } else {
+    return o->identity_hash();
+  }
+}
+
+inline bool oop_handle_equals(const OopHandle& a, const OopHandle& b) {
+  return a.resolve() == b.resolve();
+}
+
+class OrigToScratchObjectTable: public ResourceHashtable<OopHandle, OopHandle,
+    36137, // prime number
+    AnyObj::C_HEAP,
+    mtClassShared,
+    oop_handle_hash,
+    oop_handle_equals> {};
+
+static OrigToScratchObjectTable* _orig_to_scratch_object_table = nullptr;
+
+void HeapShared::track_scratch_object(oop orig_obj, oop scratch_obj) {
+  MutexLocker ml(ArchivedObjectTables_lock, Mutex::_no_safepoint_check_flag);
+  if (_orig_to_scratch_object_table == nullptr) {
+    _orig_to_scratch_object_table = new (mtClass)OrigToScratchObjectTable();
+  }
+
+  OopHandle orig_h(Universe::vm_global(), orig_obj);
+  OopHandle scratch_h(Universe::vm_global(), scratch_obj);
+  _orig_to_scratch_object_table->put_when_absent(orig_h, scratch_h);
+}
+
+oop HeapShared::orig_to_scratch_object(oop orig_obj) {
+  MutexLocker ml(ArchivedObjectTables_lock, Mutex::_no_safepoint_check_flag);
+  if (_orig_to_scratch_object_table != nullptr) {
+    OopHandle orig(&orig_obj);
+    OopHandle* v = _orig_to_scratch_object_table->get(orig);
+    if (v != nullptr) {
+      return v->resolve();
+    }
+  }
+  return nullptr;
+}
+
+// Permanent oops are used to support AOT-compiled methods, which may have in-line references
+// to Strings and MH oops.
+//
+// At runtime, these oops are stored in _runtime_permanent_oops (which keeps them alive forever)
+// and are accssed vis CDSAccess::get_archived_object(int).
+struct PermanentOopInfo {
+  int _index;       // Gets assigned only if HeapShared::get_archived_object_permanent_index() has been called on the object
+  int _heap_offset; // Offset of the object from the bottom of the archived heap.
+  PermanentOopInfo(int index, int heap_offset) : _index(index), _heap_offset(heap_offset) {}
+};
+
+class PermanentOopTable: public ResourceHashtable<OopHandle, PermanentOopInfo,
+    36137, // prime number
+    AnyObj::C_HEAP,
+    mtClassShared,
+    oop_handle_hash,
+    oop_handle_equals> {};
+
+static int _dumptime_permanent_oop_count = 0;
+static PermanentOopTable* _dumptime_permanent_oop_table = nullptr;
+static GrowableArrayCHeap<OopHandle, mtClassShared>* _runtime_permanent_oops = nullptr;
+
+// ArchiveHeapWriter adds each archived heap object to _dumptime_permanent_oop_table,
+// so we can remember their offset (from the bottom of the archived heap).
+void HeapShared::add_to_permanent_oop_table(oop obj, int offset) {
+  assert_at_safepoint();
+  if (_dumptime_permanent_oop_table == nullptr) {
+    _dumptime_permanent_oop_table = new (mtClass)PermanentOopTable();
+  }
+
+  PermanentOopInfo info(-1, offset);
+  OopHandle oh(Universe::vm_global(), obj);
+  _dumptime_permanent_oop_table->put_when_absent(oh, info);
+}
+
+// A permanent index is assigned to an archived object ONLY when
+// the AOT compiler calls this function.
+int HeapShared::get_archived_object_permanent_index(oop obj) {
+  MutexLocker ml(ArchivedObjectTables_lock, Mutex::_no_safepoint_check_flag);
+
+  if (!CDSConfig::is_dumping_heap()) {
+    return -1; // Called by the Leyden old workflow
+  }
+  if (_dumptime_permanent_oop_table == nullptr) {
+    return -1;
+  }
+
+  if (_orig_to_scratch_object_table != nullptr) {
+    OopHandle orig(&obj);
+    OopHandle* v = _orig_to_scratch_object_table->get(orig);
+    if (v != nullptr) {
+      obj = v->resolve();
+    }
+  }
+
+  OopHandle tmp(&obj);
+  PermanentOopInfo* info = _dumptime_permanent_oop_table->get(tmp);
+  if (info == nullptr) {
+    return -1;
+  } else {
+    if (info->_index < 0) {
+      info->_index = _dumptime_permanent_oop_count++;
+    }
+    return info->_index;
+  }
+}
+
+oop HeapShared::get_archived_object(int permanent_index) {
+  assert(permanent_index >= 0, "sanity");
+  assert(ArchiveHeapLoader::is_in_use(), "sanity");
+  assert(_runtime_permanent_oops != nullptr, "sanity");
+
+  return _runtime_permanent_oops->at(permanent_index).resolve();
+}
+
+// Remember all archived heap objects that have a permanent index.
+//   table[i] = offset of oop whose permanent index is i.
+void CachedCodeDirectoryInternal::dumptime_init_internal() {
+  const int count = _dumptime_permanent_oop_count;
+  if (count == 0) {
+    // Avoid confusing CDS code with zero-sized tables, just return.
+    log_info(cds)("No permanent oops");
+    _permanent_oop_count = count;
+    _permanent_oop_offsets = nullptr;
+    return;
+  }
+
+  int* table = (int*)CDSAccess::allocate_from_code_cache(count * sizeof(int));
+  for (int i = 0; i < count; i++) {
+    table[count] = -1;
+  }
+  _dumptime_permanent_oop_table->iterate([&](OopHandle o, PermanentOopInfo& info) {
+    int index = info._index;
+    if (index >= 0) {
+      assert(index < count, "sanity");
+      table[index] = info._heap_offset;
+    }
+    return true; // continue
+  });
+
+  for (int i = 0; i < count; i++) {
+    assert(table[i] >= 0, "must be");
+  }
+
+  log_info(cds)("Dumped %d permanent oops", count);
+
+  _permanent_oop_count = count;
+  CDSAccess::set_pointer(&_permanent_oop_offsets, table);
+}
+
+// This is called during the bootstrap of the production run, before any GC can happen.
+// Record each permanent oop in a OopHandle for GC safety.
+void CachedCodeDirectoryInternal::runtime_init_internal() {
+  int count = _permanent_oop_count;
+  int* table = _permanent_oop_offsets;
+  _runtime_permanent_oops = new GrowableArrayCHeap<OopHandle, mtClassShared>();
+  for (int i = 0; i < count; i++) {
+    oop obj = ArchiveHeapLoader::oop_from_offset(table[i]);
+    OopHandle oh(Universe::vm_global(), obj);
+    _runtime_permanent_oops->append(oh);
+  }
+};
 
 void HeapShared::get_segment_indexes(int idx, int& seg_idx, int& int_idx) {
   assert(_root_segment_max_size_elems > 0, "sanity");
@@ -288,7 +471,7 @@ void HeapShared::clear_root(int index) {
   }
 }
 
-bool HeapShared::archive_object(oop obj, KlassSubGraphInfo* subgraph_info) {
+bool HeapShared::archive_object(oop obj, oop referrer, KlassSubGraphInfo* subgraph_info) {
   assert(CDSConfig::is_dumping_heap(), "dump-time only");
 
   assert(!obj->is_stackChunk(), "do not archive stack chunks");
@@ -304,7 +487,7 @@ bool HeapShared::archive_object(oop obj, KlassSubGraphInfo* subgraph_info) {
   } else {
     count_allocation(obj->size());
     ArchiveHeapWriter::add_source_obj(obj);
-    CachedOopInfo info = make_cached_oop_info(obj);
+    CachedOopInfo info = make_cached_oop_info(obj, referrer);
     archived_object_cache()->put_when_absent(obj, info);
     archived_object_cache()->maybe_grow();
     mark_native_pointers(obj);
@@ -391,6 +574,9 @@ public:
 };
 
 void HeapShared::add_scratch_resolved_references(ConstantPool* src, objArrayOop dest) {
+  if (_scratch_references_table == nullptr) {
+    _scratch_references_table = new (mtClass)MetaspaceObjToOopHandleTable();
+  }
   if (SystemDictionaryShared::is_builtin_loader(src->pool_holder()->class_loader_data())) {
     _scratch_references_table->set_oop(src, dest);
   }
@@ -406,10 +592,13 @@ void HeapShared::init_scratch_objects(TRAPS) {
     if (!is_reference_type(bt)) {
       oop m = java_lang_Class::create_basic_type_mirror(type2name(bt), bt, CHECK);
       _scratch_basic_type_mirrors[i] = OopHandle(Universe::vm_global(), m);
+      track_scratch_object(Universe::java_mirror(bt), m);
     }
   }
   _scratch_java_mirror_table = new (mtClass)MetaspaceObjToOopHandleTable();
-  _scratch_references_table = new (mtClass)MetaspaceObjToOopHandleTable();
+  if (_scratch_references_table == nullptr) {
+    _scratch_references_table = new (mtClass)MetaspaceObjToOopHandleTable();
+  }
 }
 
 // Given java_mirror that represents a (primitive or reference) type T,
@@ -448,6 +637,7 @@ oop HeapShared::scratch_java_mirror(Klass* k) {
 }
 
 void HeapShared::set_scratch_java_mirror(Klass* k, oop mirror) {
+  track_scratch_object(k->java_mirror(), mirror);
   _scratch_java_mirror_table->set_oop(k, mirror);
 }
 
@@ -462,6 +652,15 @@ void HeapShared::remove_scratch_objects(Klass* k) {
   _scratch_java_mirror_table->remove_oop(k);
   if (k->is_instance_klass()) {
     _scratch_references_table->remove(InstanceKlass::cast(k)->constants());
+  }
+  if (mirror != nullptr) {
+    OopHandle tmp(&mirror);
+    OopHandle* v = _orig_to_scratch_object_table->get(tmp);
+    if (v != nullptr) {
+      oop scratch_mirror = v->resolve();
+      java_lang_Class::set_klass(scratch_mirror, nullptr);
+      _orig_to_scratch_object_table->remove(tmp);
+    }
   }
 }
 
@@ -646,6 +845,7 @@ void HeapShared::start_scanning_for_oops() {
     // The special subgraph doesn't belong to any class. We use Object_klass() here just
     // for convenience.
     _dump_time_special_subgraph = init_subgraph_info(vmClasses::Object_klass(), false);
+    _context = new GrowableArrayCHeap<const char*, mtClassShared>(250);
 
     // Cache for recording where the archived objects are copied to
     create_archived_object_cache();
@@ -673,12 +873,19 @@ void HeapShared::end_scanning_for_oops() {
 void HeapShared::write_heap(ArchiveHeapInfo *heap_info) {
   {
     NoSafepointVerifier nsv;
-    CDSHeapVerifier::verify();
+    if (!SkipArchiveHeapVerification) {
+      CDSHeapVerifier::verify();
+    }
     check_special_subgraph_classes();
   }
 
   StringTable::write_shared_table(_dumped_interned_strings);
-  ArchiveHeapWriter::write(_pending_roots, heap_info);
+  GrowableArrayCHeap<oop, mtClassShared>* roots = new GrowableArrayCHeap<oop, mtClassShared>(_pending_roots->length());
+  for (int i = 0; i < _pending_roots->length(); i++) {
+    roots->append(_pending_roots->at(i).resolve());
+  }
+  ArchiveHeapWriter::write(roots, heap_info);
+  delete roots;
 
   ArchiveBuilder::OtherROAllocMark mark;
   write_subgraph_info_table();
@@ -825,6 +1032,10 @@ void KlassSubGraphInfo::add_subgraph_object_klass(Klass* orig_k) {
 }
 
 void KlassSubGraphInfo::check_allowed_klass(InstanceKlass* ik) {
+  if (CDSConfig::is_dumping_invokedynamic()) {
+    // FIXME -- this allows LambdaProxy classes
+    return;
+  }
   if (ik->module()->name() == vmSymbols::java_base()) {
     assert(ik->package() != nullptr, "classes in java.base cannot be in unnamed package");
     return;
@@ -1076,6 +1287,19 @@ void HeapShared::resolve_classes(JavaThread* current) {
   if (!ArchiveHeapLoader::is_in_use()) {
     return; // nothing to do
   }
+
+  if (!CDSConfig::is_using_aot_linked_classes()) {
+    assert( _run_time_special_subgraph != nullptr, "must be");
+    Array<Klass*>* klasses = _run_time_special_subgraph->subgraph_object_klasses();
+    if (klasses != nullptr) {
+      for (int i = 0; i < klasses->length(); i++) {
+        Klass* k = klasses->at(i);
+        ExceptionMark em(current); // no exception can happen here
+        resolve_or_init(k, /*do_init*/false, current);
+      }
+    }
+  }
+
   resolve_classes_for_subgraphs(current, archive_subgraph_entry_fields);
   resolve_classes_for_subgraphs(current, fmg_archive_subgraph_entry_fields);
 }
@@ -1347,33 +1571,39 @@ void HeapShared::clear_archived_roots_of(Klass* k) {
   }
 }
 
-class WalkOopAndArchiveClosure: public BasicOopIterateClosure {
+// Push all oops that are referenced by _referencing_obj onto the _stack.
+class HeapShared::ReferentPusher: public BasicOopIterateClosure {
+  PendingOopStack* _stack;
+  GrowableArray<oop> _found_oop_fields;
   int _level;
   bool _record_klasses_only;
   KlassSubGraphInfo* _subgraph_info;
   oop _referencing_obj;
-
-  // The following are for maintaining a stack for determining
-  // CachedOopInfo::_referrer
-  static WalkOopAndArchiveClosure* _current;
-  WalkOopAndArchiveClosure* _last;
  public:
-  WalkOopAndArchiveClosure(int level,
+  ReferentPusher(PendingOopStack* stack,
+                           int level,
                            bool record_klasses_only,
                            KlassSubGraphInfo* subgraph_info,
                            oop orig) :
+    _stack(stack),
+    _found_oop_fields(),
     _level(level),
     _record_klasses_only(record_klasses_only),
     _subgraph_info(subgraph_info),
     _referencing_obj(orig) {
-    _last = _current;
-    _current = this;
   }
-  ~WalkOopAndArchiveClosure() {
-    _current = _last;
+  void do_oop(narrowOop *p) { ReferentPusher::do_oop_work(p); }
+  void do_oop(      oop *p) { ReferentPusher::do_oop_work(p); }
+
+  ~ReferentPusher() {
+    while (_found_oop_fields.length() > 0) {
+      // This produces the exact same traversal order as the previous version
+      // of ReferentPusher that recurses on the C stack -- a depth-first search,
+      // walking the oop fields in _referencing_obj by ascending field offsets.
+      oop obj = _found_oop_fields.pop();
+      _stack->push(PendingOop(obj, _referencing_obj, _level + 1));
+    }
   }
-  void do_oop(narrowOop *p) { WalkOopAndArchiveClosure::do_oop_work(p); }
-  void do_oop(      oop *p) { WalkOopAndArchiveClosure::do_oop_work(p); }
 
  protected:
   template <class T> void do_oop_work(T *p) {
@@ -1393,19 +1623,15 @@ class WalkOopAndArchiveClosure: public BasicOopIterateClosure {
         }
       }
 
-      bool success = HeapShared::archive_reachable_objects_from(
-          _level + 1, _subgraph_info, obj);
-      assert(success, "VM should have exited with unarchivable objects for _level > 1");
+      _found_oop_fields.push(obj);
     }
   }
 
  public:
-  static WalkOopAndArchiveClosure* current()  { return _current;              }
   oop referencing_obj()                       { return _referencing_obj;      }
   KlassSubGraphInfo* subgraph_info()          { return _subgraph_info;        }
 };
 
-WalkOopAndArchiveClosure* WalkOopAndArchiveClosure::_current = nullptr;
 
 // Checks if an oop has any non-null oop fields
 class PointsToOopsChecker : public BasicOopIterateClosure {
@@ -1422,9 +1648,7 @@ public:
   bool result() { return _result; }
 };
 
-HeapShared::CachedOopInfo HeapShared::make_cached_oop_info(oop obj) {
-  WalkOopAndArchiveClosure* walker = WalkOopAndArchiveClosure::current();
-  oop referrer = (walker == nullptr) ? nullptr : walker->referencing_obj();
+HeapShared::CachedOopInfo HeapShared::make_cached_oop_info(oop obj, oop referrer) {
   PointsToOopsChecker points_to_oops_checker;
   obj->oop_iterate(&points_to_oops_checker);
   return CachedOopInfo(referrer, points_to_oops_checker.result());
@@ -1444,23 +1668,58 @@ void HeapShared::init_box_classes(TRAPS) {
   }
 }
 
+void HeapShared::exit_on_error() {
+  if (_context != nullptr) {
+    ResourceMark rm;
+    LogStream ls(Log(cds, heap)::error());
+    ls.print_cr("Context");
+    for (int i = 0; i < _context->length(); i++) {
+      const char* s = _context->at(i);
+      ls.print_cr("- %s", s);
+    }
+  }
+  debug_trace();
+  MetaspaceShared::unrecoverable_writing_error();
+}
+
 // (1) If orig_obj has not been archived yet, archive it.
 // (2) If orig_obj has not been seen yet (since start_recording_subgraph() was called),
 //     trace all  objects that are reachable from it, and make sure these objects are archived.
-// (3) Record the klasses of all orig_obj and all reachable objects.
+// (3) Record the klasses of all objects that are reachable from orig_obj (including those that
+//     were already archived when this function is called)
 bool HeapShared::archive_reachable_objects_from(int level,
                                                 KlassSubGraphInfo* subgraph_info,
                                                 oop orig_obj) {
-  assert(orig_obj != nullptr, "must be");
+  PendingOopStack stack;
+  stack.push(PendingOop(orig_obj, nullptr, level));
 
+  while (stack.length() > 0) {
+    PendingOop po = stack.pop();
+    _object_being_archived = po;
+    bool status = walk_one_object(&stack, po.level(), subgraph_info, po.obj(), po.referrer());
+    _object_being_archived = PendingOop();
+
+    if (!status) {
+      // Don't archive a subgraph root that's too big. For archives static fields, that's OK
+      // as the Java code will take care of initializing this field dynamically.
+      assert(level == 1, "VM should have exited with unarchivable objects for _level > 1");
+      return false;
+    }
+  }
+
+  return true;
+}
+
+bool HeapShared::walk_one_object(PendingOopStack* stack, int level, KlassSubGraphInfo* subgraph_info,
+                                 oop orig_obj, oop referrer) {
+  assert(orig_obj != nullptr, "must be");
   if (!JavaClasses::is_supported_for_archiving(orig_obj)) {
     // This object has injected fields that cannot be supported easily, so we disallow them for now.
     // If you get an error here, you probably made a change in the JDK library that has added
     // these objects that are referenced (directly or indirectly) by static fields.
     ResourceMark rm;
     log_error(cds, heap)("Cannot archive object " PTR_FORMAT " of class %s", p2i(orig_obj), orig_obj->klass()->external_name());
-    debug_trace();
-    MetaspaceShared::unrecoverable_writing_error();
+    exit_on_error();
   }
 
   if (log_is_enabled(Debug, cds, heap) && java_lang_Class::is_instance(orig_obj)) {
@@ -1521,7 +1780,7 @@ bool HeapShared::archive_reachable_objects_from(int level,
   bool record_klasses_only = already_archived;
   if (!already_archived) {
     ++_num_new_archived_objs;
-    if (!archive_object(orig_obj, subgraph_info)) {
+    if (!archive_object(orig_obj, referrer, subgraph_info)) {
       // Skip archiving the sub-graph referenced from the current entry field.
       ResourceMark rm;
       log_error(cds, heap)(
@@ -1536,7 +1795,7 @@ bool HeapShared::archive_reachable_objects_from(int level,
         // We don't know how to handle an object that has been archived, but some of its reachable
         // objects cannot be archived. Bail out for now. We might need to fix this in the future if
         // we have a real use case.
-        MetaspaceShared::unrecoverable_writing_error();
+        exit_on_error();
       }
     }
   }
@@ -1544,8 +1803,13 @@ bool HeapShared::archive_reachable_objects_from(int level,
   Klass *orig_k = orig_obj->klass();
   subgraph_info->add_subgraph_object_klass(orig_k);
 
-  WalkOopAndArchiveClosure walker(level, record_klasses_only, subgraph_info, orig_obj);
-  orig_obj->oop_iterate(&walker);
+  {
+    // Find all the oops that are referenced by orig_obj, push them onto the stack
+    // so we can work on them next.
+    ResourceMark rm;
+    ReferentPusher pusher(stack, level, record_klasses_only, subgraph_info, orig_obj);
+    orig_obj->oop_iterate(&pusher);
+  }
 
   if (CDSConfig::is_initing_classes_at_dump_time()) {
     // The enum klasses are archived with aot-initialized mirror.
@@ -1570,8 +1834,7 @@ bool HeapShared::archive_reachable_objects_from(int level,
 // - No java.lang.Class instance (java mirror) can be included inside
 //   an archived sub-graph. Mirror can only be the sub-graph entry object.
 //
-// The Java heap object sub-graph archiving process (see
-// WalkOopAndArchiveClosure):
+// The Java heap object sub-graph archiving process (see ReferentPusher):
 //
 // 1) Java object sub-graph archiving starts from a given static field
 // within a Class instance (java mirror). If the static field is a
@@ -1719,6 +1982,7 @@ void HeapShared::check_special_subgraph_classes() {
 }
 
 HeapShared::SeenObjectsTable* HeapShared::_seen_objects_table = nullptr;
+HeapShared::PendingOop HeapShared::_object_being_archived;
 int HeapShared::_num_new_walked_objs;
 int HeapShared::_num_new_archived_objs;
 int HeapShared::_num_old_recorded_klasses;
@@ -1985,6 +2249,7 @@ void HeapShared::archive_object_subgraphs(ArchivableStaticFieldInfo fields[],
     const char* klass_name = info->klass_name;
     start_recording_subgraph(info->klass, klass_name, is_full_module_graph);
 
+    ContextMark cm(klass_name);
     // If you have specified consecutive fields of the same klass in
     // fields[], these will be archived in the same
     // {start_recording_subgraph ... done_recording_subgraph} pass to
@@ -1995,6 +2260,7 @@ void HeapShared::archive_object_subgraphs(ArchivableStaticFieldInfo fields[],
         break;
       }
 
+      ContextMark cm(f->field_name);
       archive_reachable_objects_from_static_field(f->klass, f->klass_name,
                                                   f->offset, f->field_name);
     }
@@ -2040,10 +2306,11 @@ bool HeapShared::is_dumped_interned_string(oop o) {
 
 void HeapShared::debug_trace() {
   ResourceMark rm;
-  WalkOopAndArchiveClosure* walker = WalkOopAndArchiveClosure::current();
-  if (walker != nullptr) {
+  oop referrer = _object_being_archived.referrer();
+  if (referrer != nullptr) {
     LogStream ls(Log(cds, heap)::error());
-    CDSHeapVerifier::trace_to_root(&ls, walker->referencing_obj());
+    ls.print_cr("Reference trace");
+    CDSHeapVerifier::trace_to_root(&ls, referrer);
   }
 }
 

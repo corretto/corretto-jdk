@@ -22,6 +22,7 @@
  *
  */
 
+#include "cds/aotConstantPoolResolver.hpp"
 #include "cds/cdsConfig.hpp"
 #include "cds/classListParser.hpp"
 #include "cds/classListWriter.hpp"
@@ -84,7 +85,7 @@
 #include "runtime/jniHandles.inline.hpp"
 #include "runtime/os.inline.hpp"
 #include "runtime/osThread.hpp"
-#include "runtime/perfData.hpp"
+#include "runtime/perfData.inline.hpp"
 #include "runtime/reflection.hpp"
 #include "runtime/synchronizer.hpp"
 #include "runtime/threadIdentifier.hpp"
@@ -227,11 +228,27 @@ extern void trace_class_resolution(Klass* to_class) {
 // java.lang.System //////////////////////////////////////////////////////////////////////
 
 
-JVM_LEAF(jlong, JVM_CurrentTimeMillis(JNIEnv *env, jclass ignored))
+JVM_LEAF_PROF(jboolean, JVM_AOTIsTraining, JVM_AOTIsTraining(JNIEnv *env))
+#if INCLUDE_CDS
+  return MetaspaceShared::is_recording_preimage_static_archive();
+#else
+  return JNI_FALSE;
+#endif // INCLUDE_CDS
+JVM_END
+
+JVM_ENTRY_PROF(void, JVM_AOTEndTraining, JVM_AOTEndTraining(JNIEnv *env))
+#if INCLUDE_CDS
+  if (MetaspaceShared::is_recording_preimage_static_archive()) {
+    MetaspaceShared::preload_and_dump(THREAD);
+  }
+#endif // INCLUDE_CDS
+JVM_END
+
+JVM_LEAF_PROF(jlong, JVM_CurrentTimeMillis, JVM_CurrentTimeMillis(JNIEnv *env, jclass ignored))
   return os::javaTimeMillis();
 JVM_END
 
-JVM_LEAF(jlong, JVM_NanoTime(JNIEnv *env, jclass ignored))
+JVM_LEAF_PROF(jlong, JVM_NanoTime, JVM_NanoTime(JNIEnv *env, jclass ignored))
   return os::javaTimeNanos();
 JVM_END
 
@@ -242,7 +259,7 @@ JVM_END
 const jlong MAX_DIFF_SECS = CONST64(0x0100000000); //  2^32
 const jlong MIN_DIFF_SECS = -MAX_DIFF_SECS; // -2^32
 
-JVM_LEAF(jlong, JVM_GetNanoTimeAdjustment(JNIEnv *env, jclass ignored, jlong offset_secs))
+JVM_LEAF_PROF(jlong, JVM_GetNanoTimeAdjustment, JVM_GetNanoTimeAdjustment(JNIEnv *env, jclass ignored, jlong offset_secs))
   jlong seconds;
   jlong nanos;
 
@@ -277,7 +294,7 @@ JVM_LEAF(jlong, JVM_GetNanoTimeAdjustment(JNIEnv *env, jclass ignored, jlong off
   return (diff * (jlong)1000000000) + nanos;
 JVM_END
 
-JVM_ENTRY(void, JVM_ArrayCopy(JNIEnv *env, jclass ignored, jobject src, jint src_pos,
+JVM_ENTRY_PROF(void, JVM_ArrayCopy, JVM_ArrayCopy(JNIEnv *env, jclass ignored, jobject src, jint src_pos,
                                jobject dst, jint dst_pos, jint length))
   // Check if we have null pointers
   if (src == nullptr || dst == nullptr) {
@@ -316,7 +333,7 @@ static void set_property(Handle props, const char* key, const char* value, TRAPS
  * names and values from the jvm SystemProperty.
  * Which includes some internal and all commandline -D defined properties.
  */
-JVM_ENTRY(jobjectArray, JVM_GetProperties(JNIEnv *env))
+JVM_ENTRY_PROF(jobjectArray, JVM_GetProperties, JVM_GetProperties(JNIEnv *env))
   ResourceMark rm(THREAD);
   HandleMark hm(THREAD);
   int ndx = 0;
@@ -404,7 +421,7 @@ JVM_END
  * same for all VM instances. It cannot be affected by configuration
  * variables such as java.io.tmpdir.
  */
-JVM_ENTRY(jstring, JVM_GetTemporaryDirectory(JNIEnv *env))
+JVM_ENTRY_PROF(jstring, JVM_GetTemporaryDirectory, JVM_GetTemporaryDirectory(JNIEnv *env))
   HandleMark hm(THREAD);
   const char* temp_dir = os::get_temp_directory();
   Handle h = java_lang_String::create_from_platform_dependent_str(temp_dir, CHECK_NULL);
@@ -416,7 +433,7 @@ JVM_END
 
 extern volatile jint vm_created;
 
-JVM_ENTRY_NO_ENV(void, JVM_BeforeHalt())
+JVM_ENTRY_NO_ENV_PROF(void, JVM_BeforeHalt, JVM_BeforeHalt())
   EventShutdown event;
   if (event.should_commit()) {
     event.set_reason("Shutdown requested from Java");
@@ -425,13 +442,13 @@ JVM_ENTRY_NO_ENV(void, JVM_BeforeHalt())
 JVM_END
 
 
-JVM_ENTRY_NO_ENV(void, JVM_Halt(jint code))
+JVM_ENTRY_NO_ENV_PROF(void, JVM_Halt, JVM_Halt(jint code))
   before_exit(thread, true);
   vm_exit(code);
 JVM_END
 
 
-JVM_ENTRY_NO_ENV(void, JVM_GC(void))
+JVM_ENTRY_NO_ENV_PROF(void, JVM_GC, JVM_GC(void))
   if (!DisableExplicitGC) {
     EventSystemGC event;
     event.set_invokedConcurrent(ExplicitGCInvokesConcurrent);
@@ -441,7 +458,7 @@ JVM_ENTRY_NO_ENV(void, JVM_GC(void))
 JVM_END
 
 
-JVM_LEAF(jlong, JVM_MaxObjectInspectionAge(void))
+JVM_LEAF_PROF(jlong, JVM_MaxObjectInspectionAge, JVM_MaxObjectInspectionAge(void))
   return Universe::heap()->millis_since_last_whole_heap_examined();
 JVM_END
 
@@ -452,29 +469,29 @@ static inline jlong convert_size_t_to_jlong(size_t val) {
   LP64_ONLY(return (jlong)MIN2(val, (size_t)max_jlong);)
 }
 
-JVM_ENTRY_NO_ENV(jlong, JVM_TotalMemory(void))
+JVM_ENTRY_NO_ENV_PROF(jlong, JVM_TotalMemory, JVM_TotalMemory(void))
   size_t n = Universe::heap()->capacity();
   return convert_size_t_to_jlong(n);
 JVM_END
 
 
-JVM_ENTRY_NO_ENV(jlong, JVM_FreeMemory(void))
+JVM_ENTRY_NO_ENV_PROF(jlong, JVM_FreeMemory, JVM_FreeMemory(void))
   size_t n = Universe::heap()->unused();
   return convert_size_t_to_jlong(n);
 JVM_END
 
 
-JVM_ENTRY_NO_ENV(jlong, JVM_MaxMemory(void))
+JVM_ENTRY_NO_ENV_PROF(jlong, JVM_MaxMemory, JVM_MaxMemory(void))
   size_t n = Universe::heap()->max_capacity();
   return convert_size_t_to_jlong(n);
 JVM_END
 
 
-JVM_ENTRY_NO_ENV(jint, JVM_ActiveProcessorCount(void))
+JVM_ENTRY_NO_ENV_PROF(jint, JVM_ActiveProcessorCount, JVM_ActiveProcessorCount(void))
   return os::active_processor_count();
 JVM_END
 
-JVM_LEAF(jboolean, JVM_IsUseContainerSupport(void))
+JVM_LEAF_PROF(jboolean, JVM_IsUseContainerSupport, JVM_IsUseContainerSupport(void))
 #ifdef LINUX
   if (UseContainerSupport) {
     return JNI_TRUE;
@@ -494,14 +511,14 @@ JVM_END
 
 // java.lang.Throwable //////////////////////////////////////////////////////
 
-JVM_ENTRY(void, JVM_FillInStackTrace(JNIEnv *env, jobject receiver))
+JVM_ENTRY_PROF(void, JVM_FillInStackTrace, JVM_FillInStackTrace(JNIEnv *env, jobject receiver))
   Handle exception(thread, JNIHandles::resolve_non_null(receiver));
   java_lang_Throwable::fill_in_stack_trace(exception);
 JVM_END
 
 // java.lang.NullPointerException ///////////////////////////////////////////
 
-JVM_ENTRY(jstring, JVM_GetExtendedNPEMessage(JNIEnv *env, jthrowable throwable))
+JVM_ENTRY_PROF(jstring, JVM_GetExtendedNPEMessage, JVM_GetExtendedNPEMessage(JNIEnv *env, jthrowable throwable))
   if (!ShowCodeDetailsInExceptionMessages) return nullptr;
 
   oop exc = JNIHandles::resolve_non_null(throwable);
@@ -528,7 +545,7 @@ JVM_END
 // java.lang.StackTraceElement //////////////////////////////////////////////
 
 
-JVM_ENTRY(void, JVM_InitStackTraceElementArray(JNIEnv *env, jobjectArray elements, jobject backtrace, jint depth))
+JVM_ENTRY_PROF(void, JVM_InitStackTraceElementArray, JVM_InitStackTraceElementArray(JNIEnv *env, jobjectArray elements, jobject backtrace, jint depth))
   Handle backtraceh(THREAD, JNIHandles::resolve(backtrace));
   objArrayOop st = objArrayOop(JNIHandles::resolve(elements));
   objArrayHandle stack_trace(THREAD, st);
@@ -537,7 +554,7 @@ JVM_ENTRY(void, JVM_InitStackTraceElementArray(JNIEnv *env, jobjectArray element
 JVM_END
 
 
-JVM_ENTRY(void, JVM_InitStackTraceElement(JNIEnv* env, jobject element, jobject stackFrameInfo))
+JVM_ENTRY_PROF(void, JVM_InitStackTraceElement, JVM_InitStackTraceElement(JNIEnv* env, jobject element, jobject stackFrameInfo))
   Handle stack_frame_info(THREAD, JNIHandles::resolve_non_null(stackFrameInfo));
   Handle stack_trace_element(THREAD, JNIHandles::resolve_non_null(element));
   java_lang_StackFrameInfo::to_stack_trace_element(stack_frame_info, stack_trace_element, CHECK);
@@ -545,7 +562,7 @@ JVM_END
 
 
 // java.lang.StackWalker //////////////////////////////////////////////////////
-JVM_ENTRY(void, JVM_ExpandStackFrameInfo(JNIEnv *env, jobject obj))
+JVM_ENTRY_PROF(void, JVM_ExpandStackFrameInfo, JVM_ExpandStackFrameInfo(JNIEnv *env, jobject obj))
   Handle stack_frame_info(THREAD, JNIHandles::resolve_non_null(obj));
 
   bool have_name = (java_lang_StackFrameInfo::name(stack_frame_info()) != nullptr);
@@ -561,9 +578,9 @@ JVM_ENTRY(void, JVM_ExpandStackFrameInfo(JNIEnv *env, jobject obj))
   }
 JVM_END
 
-JVM_ENTRY(jobject, JVM_CallStackWalk(JNIEnv *env, jobject stackStream, jint mode,
-                                     jint skip_frames, jobject contScope, jobject cont,
-                                     jint buffer_size, jint start_index, jobjectArray frames))
+JVM_ENTRY_PROF(jobject, JVM_CallStackWalk, JVM_CallStackWalk(JNIEnv *env, jobject stackStream, jint mode,
+                                                         jint skip_frames, jobject contScope, jobject cont,
+                                                         jint buffer_size, jint start_index, jobjectArray frames))
   if (!thread->has_last_Java_frame()) {
     THROW_MSG_(vmSymbols::java_lang_InternalError(), "doStackWalk: no stack trace", nullptr);
   }
@@ -587,9 +604,9 @@ JVM_ENTRY(jobject, JVM_CallStackWalk(JNIEnv *env, jobject stackStream, jint mode
 JVM_END
 
 
-JVM_ENTRY(jint, JVM_MoreStackWalk(JNIEnv *env, jobject stackStream, jint mode, jlong anchor,
-                                  jint last_batch_count, jint buffer_size, jint start_index,
-                                  jobjectArray frames))
+JVM_ENTRY_PROF(jint, JVM_MoreStackWalk, JVM_MoreStackWalk(JNIEnv *env, jobject stackStream, jint mode, jlong anchor,
+                                                      jint last_batch_count, jint buffer_size, jint start_index,
+                                                      jobjectArray frames))
   // frames array is a ClassFrameInfo[] array when only getting caller reference,
   // and a StackFrameInfo[] array (or derivative) otherwise. It should never
   // be null.
@@ -605,7 +622,7 @@ JVM_ENTRY(jint, JVM_MoreStackWalk(JNIEnv *env, jobject stackStream, jint mode, j
                                   start_index, frames_array_h, THREAD);
 JVM_END
 
-JVM_ENTRY(void, JVM_SetStackWalkContinuation(JNIEnv *env, jobject stackStream, jlong anchor, jobjectArray frames, jobject cont))
+JVM_ENTRY_PROF(void, JVM_SetStackWalkContinuation, JVM_SetStackWalkContinuation(JNIEnv *env, jobject stackStream, jlong anchor, jobjectArray frames, jobject cont))
   objArrayOop fa = objArrayOop(JNIHandles::resolve_non_null(frames));
   objArrayHandle frames_array_h(THREAD, fa);
   Handle stackStream_h(THREAD, JNIHandles::resolve_non_null(stackStream));
@@ -617,32 +634,32 @@ JVM_END
 // java.lang.Object ///////////////////////////////////////////////
 
 
-JVM_ENTRY(jint, JVM_IHashCode(JNIEnv* env, jobject handle))
+JVM_ENTRY_PROF(jint, JVM_IHashCode, JVM_IHashCode(JNIEnv* env, jobject handle))
   // as implemented in the classic virtual machine; return 0 if object is null
   return handle == nullptr ? 0 :
          checked_cast<jint>(ObjectSynchronizer::FastHashCode (THREAD, JNIHandles::resolve_non_null(handle)));
 JVM_END
 
 
-JVM_ENTRY(void, JVM_MonitorWait(JNIEnv* env, jobject handle, jlong ms))
+JVM_ENTRY_PROF(void, JVM_MonitorWait, JVM_MonitorWait(JNIEnv* env, jobject handle, jlong ms))
   Handle obj(THREAD, JNIHandles::resolve_non_null(handle));
   ObjectSynchronizer::wait(obj, ms, CHECK);
 JVM_END
 
 
-JVM_ENTRY(void, JVM_MonitorNotify(JNIEnv* env, jobject handle))
+JVM_ENTRY_PROF(void, JVM_MonitorNotify, JVM_MonitorNotify(JNIEnv* env, jobject handle))
   Handle obj(THREAD, JNIHandles::resolve_non_null(handle));
   ObjectSynchronizer::notify(obj, CHECK);
 JVM_END
 
 
-JVM_ENTRY(void, JVM_MonitorNotifyAll(JNIEnv* env, jobject handle))
+JVM_ENTRY_PROF(void, JVM_MonitorNotifyAll, JVM_MonitorNotifyAll(JNIEnv* env, jobject handle))
   Handle obj(THREAD, JNIHandles::resolve_non_null(handle));
   ObjectSynchronizer::notifyall(obj, CHECK);
 JVM_END
 
 
-JVM_ENTRY(jobject, JVM_Clone(JNIEnv* env, jobject handle))
+JVM_ENTRY_PROF(jobject, JVM_Clone, JVM_Clone(JNIEnv* env, jobject handle))
   Handle obj(THREAD, JNIHandles::resolve_non_null(handle));
   Klass* klass = obj->klass();
   JvmtiVMObjectAllocEventCollector oam;
@@ -695,23 +712,23 @@ JVM_END
 
 // java.lang.ref.Finalizer ////////////////////////////////////////////////////
 
-JVM_ENTRY(void, JVM_ReportFinalizationComplete(JNIEnv * env, jobject finalizee))
+JVM_ENTRY_PROF(void, JVM_ReportFinalizationComplete, JVM_ReportFinalizationComplete(JNIEnv * env, jobject finalizee))
   MANAGEMENT_ONLY(FinalizerService::on_complete(JNIHandles::resolve_non_null(finalizee), THREAD);)
 JVM_END
 
-JVM_LEAF(jboolean, JVM_IsFinalizationEnabled(JNIEnv * env))
+JVM_LEAF_PROF(jboolean, JVM_IsFinalizationEnabled, JVM_IsFinalizationEnabled(JNIEnv * env))
   return InstanceKlass::is_finalization_enabled();
 JVM_END
 
 // jdk.internal.vm.Continuation /////////////////////////////////////////////////////
 
-JVM_ENTRY(void, JVM_RegisterContinuationMethods(JNIEnv *env, jclass cls))
+JVM_ENTRY_PROF(void, JVM_RegisterContinuationMethods, JVM_RegisterContinuationMethods(JNIEnv *env, jclass cls))
   CONT_RegisterNativeMethods(env, cls);
 JVM_END
 
 // java.io.File ///////////////////////////////////////////////////////////////
 
-JVM_LEAF(char*, JVM_NativePath(char* path))
+JVM_LEAF_PROF(char*, JVM_NativePath, JVM_NativePath(char* path))
   return os::native_path(path);
 JVM_END
 
@@ -719,7 +736,7 @@ JVM_END
 // Misc. class handling ///////////////////////////////////////////////////////////
 
 
-JVM_ENTRY(jclass, JVM_GetCallerClass(JNIEnv* env))
+JVM_ENTRY_PROF(jclass, JVM_GetCallerClass, JVM_GetCallerClass(JNIEnv* env))
   // Getting the class of the caller frame.
   //
   // The call stack at this point looks something like this:
@@ -758,7 +775,7 @@ JVM_ENTRY(jclass, JVM_GetCallerClass(JNIEnv* env))
 JVM_END
 
 
-JVM_ENTRY(jclass, JVM_FindPrimitiveClass(JNIEnv* env, const char* utf))
+JVM_ENTRY_PROF(jclass, JVM_FindPrimitiveClass, JVM_FindPrimitiveClass(JNIEnv* env, const char* utf))
   oop mirror = nullptr;
   BasicType t = name2type(utf);
   if (t != T_ILLEGAL && !is_reference_type(t)) {
@@ -775,8 +792,7 @@ JVM_END
 // Returns a class loaded by the bootstrap class loader; or null
 // if not found.  ClassNotFoundException is not thrown.
 // FindClassFromBootLoader is exported to the launcher for windows.
-JVM_ENTRY(jclass, JVM_FindClassFromBootLoader(JNIEnv* env,
-                                              const char* name))
+JVM_ENTRY_PROF(jclass, JVM_FindClassFromBootLoader, JVM_FindClassFromBootLoader(JNIEnv* env, const char* name))
   // Java libraries should ensure that name is never null or illegal.
   if (name == nullptr || (int)strlen(name) > Symbol::max_length()) {
     // It's impossible to create this class;  the name cannot fit
@@ -798,9 +814,9 @@ JVM_ENTRY(jclass, JVM_FindClassFromBootLoader(JNIEnv* env,
 JVM_END
 
 // Find a class with this name in this loader, using the caller's protection domain.
-JVM_ENTRY(jclass, JVM_FindClassFromCaller(JNIEnv* env, const char* name,
-                                          jboolean init, jobject loader,
-                                          jclass caller))
+JVM_ENTRY_PROF(jclass, JVM_FindClassFromCaller, JVM_FindClassFromCaller(JNIEnv* env, const char* name,
+                                                                   jboolean init, jobject loader,
+                                                                   jclass caller))
   TempNewSymbol h_name =
        SystemDictionary::class_name_symbol(name, vmSymbols::java_lang_ClassNotFoundException(),
                                            CHECK_NULL);
@@ -819,8 +835,8 @@ JVM_ENTRY(jclass, JVM_FindClassFromCaller(JNIEnv* env, const char* name,
 JVM_END
 
 // Currently only called from the old verifier.
-JVM_ENTRY(jclass, JVM_FindClassFromClass(JNIEnv *env, const char *name,
-                                         jboolean init, jclass from))
+JVM_ENTRY_PROF(jclass, JVM_FindClassFromClass, JVM_FindClassFromClass(JNIEnv *env, const char *name,
+                                                                 jboolean init, jclass from))
   TempNewSymbol h_name =
        SystemDictionary::class_name_symbol(name, vmSymbols::java_lang_ClassNotFoundException(),
                                            CHECK_NULL);
@@ -1019,7 +1035,7 @@ static jclass jvm_lookup_define_class(jclass lookup, const char *name,
   return (jclass) JNIHandles::make_local(THREAD, ik->java_mirror());
 }
 
-JVM_ENTRY(jclass, JVM_DefineClass(JNIEnv *env, const char *name, jobject loader, const jbyte *buf, jsize len, jobject pd))
+JVM_ENTRY_PROF(jclass, JVM_DefineClass, JVM_DefineClass(JNIEnv *env, const char *name, jobject loader, const jbyte *buf, jsize len, jobject pd))
   return jvm_define_class_common(name, loader, buf, len, pd, nullptr, THREAD);
 JVM_END
 
@@ -1034,7 +1050,7 @@ JVM_END
  *  flags:   properties of the class
  *  classData: private static pre-initialized field
  */
-JVM_ENTRY(jclass, JVM_LookupDefineClass(JNIEnv *env, jclass lookup, const char *name, const jbyte *buf,
+JVM_ENTRY_PROF(jclass, JVM_LookupDefineClass, JVM_LookupDefineClass(JNIEnv *env, jclass lookup, const char *name, const jbyte *buf,
           jsize len, jobject pd, jboolean initialize, int flags, jobject classData))
 
   if (lookup == nullptr) {
@@ -1046,12 +1062,11 @@ JVM_ENTRY(jclass, JVM_LookupDefineClass(JNIEnv *env, jclass lookup, const char *
   return jvm_lookup_define_class(lookup, name, buf, len, pd, initialize, flags, classData, THREAD);
 JVM_END
 
-JVM_ENTRY(jclass, JVM_DefineClassWithSource(JNIEnv *env, const char *name, jobject loader, const jbyte *buf, jsize len, jobject pd, const char *source))
-
+JVM_ENTRY_PROF(jclass, JVM_DefineClassWithSource, JVM_DefineClassWithSource(JNIEnv *env, const char *name, jobject loader, const jbyte *buf, jsize len, jobject pd, const char *source))
   return jvm_define_class_common(name, loader, buf, len, pd, source, THREAD);
 JVM_END
 
-JVM_ENTRY(jclass, JVM_FindLoadedClass(JNIEnv *env, jobject loader, jstring name))
+JVM_ENTRY_PROF(jclass, JVM_FindLoadedClass, JVM_FindLoadedClass(JNIEnv *env, jobject loader, jstring name))
   ResourceMark rm(THREAD);
 
   Handle h_name (THREAD, JNIHandles::resolve_non_null(name));
@@ -1095,40 +1110,40 @@ JVM_END
 
 // Module support //////////////////////////////////////////////////////////////////////////////
 
-JVM_ENTRY(void, JVM_DefineModule(JNIEnv *env, jobject module, jboolean is_open, jstring version,
-                                 jstring location, jobjectArray packages))
+JVM_ENTRY_PROF(void, JVM_DefineModule, JVM_DefineModule(JNIEnv *env, jobject module, jboolean is_open, jstring version,
+                                                   jstring location, jobjectArray packages))
   Handle h_module (THREAD, JNIHandles::resolve(module));
   Modules::define_module(h_module, is_open, version, location, packages, CHECK);
 JVM_END
 
-JVM_ENTRY(void, JVM_SetBootLoaderUnnamedModule(JNIEnv *env, jobject module))
+JVM_ENTRY_PROF(void, JVM_SetBootLoaderUnnamedModule, JVM_SetBootLoaderUnnamedModule(JNIEnv *env, jobject module))
   Handle h_module (THREAD, JNIHandles::resolve(module));
   Modules::set_bootloader_unnamed_module(h_module, CHECK);
 JVM_END
 
-JVM_ENTRY(void, JVM_AddModuleExports(JNIEnv *env, jobject from_module, jstring package, jobject to_module))
+JVM_ENTRY_PROF(void, JVM_AddModuleExports, JVM_AddModuleExports(JNIEnv *env, jobject from_module, jstring package, jobject to_module))
   Handle h_from_module (THREAD, JNIHandles::resolve(from_module));
   Handle h_to_module (THREAD, JNIHandles::resolve(to_module));
   Modules::add_module_exports_qualified(h_from_module, package, h_to_module, CHECK);
 JVM_END
 
-JVM_ENTRY(void, JVM_AddModuleExportsToAllUnnamed(JNIEnv *env, jobject from_module, jstring package))
+JVM_ENTRY_PROF(void, JVM_AddModuleExportsToAllUnnamed, JVM_AddModuleExportsToAllUnnamed(JNIEnv *env, jobject from_module, jstring package))
   Handle h_from_module (THREAD, JNIHandles::resolve(from_module));
   Modules::add_module_exports_to_all_unnamed(h_from_module, package, CHECK);
 JVM_END
 
-JVM_ENTRY(void, JVM_AddModuleExportsToAll(JNIEnv *env, jobject from_module, jstring package))
+JVM_ENTRY_PROF(void, JVM_AddModuleExportsToAll, JVM_AddModuleExportsToAll(JNIEnv *env, jobject from_module, jstring package))
   Handle h_from_module (THREAD, JNIHandles::resolve(from_module));
   Modules::add_module_exports(h_from_module, package, Handle(), CHECK);
 JVM_END
 
-JVM_ENTRY (void, JVM_AddReadsModule(JNIEnv *env, jobject from_module, jobject source_module))
+JVM_ENTRY_PROF(void, JVM_AddReadsModule, JVM_AddReadsModule(JNIEnv *env, jobject from_module, jobject source_module))
   Handle h_from_module (THREAD, JNIHandles::resolve(from_module));
   Handle h_source_module (THREAD, JNIHandles::resolve(source_module));
   Modules::add_reads_module(h_from_module, h_source_module, CHECK);
 JVM_END
 
-JVM_ENTRY(void, JVM_DefineArchivedModules(JNIEnv *env, jobject platform_loader, jobject system_loader))
+JVM_ENTRY_PROF(void, JVM_DefineArchivedModules, JVM_DefineArchivedModules(JNIEnv *env, jobject platform_loader, jobject system_loader))
   Handle h_platform_loader (THREAD, JNIHandles::resolve(platform_loader));
   Handle h_system_loader (THREAD, JNIHandles::resolve(system_loader));
   Modules::define_archived_modules(h_platform_loader, h_system_loader, CHECK);
@@ -1136,7 +1151,7 @@ JVM_END
 
 // Reflection support //////////////////////////////////////////////////////////////////////////////
 
-JVM_ENTRY(jstring, JVM_InitClassName(JNIEnv *env, jclass cls))
+JVM_ENTRY_PROF(jstring, JVM_InitClassName, JVM_InitClassName(JNIEnv *env, jclass cls))
   assert (cls != nullptr, "illegal class");
   JvmtiVMObjectAllocEventCollector oam;
   ResourceMark rm(THREAD);
@@ -1147,7 +1162,7 @@ JVM_ENTRY(jstring, JVM_InitClassName(JNIEnv *env, jclass cls))
 JVM_END
 
 
-JVM_ENTRY(jobjectArray, JVM_GetClassInterfaces(JNIEnv *env, jclass cls))
+JVM_ENTRY_PROF(jobjectArray, JVM_GetClassInterfaces, JVM_GetClassInterfaces(JNIEnv *env, jclass cls))
   JvmtiVMObjectAllocEventCollector oam;
   oop mirror = JNIHandles::resolve_non_null(cls);
 
@@ -1187,7 +1202,7 @@ JVM_ENTRY(jobjectArray, JVM_GetClassInterfaces(JNIEnv *env, jclass cls))
 JVM_END
 
 
-JVM_ENTRY(jboolean, JVM_IsInterface(JNIEnv *env, jclass cls))
+JVM_ENTRY_PROF(jboolean, JVM_IsInterface, JVM_IsInterface(JNIEnv *env, jclass cls))
   oop mirror = JNIHandles::resolve_non_null(cls);
   if (java_lang_Class::is_primitive(mirror)) {
     return JNI_FALSE;
@@ -1201,7 +1216,7 @@ JVM_ENTRY(jboolean, JVM_IsInterface(JNIEnv *env, jclass cls))
   return result;
 JVM_END
 
-JVM_ENTRY(jboolean, JVM_IsHiddenClass(JNIEnv *env, jclass cls))
+JVM_ENTRY_PROF(jboolean, JVM_IsHiddenClass, JVM_IsHiddenClass(JNIEnv *env, jclass cls))
   oop mirror = JNIHandles::resolve_non_null(cls);
   if (java_lang_Class::is_primitive(mirror)) {
     return JNI_FALSE;
@@ -1209,7 +1224,6 @@ JVM_ENTRY(jboolean, JVM_IsHiddenClass(JNIEnv *env, jclass cls))
   Klass* k = java_lang_Class::as_Klass(mirror);
   return k->is_hidden();
 JVM_END
-
 
 class ScopedValueBindingsResolver {
 public:
@@ -1220,7 +1234,7 @@ public:
   }
 };
 
-JVM_ENTRY(jobject, JVM_FindScopedValueBindings(JNIEnv *env, jclass cls))
+JVM_ENTRY_PROF(jobject, JVM_FindScopedValueBindings, JVM_FindScopedValueBindings(JNIEnv *env, jclass cls))
   ResourceMark rm(THREAD);
   GrowableArray<Handle>* local_array = new GrowableArray<Handle>(12);
   JvmtiVMObjectAllocEventCollector oam;
@@ -1259,19 +1273,19 @@ JVM_ENTRY(jobject, JVM_FindScopedValueBindings(JNIEnv *env, jclass cls))
   return nullptr;
 JVM_END
 
-JVM_ENTRY(jboolean, JVM_IsArrayClass(JNIEnv *env, jclass cls))
+JVM_ENTRY_PROF(jboolean, JVM_IsArrayClass, JVM_IsArrayClass(JNIEnv *env, jclass cls))
   Klass* k = java_lang_Class::as_Klass(JNIHandles::resolve_non_null(cls));
   return (k != nullptr) && k->is_array_klass() ? true : false;
 JVM_END
 
 
-JVM_ENTRY(jboolean, JVM_IsPrimitiveClass(JNIEnv *env, jclass cls))
+JVM_ENTRY_PROF(jboolean, JVM_IsPrimitiveClass, JVM_IsPrimitiveClass(JNIEnv *env, jclass cls))
   oop mirror = JNIHandles::resolve_non_null(cls);
   return (jboolean) java_lang_Class::is_primitive(mirror);
 JVM_END
 
 
-JVM_ENTRY(jobjectArray, JVM_GetDeclaredClasses(JNIEnv *env, jclass ofClass))
+JVM_ENTRY_PROF(jobjectArray, JVM_GetDeclaredClasses, JVM_GetDeclaredClasses(JNIEnv *env, jclass ofClass))
   JvmtiVMObjectAllocEventCollector oam;
   // ofClass is a reference to a java_lang_Class object. The mirror object
   // of an InstanceKlass
@@ -1337,7 +1351,7 @@ JVM_ENTRY(jobjectArray, JVM_GetDeclaredClasses(JNIEnv *env, jclass ofClass))
 JVM_END
 
 
-JVM_ENTRY(jclass, JVM_GetDeclaringClass(JNIEnv *env, jclass ofClass))
+JVM_ENTRY_PROF(jclass, JVM_GetDeclaringClass, JVM_GetDeclaringClass(JNIEnv *env, jclass ofClass))
 {
   // ofClass is a reference to a java_lang_Class object.
   oop ofMirror = JNIHandles::resolve_non_null(ofClass);
@@ -1358,7 +1372,7 @@ JVM_ENTRY(jclass, JVM_GetDeclaringClass(JNIEnv *env, jclass ofClass))
 }
 JVM_END
 
-JVM_ENTRY(jstring, JVM_GetSimpleBinaryName(JNIEnv *env, jclass cls))
+JVM_ENTRY_PROF(jstring, JVM_GetSimpleBinaryName, JVM_GetSimpleBinaryName(JNIEnv *env, jclass cls))
 {
   oop mirror = JNIHandles::resolve_non_null(cls);
   if (java_lang_Class::is_primitive(mirror)) {
@@ -1382,7 +1396,7 @@ JVM_ENTRY(jstring, JVM_GetSimpleBinaryName(JNIEnv *env, jclass cls))
 }
 JVM_END
 
-JVM_ENTRY(jstring, JVM_GetClassSignature(JNIEnv *env, jclass cls))
+JVM_ENTRY_PROF(jstring, JVM_GetClassSignature, JVM_GetClassSignature(JNIEnv *env, jclass cls))
   assert (cls != nullptr, "illegal class");
   JvmtiVMObjectAllocEventCollector oam;
   ResourceMark rm(THREAD);
@@ -1401,7 +1415,7 @@ JVM_ENTRY(jstring, JVM_GetClassSignature(JNIEnv *env, jclass cls))
 JVM_END
 
 
-JVM_ENTRY(jbyteArray, JVM_GetClassAnnotations(JNIEnv *env, jclass cls))
+JVM_ENTRY_PROF(jbyteArray, JVM_GetClassAnnotations, JVM_GetClassAnnotations(JNIEnv *env, jclass cls))
   assert (cls != nullptr, "illegal class");
   oop mirror = JNIHandles::resolve_non_null(cls);
   // Return null for arrays and primitives
@@ -1470,7 +1484,7 @@ static Method* jvm_get_method_common(jobject method) {
 
 /* Type use annotations support (JDK 1.8) */
 
-JVM_ENTRY(jbyteArray, JVM_GetClassTypeAnnotations(JNIEnv *env, jclass cls))
+JVM_ENTRY_PROF(jbyteArray, JVM_GetClassTypeAnnotations, JVM_GetClassTypeAnnotations(JNIEnv *env, jclass cls))
   assert (cls != nullptr, "illegal class");
   ResourceMark rm(THREAD);
   // Return null for arrays and primitives
@@ -1487,7 +1501,7 @@ JVM_ENTRY(jbyteArray, JVM_GetClassTypeAnnotations(JNIEnv *env, jclass cls))
   return nullptr;
 JVM_END
 
-JVM_ENTRY(jbyteArray, JVM_GetMethodTypeAnnotations(JNIEnv *env, jobject method))
+JVM_ENTRY_PROF(jbyteArray, JVM_GetMethodTypeAnnotations, JVM_GetMethodTypeAnnotations(JNIEnv *env, jobject method))
   assert (method != nullptr, "illegal method");
   // method is a handle to a java.lang.reflect.Method object
   Method* m = jvm_get_method_common(method);
@@ -1504,7 +1518,7 @@ JVM_ENTRY(jbyteArray, JVM_GetMethodTypeAnnotations(JNIEnv *env, jobject method))
   return nullptr;
 JVM_END
 
-JVM_ENTRY(jbyteArray, JVM_GetFieldTypeAnnotations(JNIEnv *env, jobject field))
+JVM_ENTRY_PROF(jbyteArray, JVM_GetFieldTypeAnnotations, JVM_GetFieldTypeAnnotations(JNIEnv *env, jobject field))
   assert (field != nullptr, "illegal field");
   fieldDescriptor fd;
   bool gotFd = jvm_get_field_common(field, fd);
@@ -1521,7 +1535,7 @@ static void bounds_check(const constantPoolHandle& cp, jint index, TRAPS) {
   }
 }
 
-JVM_ENTRY(jobjectArray, JVM_GetMethodParameters(JNIEnv *env, jobject method))
+JVM_ENTRY_PROF(jobjectArray, JVM_GetMethodParameters, JVM_GetMethodParameters(JNIEnv *env, jobject method))
 {
   // method is a handle to a java.lang.reflect.Method object
   Method* method_ptr = jvm_get_method_common(method);
@@ -1574,7 +1588,7 @@ JVM_END
 
 // New (JDK 1.4) reflection implementation /////////////////////////////////////
 
-JVM_ENTRY(jobjectArray, JVM_GetClassDeclaredFields(JNIEnv *env, jclass ofClass, jboolean publicOnly))
+JVM_ENTRY_PROF(jobjectArray, JVM_GetClassDeclaredFields, JVM_GetClassDeclaredFields(JNIEnv *env, jclass ofClass, jboolean publicOnly))
 {
   JvmtiVMObjectAllocEventCollector oam;
 
@@ -1625,7 +1639,7 @@ JVM_END
 
 // A class is a record if and only if it is final and a direct subclass of
 // java.lang.Record and has a Record attribute; otherwise, it is not a record.
-JVM_ENTRY(jboolean, JVM_IsRecord(JNIEnv *env, jclass cls))
+JVM_ENTRY_PROF(jboolean, JVM_IsRecord, JVM_IsRecord(JNIEnv *env, jclass cls))
 {
   Klass* k = java_lang_Class::as_Klass(JNIHandles::resolve_non_null(cls));
   if (k != nullptr && k->is_instance_klass()) {
@@ -1642,7 +1656,7 @@ JVM_END
 //
 // Note that this function returns the components of the Record attribute
 // even if the class is not a record.
-JVM_ENTRY(jobjectArray, JVM_GetRecordComponents(JNIEnv* env, jclass ofClass))
+JVM_ENTRY_PROF(jobjectArray, JVM_GetRecordComponents, JVM_GetRecordComponents(JNIEnv* env, jclass ofClass))
 {
   Klass* c = java_lang_Class::as_Klass(JNIHandles::resolve_non_null(ofClass));
   assert(c->is_instance_klass(), "must be");
@@ -1749,7 +1763,7 @@ static jobjectArray get_class_declared_methods_helper(
   return (jobjectArray) JNIHandles::make_local(THREAD, result());
 }
 
-JVM_ENTRY(jobjectArray, JVM_GetClassDeclaredMethods(JNIEnv *env, jclass ofClass, jboolean publicOnly))
+JVM_ENTRY_PROF(jobjectArray, JVM_GetClassDeclaredMethods, JVM_GetClassDeclaredMethods(JNIEnv *env, jclass ofClass, jboolean publicOnly))
 {
   return get_class_declared_methods_helper(env, ofClass, publicOnly,
                                            /*want_constructor*/ false,
@@ -1757,7 +1771,7 @@ JVM_ENTRY(jobjectArray, JVM_GetClassDeclaredMethods(JNIEnv *env, jclass ofClass,
 }
 JVM_END
 
-JVM_ENTRY(jobjectArray, JVM_GetClassDeclaredConstructors(JNIEnv *env, jclass ofClass, jboolean publicOnly))
+JVM_ENTRY_PROF(jobjectArray, JVM_GetClassDeclaredConstructors, JVM_GetClassDeclaredConstructors(JNIEnv *env, jclass ofClass, jboolean publicOnly))
 {
   return get_class_declared_methods_helper(env, ofClass, publicOnly,
                                            /*want_constructor*/ true,
@@ -1765,7 +1779,7 @@ JVM_ENTRY(jobjectArray, JVM_GetClassDeclaredConstructors(JNIEnv *env, jclass ofC
 }
 JVM_END
 
-JVM_ENTRY(jint, JVM_GetClassAccessFlags(JNIEnv *env, jclass cls))
+JVM_ENTRY_PROF(jint, JVM_GetClassAccessFlags, JVM_GetClassAccessFlags(JNIEnv *env, jclass cls))
 {
   oop mirror = JNIHandles::resolve_non_null(cls);
   if (java_lang_Class::is_primitive(mirror)) {
@@ -1778,7 +1792,7 @@ JVM_ENTRY(jint, JVM_GetClassAccessFlags(JNIEnv *env, jclass cls))
 }
 JVM_END
 
-JVM_ENTRY(jboolean, JVM_AreNestMates(JNIEnv *env, jclass current, jclass member))
+JVM_ENTRY_PROF(jboolean, JVM_AreNestMates, JVM_AreNestMates(JNIEnv *env, jclass current, jclass member))
 {
   Klass* c = java_lang_Class::as_Klass(JNIHandles::resolve_non_null(current));
   assert(c->is_instance_klass(), "must be");
@@ -1790,7 +1804,7 @@ JVM_ENTRY(jboolean, JVM_AreNestMates(JNIEnv *env, jclass current, jclass member)
 }
 JVM_END
 
-JVM_ENTRY(jclass, JVM_GetNestHost(JNIEnv* env, jclass current))
+JVM_ENTRY_PROF(jclass, JVM_GetNestHost, JVM_GetNestHost(JNIEnv* env, jclass current))
 {
   // current is not a primitive or array class
   Klass* c = java_lang_Class::as_Klass(JNIHandles::resolve_non_null(current));
@@ -1802,7 +1816,7 @@ JVM_ENTRY(jclass, JVM_GetNestHost(JNIEnv* env, jclass current))
 }
 JVM_END
 
-JVM_ENTRY(jobjectArray, JVM_GetNestMembers(JNIEnv* env, jclass current))
+JVM_ENTRY_PROF(jobjectArray, JVM_GetNestMembers, JVM_GetNestMembers(JNIEnv* env, jclass current))
 {
   // current is not a primitive or array class
   ResourceMark rm(THREAD);
@@ -1882,7 +1896,7 @@ JVM_ENTRY(jobjectArray, JVM_GetNestMembers(JNIEnv* env, jclass current))
 }
 JVM_END
 
-JVM_ENTRY(jobjectArray, JVM_GetPermittedSubclasses(JNIEnv* env, jclass current))
+JVM_ENTRY_PROF(jobjectArray, JVM_GetPermittedSubclasses, JVM_GetPermittedSubclasses(JNIEnv* env, jclass current))
 {
   oop mirror = JNIHandles::resolve_non_null(current);
   assert(!java_lang_Class::is_primitive(mirror), "should not be");
@@ -1945,7 +1959,7 @@ JVM_END
 
 // Constant pool access //////////////////////////////////////////////////////////
 
-JVM_ENTRY(jobject, JVM_GetClassConstantPool(JNIEnv *env, jclass cls))
+JVM_ENTRY_PROF(jobject, JVM_GetClassConstantPool, JVM_GetClassConstantPool(JNIEnv *env, jclass cls))
 {
   JvmtiVMObjectAllocEventCollector oam;
   oop mirror = JNIHandles::resolve_non_null(cls);
@@ -1964,7 +1978,7 @@ JVM_ENTRY(jobject, JVM_GetClassConstantPool(JNIEnv *env, jclass cls))
 JVM_END
 
 
-JVM_ENTRY(jint, JVM_ConstantPoolGetSize(JNIEnv *env, jobject obj, jobject unused))
+JVM_ENTRY_PROF(jint, JVM_ConstantPoolGetSize, JVM_ConstantPoolGetSize(JNIEnv *env, jobject obj, jobject unused))
 {
   constantPoolHandle cp = constantPoolHandle(THREAD, reflect_ConstantPool::get_cp(JNIHandles::resolve_non_null(obj)));
   return cp->length();
@@ -1972,7 +1986,7 @@ JVM_ENTRY(jint, JVM_ConstantPoolGetSize(JNIEnv *env, jobject obj, jobject unused
 JVM_END
 
 
-JVM_ENTRY(jclass, JVM_ConstantPoolGetClassAt(JNIEnv *env, jobject obj, jobject unused, jint index))
+JVM_ENTRY_PROF(jclass, JVM_ConstantPoolGetClassAt, JVM_ConstantPoolGetClassAt(JNIEnv *env, jobject obj, jobject unused, jint index))
 {
   constantPoolHandle cp = constantPoolHandle(THREAD, reflect_ConstantPool::get_cp(JNIHandles::resolve_non_null(obj)));
   bounds_check(cp, index, CHECK_NULL);
@@ -1985,7 +1999,7 @@ JVM_ENTRY(jclass, JVM_ConstantPoolGetClassAt(JNIEnv *env, jobject obj, jobject u
 }
 JVM_END
 
-JVM_ENTRY(jclass, JVM_ConstantPoolGetClassAtIfLoaded(JNIEnv *env, jobject obj, jobject unused, jint index))
+JVM_ENTRY_PROF(jclass, JVM_ConstantPoolGetClassAtIfLoaded, JVM_ConstantPoolGetClassAtIfLoaded(JNIEnv *env, jobject obj, jobject unused, jint index))
 {
   constantPoolHandle cp = constantPoolHandle(THREAD, reflect_ConstantPool::get_cp(JNIHandles::resolve_non_null(obj)));
   bounds_check(cp, index, CHECK_NULL);
@@ -2029,7 +2043,7 @@ static jobject get_method_at_helper(const constantPoolHandle& cp, jint index, bo
   return JNIHandles::make_local(THREAD, method);
 }
 
-JVM_ENTRY(jobject, JVM_ConstantPoolGetMethodAt(JNIEnv *env, jobject obj, jobject unused, jint index))
+JVM_ENTRY_PROF(jobject, JVM_ConstantPoolGetMethodAt, JVM_ConstantPoolGetMethodAt(JNIEnv *env, jobject obj, jobject unused, jint index))
 {
   JvmtiVMObjectAllocEventCollector oam;
   constantPoolHandle cp = constantPoolHandle(THREAD, reflect_ConstantPool::get_cp(JNIHandles::resolve_non_null(obj)));
@@ -2039,7 +2053,7 @@ JVM_ENTRY(jobject, JVM_ConstantPoolGetMethodAt(JNIEnv *env, jobject obj, jobject
 }
 JVM_END
 
-JVM_ENTRY(jobject, JVM_ConstantPoolGetMethodAtIfLoaded(JNIEnv *env, jobject obj, jobject unused, jint index))
+JVM_ENTRY_PROF(jobject, JVM_ConstantPoolGetMethodAtIfLoaded, JVM_ConstantPoolGetMethodAtIfLoaded(JNIEnv *env, jobject obj, jobject unused, jint index))
 {
   JvmtiVMObjectAllocEventCollector oam;
   constantPoolHandle cp = constantPoolHandle(THREAD, reflect_ConstantPool::get_cp(JNIHandles::resolve_non_null(obj)));
@@ -2074,7 +2088,7 @@ static jobject get_field_at_helper(constantPoolHandle cp, jint index, bool force
   return JNIHandles::make_local(THREAD, field);
 }
 
-JVM_ENTRY(jobject, JVM_ConstantPoolGetFieldAt(JNIEnv *env, jobject obj, jobject unusedl, jint index))
+JVM_ENTRY_PROF(jobject, JVM_ConstantPoolGetFieldAt, JVM_ConstantPoolGetFieldAt(JNIEnv *env, jobject obj, jobject unusedl, jint index))
 {
   JvmtiVMObjectAllocEventCollector oam;
   constantPoolHandle cp = constantPoolHandle(THREAD, reflect_ConstantPool::get_cp(JNIHandles::resolve_non_null(obj)));
@@ -2084,7 +2098,7 @@ JVM_ENTRY(jobject, JVM_ConstantPoolGetFieldAt(JNIEnv *env, jobject obj, jobject 
 }
 JVM_END
 
-JVM_ENTRY(jobject, JVM_ConstantPoolGetFieldAtIfLoaded(JNIEnv *env, jobject obj, jobject unused, jint index))
+JVM_ENTRY_PROF(jobject, JVM_ConstantPoolGetFieldAtIfLoaded, JVM_ConstantPoolGetFieldAtIfLoaded(JNIEnv *env, jobject obj, jobject unused, jint index))
 {
   JvmtiVMObjectAllocEventCollector oam;
   constantPoolHandle cp = constantPoolHandle(THREAD, reflect_ConstantPool::get_cp(JNIHandles::resolve_non_null(obj)));
@@ -2094,7 +2108,7 @@ JVM_ENTRY(jobject, JVM_ConstantPoolGetFieldAtIfLoaded(JNIEnv *env, jobject obj, 
 }
 JVM_END
 
-JVM_ENTRY(jobjectArray, JVM_ConstantPoolGetMemberRefInfoAt(JNIEnv *env, jobject obj, jobject unused, jint index))
+JVM_ENTRY_PROF(jobjectArray, JVM_ConstantPoolGetMemberRefInfoAt, JVM_ConstantPoolGetMemberRefInfoAt(JNIEnv *env, jobject obj, jobject unused, jint index))
 {
   JvmtiVMObjectAllocEventCollector oam;
   constantPoolHandle cp = constantPoolHandle(THREAD, reflect_ConstantPool::get_cp(JNIHandles::resolve_non_null(obj)));
@@ -2119,7 +2133,7 @@ JVM_ENTRY(jobjectArray, JVM_ConstantPoolGetMemberRefInfoAt(JNIEnv *env, jobject 
 }
 JVM_END
 
-JVM_ENTRY(jint, JVM_ConstantPoolGetClassRefIndexAt(JNIEnv *env, jobject obj, jobject unused, jint index))
+JVM_ENTRY_PROF(jint, JVM_ConstantPoolGetClassRefIndexAt, JVM_ConstantPoolGetClassRefIndexAt(JNIEnv *env, jobject obj, jobject unused, jint index))
 {
   JvmtiVMObjectAllocEventCollector oam;
   constantPoolHandle cp(THREAD, reflect_ConstantPool::get_cp(JNIHandles::resolve_non_null(obj)));
@@ -2132,7 +2146,7 @@ JVM_ENTRY(jint, JVM_ConstantPoolGetClassRefIndexAt(JNIEnv *env, jobject obj, job
 }
 JVM_END
 
-JVM_ENTRY(jint, JVM_ConstantPoolGetNameAndTypeRefIndexAt(JNIEnv *env, jobject obj, jobject unused, jint index))
+JVM_ENTRY_PROF(jint, JVM_ConstantPoolGetNameAndTypeRefIndexAt, JVM_ConstantPoolGetNameAndTypeRefIndexAt(JNIEnv *env, jobject obj, jobject unused, jint index))
 {
   JvmtiVMObjectAllocEventCollector oam;
   constantPoolHandle cp(THREAD, reflect_ConstantPool::get_cp(JNIHandles::resolve_non_null(obj)));
@@ -2145,7 +2159,7 @@ JVM_ENTRY(jint, JVM_ConstantPoolGetNameAndTypeRefIndexAt(JNIEnv *env, jobject ob
 }
 JVM_END
 
-JVM_ENTRY(jobjectArray, JVM_ConstantPoolGetNameAndTypeRefInfoAt(JNIEnv *env, jobject obj, jobject unused, jint index))
+JVM_ENTRY_PROF(jobjectArray, JVM_ConstantPoolGetNameAndTypeRefInfoAt, JVM_ConstantPoolGetNameAndTypeRefInfoAt(JNIEnv *env, jobject obj, jobject unused, jint index))
 {
   JvmtiVMObjectAllocEventCollector oam;
   constantPoolHandle cp(THREAD, reflect_ConstantPool::get_cp(JNIHandles::resolve_non_null(obj)));
@@ -2166,7 +2180,7 @@ JVM_ENTRY(jobjectArray, JVM_ConstantPoolGetNameAndTypeRefInfoAt(JNIEnv *env, job
 }
 JVM_END
 
-JVM_ENTRY(jint, JVM_ConstantPoolGetIntAt(JNIEnv *env, jobject obj, jobject unused, jint index))
+JVM_ENTRY_PROF(jint, JVM_ConstantPoolGetIntAt, JVM_ConstantPoolGetIntAt(JNIEnv *env, jobject obj, jobject unused, jint index))
 {
   constantPoolHandle cp = constantPoolHandle(THREAD, reflect_ConstantPool::get_cp(JNIHandles::resolve_non_null(obj)));
   bounds_check(cp, index, CHECK_0);
@@ -2178,7 +2192,7 @@ JVM_ENTRY(jint, JVM_ConstantPoolGetIntAt(JNIEnv *env, jobject obj, jobject unuse
 }
 JVM_END
 
-JVM_ENTRY(jlong, JVM_ConstantPoolGetLongAt(JNIEnv *env, jobject obj, jobject unused, jint index))
+JVM_ENTRY_PROF(jlong, JVM_ConstantPoolGetLongAt, JVM_ConstantPoolGetLongAt(JNIEnv *env, jobject obj, jobject unused, jint index))
 {
   constantPoolHandle cp = constantPoolHandle(THREAD, reflect_ConstantPool::get_cp(JNIHandles::resolve_non_null(obj)));
   bounds_check(cp, index, CHECK_(0L));
@@ -2190,7 +2204,7 @@ JVM_ENTRY(jlong, JVM_ConstantPoolGetLongAt(JNIEnv *env, jobject obj, jobject unu
 }
 JVM_END
 
-JVM_ENTRY(jfloat, JVM_ConstantPoolGetFloatAt(JNIEnv *env, jobject obj, jobject unused, jint index))
+JVM_ENTRY_PROF(jfloat, JVM_ConstantPoolGetFloatAt, JVM_ConstantPoolGetFloatAt(JNIEnv *env, jobject obj, jobject unused, jint index))
 {
   constantPoolHandle cp = constantPoolHandle(THREAD, reflect_ConstantPool::get_cp(JNIHandles::resolve_non_null(obj)));
   bounds_check(cp, index, CHECK_(0.0f));
@@ -2202,7 +2216,7 @@ JVM_ENTRY(jfloat, JVM_ConstantPoolGetFloatAt(JNIEnv *env, jobject obj, jobject u
 }
 JVM_END
 
-JVM_ENTRY(jdouble, JVM_ConstantPoolGetDoubleAt(JNIEnv *env, jobject obj, jobject unused, jint index))
+JVM_ENTRY_PROF(jdouble, JVM_ConstantPoolGetDoubleAt, JVM_ConstantPoolGetDoubleAt(JNIEnv *env, jobject obj, jobject unused, jint index))
 {
   constantPoolHandle cp = constantPoolHandle(THREAD, reflect_ConstantPool::get_cp(JNIHandles::resolve_non_null(obj)));
   bounds_check(cp, index, CHECK_(0.0));
@@ -2214,7 +2228,7 @@ JVM_ENTRY(jdouble, JVM_ConstantPoolGetDoubleAt(JNIEnv *env, jobject obj, jobject
 }
 JVM_END
 
-JVM_ENTRY(jstring, JVM_ConstantPoolGetStringAt(JNIEnv *env, jobject obj, jobject unused, jint index))
+JVM_ENTRY_PROF(jstring, JVM_ConstantPoolGetStringAt, JVM_ConstantPoolGetStringAt(JNIEnv *env, jobject obj, jobject unused, jint index))
 {
   constantPoolHandle cp = constantPoolHandle(THREAD, reflect_ConstantPool::get_cp(JNIHandles::resolve_non_null(obj)));
   bounds_check(cp, index, CHECK_NULL);
@@ -2227,7 +2241,7 @@ JVM_ENTRY(jstring, JVM_ConstantPoolGetStringAt(JNIEnv *env, jobject obj, jobject
 }
 JVM_END
 
-JVM_ENTRY(jstring, JVM_ConstantPoolGetUTF8At(JNIEnv *env, jobject obj, jobject unused, jint index))
+JVM_ENTRY_PROF(jstring, JVM_ConstantPoolGetUTF8At, JVM_ConstantPoolGetUTF8At(JNIEnv *env, jobject obj, jobject unused, jint index))
 {
   JvmtiVMObjectAllocEventCollector oam;
   constantPoolHandle cp = constantPoolHandle(THREAD, reflect_ConstantPool::get_cp(JNIHandles::resolve_non_null(obj)));
@@ -2242,7 +2256,7 @@ JVM_ENTRY(jstring, JVM_ConstantPoolGetUTF8At(JNIEnv *env, jobject obj, jobject u
 }
 JVM_END
 
-JVM_ENTRY(jbyte, JVM_ConstantPoolGetTagAt(JNIEnv *env, jobject obj, jobject unused, jint index))
+JVM_ENTRY_PROF(jbyte, JVM_ConstantPoolGetTagAt, JVM_ConstantPoolGetTagAt(JNIEnv *env, jobject obj, jobject unused, jint index))
 {
   constantPoolHandle cp = constantPoolHandle(THREAD, reflect_ConstantPool::get_cp(JNIHandles::resolve_non_null(obj)));
   bounds_check(cp, index, CHECK_0);
@@ -2268,7 +2282,7 @@ JVM_END
 
 // Assertion support. //////////////////////////////////////////////////////////
 
-JVM_ENTRY(jboolean, JVM_DesiredAssertionStatus(JNIEnv *env, jclass unused, jclass cls))
+JVM_ENTRY_PROF(jboolean, JVM_DesiredAssertionStatus, JVM_DesiredAssertionStatus(JNIEnv *env, jclass unused, jclass cls))
   assert(cls != nullptr, "bad class");
 
   oop r = JNIHandles::resolve(cls);
@@ -2289,7 +2303,7 @@ JVM_END
 
 // Return a new AssertionStatusDirectives object with the fields filled in with
 // command-line assertion arguments (i.e., -ea, -da).
-JVM_ENTRY(jobject, JVM_AssertionStatusDirectives(JNIEnv *env, jclass unused))
+JVM_ENTRY_PROF(jobject, JVM_AssertionStatusDirectives, JVM_AssertionStatusDirectives(JNIEnv *env, jclass unused))
   JvmtiVMObjectAllocEventCollector oam;
   oop asd = JavaAssertions::createAssertionStatusDirectives(CHECK_NULL);
   return JNIHandles::make_local(THREAD, asd);
@@ -2307,14 +2321,14 @@ JVM_END
 // Otherwise it returns its argument value which is the _the_class Klass*.
 // Please, refer to the description in the jvmtiThreadSate.hpp.
 
-JVM_ENTRY(const char*, JVM_GetClassNameUTF(JNIEnv *env, jclass cls))
+JVM_ENTRY_PROF(const char*, JVM_GetClassNameUTF, JVM_GetClassNameUTF(JNIEnv *env, jclass cls))
   Klass* k = java_lang_Class::as_Klass(JNIHandles::resolve_non_null(cls));
   k = JvmtiThreadState::class_to_verify_considering_redefinition(k, thread);
   return k->name()->as_utf8();
 JVM_END
 
 
-JVM_ENTRY(void, JVM_GetClassCPTypes(JNIEnv *env, jclass cls, unsigned char *types))
+JVM_ENTRY_PROF(void, JVM_GetClassCPTypes, JVM_GetClassCPTypes(JNIEnv *env, jclass cls, unsigned char *types))
   Klass* k = java_lang_Class::as_Klass(JNIHandles::resolve_non_null(cls));
   k = JvmtiThreadState::class_to_verify_considering_redefinition(k, thread);
   // types will have length zero if this is not an InstanceKlass
@@ -2329,21 +2343,21 @@ JVM_ENTRY(void, JVM_GetClassCPTypes(JNIEnv *env, jclass cls, unsigned char *type
 JVM_END
 
 
-JVM_ENTRY(jint, JVM_GetClassCPEntriesCount(JNIEnv *env, jclass cls))
+JVM_ENTRY_PROF(jint, JVM_GetClassCPEntriesCount, JVM_GetClassCPEntriesCount(JNIEnv *env, jclass cls))
   Klass* k = java_lang_Class::as_Klass(JNIHandles::resolve_non_null(cls));
   k = JvmtiThreadState::class_to_verify_considering_redefinition(k, thread);
   return (!k->is_instance_klass()) ? 0 : InstanceKlass::cast(k)->constants()->length();
 JVM_END
 
 
-JVM_ENTRY(jint, JVM_GetClassFieldsCount(JNIEnv *env, jclass cls))
+JVM_ENTRY_PROF(jint, JVM_GetClassFieldsCount, JVM_GetClassFieldsCount(JNIEnv *env, jclass cls))
   Klass* k = java_lang_Class::as_Klass(JNIHandles::resolve_non_null(cls));
   k = JvmtiThreadState::class_to_verify_considering_redefinition(k, thread);
   return (!k->is_instance_klass()) ? 0 : InstanceKlass::cast(k)->java_fields_count();
 JVM_END
 
 
-JVM_ENTRY(jint, JVM_GetClassMethodsCount(JNIEnv *env, jclass cls))
+JVM_ENTRY_PROF(jint, JVM_GetClassMethodsCount, JVM_GetClassMethodsCount(JNIEnv *env, jclass cls))
   Klass* k = java_lang_Class::as_Klass(JNIHandles::resolve_non_null(cls));
   k = JvmtiThreadState::class_to_verify_considering_redefinition(k, thread);
   return (!k->is_instance_klass()) ? 0 : InstanceKlass::cast(k)->methods()->length();
@@ -2355,7 +2369,7 @@ JVM_END
 // Typically, these methods are called in a loop with bounds determined
 // by the results of JVM_GetClass{Fields,Methods}Count, which return
 // zero for arrays.
-JVM_ENTRY(void, JVM_GetMethodIxExceptionIndexes(JNIEnv *env, jclass cls, jint method_index, unsigned short *exceptions))
+JVM_ENTRY_PROF(void, JVM_GetMethodIxExceptionIndexes, JVM_GetMethodIxExceptionIndexes(JNIEnv *env, jclass cls, jint method_index, unsigned short *exceptions))
   Klass* k = java_lang_Class::as_Klass(JNIHandles::resolve_non_null(cls));
   k = JvmtiThreadState::class_to_verify_considering_redefinition(k, thread);
   Method* method = InstanceKlass::cast(k)->methods()->at(method_index);
@@ -2369,7 +2383,7 @@ JVM_ENTRY(void, JVM_GetMethodIxExceptionIndexes(JNIEnv *env, jclass cls, jint me
 JVM_END
 
 
-JVM_ENTRY(jint, JVM_GetMethodIxExceptionsCount(JNIEnv *env, jclass cls, jint method_index))
+JVM_ENTRY_PROF(jint, JVM_GetMethodIxExceptionsCount, JVM_GetMethodIxExceptionsCount(JNIEnv *env, jclass cls, jint method_index))
   Klass* k = java_lang_Class::as_Klass(JNIHandles::resolve_non_null(cls));
   k = JvmtiThreadState::class_to_verify_considering_redefinition(k, thread);
   Method* method = InstanceKlass::cast(k)->methods()->at(method_index);
@@ -2377,7 +2391,7 @@ JVM_ENTRY(jint, JVM_GetMethodIxExceptionsCount(JNIEnv *env, jclass cls, jint met
 JVM_END
 
 
-JVM_ENTRY(void, JVM_GetMethodIxByteCode(JNIEnv *env, jclass cls, jint method_index, unsigned char *code))
+JVM_ENTRY_PROF(void, JVM_GetMethodIxByteCode, JVM_GetMethodIxByteCode(JNIEnv *env, jclass cls, jint method_index, unsigned char *code))
   Klass* k = java_lang_Class::as_Klass(JNIHandles::resolve_non_null(cls));
   k = JvmtiThreadState::class_to_verify_considering_redefinition(k, thread);
   Method* method = InstanceKlass::cast(k)->methods()->at(method_index);
@@ -2385,7 +2399,7 @@ JVM_ENTRY(void, JVM_GetMethodIxByteCode(JNIEnv *env, jclass cls, jint method_ind
 JVM_END
 
 
-JVM_ENTRY(jint, JVM_GetMethodIxByteCodeLength(JNIEnv *env, jclass cls, jint method_index))
+JVM_ENTRY_PROF(jint, JVM_GetMethodIxByteCodeLength, JVM_GetMethodIxByteCodeLength(JNIEnv *env, jclass cls, jint method_index))
   Klass* k = java_lang_Class::as_Klass(JNIHandles::resolve_non_null(cls));
   k = JvmtiThreadState::class_to_verify_considering_redefinition(k, thread);
   Method* method = InstanceKlass::cast(k)->methods()->at(method_index);
@@ -2393,7 +2407,7 @@ JVM_ENTRY(jint, JVM_GetMethodIxByteCodeLength(JNIEnv *env, jclass cls, jint meth
 JVM_END
 
 
-JVM_ENTRY(void, JVM_GetMethodIxExceptionTableEntry(JNIEnv *env, jclass cls, jint method_index, jint entry_index, JVM_ExceptionTableEntryType *entry))
+JVM_ENTRY_PROF(void, JVM_GetMethodIxExceptionTableEntry, JVM_GetMethodIxExceptionTableEntry(JNIEnv *env, jclass cls, jint method_index, jint entry_index, JVM_ExceptionTableEntryType *entry))
   Klass* k = java_lang_Class::as_Klass(JNIHandles::resolve_non_null(cls));
   k = JvmtiThreadState::class_to_verify_considering_redefinition(k, thread);
   Method* method = InstanceKlass::cast(k)->methods()->at(method_index);
@@ -2405,7 +2419,7 @@ JVM_ENTRY(void, JVM_GetMethodIxExceptionTableEntry(JNIEnv *env, jclass cls, jint
 JVM_END
 
 
-JVM_ENTRY(jint, JVM_GetMethodIxExceptionTableLength(JNIEnv *env, jclass cls, int method_index))
+JVM_ENTRY_PROF(jint, JVM_GetMethodIxExceptionTableLength, JVM_GetMethodIxExceptionTableLength(JNIEnv *env, jclass cls, int method_index))
   Klass* k = java_lang_Class::as_Klass(JNIHandles::resolve_non_null(cls));
   k = JvmtiThreadState::class_to_verify_considering_redefinition(k, thread);
   Method* method = InstanceKlass::cast(k)->methods()->at(method_index);
@@ -2413,7 +2427,7 @@ JVM_ENTRY(jint, JVM_GetMethodIxExceptionTableLength(JNIEnv *env, jclass cls, int
 JVM_END
 
 
-JVM_ENTRY(jint, JVM_GetMethodIxModifiers(JNIEnv *env, jclass cls, int method_index))
+JVM_ENTRY_PROF(jint, JVM_GetMethodIxModifiers, JVM_GetMethodIxModifiers(JNIEnv *env, jclass cls, int method_index))
   Klass* k = java_lang_Class::as_Klass(JNIHandles::resolve_non_null(cls));
   k = JvmtiThreadState::class_to_verify_considering_redefinition(k, thread);
   Method* method = InstanceKlass::cast(k)->methods()->at(method_index);
@@ -2421,14 +2435,14 @@ JVM_ENTRY(jint, JVM_GetMethodIxModifiers(JNIEnv *env, jclass cls, int method_ind
 JVM_END
 
 
-JVM_ENTRY(jint, JVM_GetFieldIxModifiers(JNIEnv *env, jclass cls, int field_index))
+JVM_ENTRY_PROF(jint, JVM_GetFieldIxModifiers, JVM_GetFieldIxModifiers(JNIEnv *env, jclass cls, int field_index))
   Klass* k = java_lang_Class::as_Klass(JNIHandles::resolve_non_null(cls));
   k = JvmtiThreadState::class_to_verify_considering_redefinition(k, thread);
   return InstanceKlass::cast(k)->field_access_flags(field_index);
 JVM_END
 
 
-JVM_ENTRY(jint, JVM_GetMethodIxLocalsCount(JNIEnv *env, jclass cls, int method_index))
+JVM_ENTRY_PROF(jint, JVM_GetMethodIxLocalsCount, JVM_GetMethodIxLocalsCount(JNIEnv *env, jclass cls, int method_index))
   Klass* k = java_lang_Class::as_Klass(JNIHandles::resolve_non_null(cls));
   k = JvmtiThreadState::class_to_verify_considering_redefinition(k, thread);
   Method* method = InstanceKlass::cast(k)->methods()->at(method_index);
@@ -2436,7 +2450,7 @@ JVM_ENTRY(jint, JVM_GetMethodIxLocalsCount(JNIEnv *env, jclass cls, int method_i
 JVM_END
 
 
-JVM_ENTRY(jint, JVM_GetMethodIxArgsSize(JNIEnv *env, jclass cls, int method_index))
+JVM_ENTRY_PROF(jint, JVM_GetMethodIxArgsSize, JVM_GetMethodIxArgsSize(JNIEnv *env, jclass cls, int method_index))
   Klass* k = java_lang_Class::as_Klass(JNIHandles::resolve_non_null(cls));
   k = JvmtiThreadState::class_to_verify_considering_redefinition(k, thread);
   Method* method = InstanceKlass::cast(k)->methods()->at(method_index);
@@ -2444,7 +2458,7 @@ JVM_ENTRY(jint, JVM_GetMethodIxArgsSize(JNIEnv *env, jclass cls, int method_inde
 JVM_END
 
 
-JVM_ENTRY(jint, JVM_GetMethodIxMaxStack(JNIEnv *env, jclass cls, int method_index))
+JVM_ENTRY_PROF(jint, JVM_GetMethodIxMaxStack, JVM_GetMethodIxMaxStack(JNIEnv *env, jclass cls, int method_index))
   Klass* k = java_lang_Class::as_Klass(JNIHandles::resolve_non_null(cls));
   k = JvmtiThreadState::class_to_verify_considering_redefinition(k, thread);
   Method* method = InstanceKlass::cast(k)->methods()->at(method_index);
@@ -2452,7 +2466,7 @@ JVM_ENTRY(jint, JVM_GetMethodIxMaxStack(JNIEnv *env, jclass cls, int method_inde
 JVM_END
 
 
-JVM_ENTRY(jboolean, JVM_IsConstructorIx(JNIEnv *env, jclass cls, int method_index))
+JVM_ENTRY_PROF(jboolean, JVM_IsConstructorIx, JVM_IsConstructorIx(JNIEnv *env, jclass cls, int method_index))
   ResourceMark rm(THREAD);
   Klass* k = java_lang_Class::as_Klass(JNIHandles::resolve_non_null(cls));
   k = JvmtiThreadState::class_to_verify_considering_redefinition(k, thread);
@@ -2461,7 +2475,7 @@ JVM_ENTRY(jboolean, JVM_IsConstructorIx(JNIEnv *env, jclass cls, int method_inde
 JVM_END
 
 
-JVM_ENTRY(jboolean, JVM_IsVMGeneratedMethodIx(JNIEnv *env, jclass cls, int method_index))
+JVM_ENTRY_PROF(jboolean, JVM_IsVMGeneratedMethodIx, JVM_IsVMGeneratedMethodIx(JNIEnv *env, jclass cls, int method_index))
   ResourceMark rm(THREAD);
   Klass* k = java_lang_Class::as_Klass(JNIHandles::resolve_non_null(cls));
   k = JvmtiThreadState::class_to_verify_considering_redefinition(k, thread);
@@ -2469,7 +2483,7 @@ JVM_ENTRY(jboolean, JVM_IsVMGeneratedMethodIx(JNIEnv *env, jclass cls, int metho
   return method->is_overpass();
 JVM_END
 
-JVM_ENTRY(const char*, JVM_GetMethodIxNameUTF(JNIEnv *env, jclass cls, jint method_index))
+JVM_ENTRY_PROF(const char*, JVM_GetMethodIxNameUTF, JVM_GetMethodIxNameUTF(JNIEnv *env, jclass cls, jint method_index))
   Klass* k = java_lang_Class::as_Klass(JNIHandles::resolve_non_null(cls));
   k = JvmtiThreadState::class_to_verify_considering_redefinition(k, thread);
   Method* method = InstanceKlass::cast(k)->methods()->at(method_index);
@@ -2477,7 +2491,7 @@ JVM_ENTRY(const char*, JVM_GetMethodIxNameUTF(JNIEnv *env, jclass cls, jint meth
 JVM_END
 
 
-JVM_ENTRY(const char*, JVM_GetMethodIxSignatureUTF(JNIEnv *env, jclass cls, jint method_index))
+JVM_ENTRY_PROF(const char*, JVM_GetMethodIxSignatureUTF, JVM_GetMethodIxSignatureUTF(JNIEnv *env, jclass cls, jint method_index))
   Klass* k = java_lang_Class::as_Klass(JNIHandles::resolve_non_null(cls));
   k = JvmtiThreadState::class_to_verify_considering_redefinition(k, thread);
   Method* method = InstanceKlass::cast(k)->methods()->at(method_index);
@@ -2492,7 +2506,7 @@ JVM_END
  * that nothing it calls tries to use the cpCache instead of the raw
  * constant pool, so we must use cp->uncached_x methods when appropriate.
  */
-JVM_ENTRY(const char*, JVM_GetCPFieldNameUTF(JNIEnv *env, jclass cls, jint cp_index))
+JVM_ENTRY_PROF(const char*, JVM_GetCPFieldNameUTF, JVM_GetCPFieldNameUTF(JNIEnv *env, jclass cls, jint cp_index))
   Klass* k = java_lang_Class::as_Klass(JNIHandles::resolve_non_null(cls));
   k = JvmtiThreadState::class_to_verify_considering_redefinition(k, thread);
   ConstantPool* cp = InstanceKlass::cast(k)->constants();
@@ -2507,7 +2521,7 @@ JVM_ENTRY(const char*, JVM_GetCPFieldNameUTF(JNIEnv *env, jclass cls, jint cp_in
 JVM_END
 
 
-JVM_ENTRY(const char*, JVM_GetCPMethodNameUTF(JNIEnv *env, jclass cls, jint cp_index))
+JVM_ENTRY_PROF(const char*, JVM_GetCPMethodNameUTF, JVM_GetCPMethodNameUTF(JNIEnv *env, jclass cls, jint cp_index))
   Klass* k = java_lang_Class::as_Klass(JNIHandles::resolve_non_null(cls));
   k = JvmtiThreadState::class_to_verify_considering_redefinition(k, thread);
   ConstantPool* cp = InstanceKlass::cast(k)->constants();
@@ -2523,7 +2537,7 @@ JVM_ENTRY(const char*, JVM_GetCPMethodNameUTF(JNIEnv *env, jclass cls, jint cp_i
 JVM_END
 
 
-JVM_ENTRY(const char*, JVM_GetCPMethodSignatureUTF(JNIEnv *env, jclass cls, jint cp_index))
+JVM_ENTRY_PROF(const char*, JVM_GetCPMethodSignatureUTF, JVM_GetCPMethodSignatureUTF(JNIEnv *env, jclass cls, jint cp_index))
   Klass* k = java_lang_Class::as_Klass(JNIHandles::resolve_non_null(cls));
   k = JvmtiThreadState::class_to_verify_considering_redefinition(k, thread);
   ConstantPool* cp = InstanceKlass::cast(k)->constants();
@@ -2539,7 +2553,7 @@ JVM_ENTRY(const char*, JVM_GetCPMethodSignatureUTF(JNIEnv *env, jclass cls, jint
 JVM_END
 
 
-JVM_ENTRY(const char*, JVM_GetCPFieldSignatureUTF(JNIEnv *env, jclass cls, jint cp_index))
+JVM_ENTRY_PROF(const char*, JVM_GetCPFieldSignatureUTF, JVM_GetCPFieldSignatureUTF(JNIEnv *env, jclass cls, jint cp_index))
   Klass* k = java_lang_Class::as_Klass(JNIHandles::resolve_non_null(cls));
   k = JvmtiThreadState::class_to_verify_considering_redefinition(k, thread);
   ConstantPool* cp = InstanceKlass::cast(k)->constants();
@@ -2554,7 +2568,7 @@ JVM_ENTRY(const char*, JVM_GetCPFieldSignatureUTF(JNIEnv *env, jclass cls, jint 
 JVM_END
 
 
-JVM_ENTRY(const char*, JVM_GetCPClassNameUTF(JNIEnv *env, jclass cls, jint cp_index))
+JVM_ENTRY_PROF(const char*, JVM_GetCPClassNameUTF, JVM_GetCPClassNameUTF(JNIEnv *env, jclass cls, jint cp_index))
   Klass* k = java_lang_Class::as_Klass(JNIHandles::resolve_non_null(cls));
   k = JvmtiThreadState::class_to_verify_considering_redefinition(k, thread);
   ConstantPool* cp = InstanceKlass::cast(k)->constants();
@@ -2563,7 +2577,7 @@ JVM_ENTRY(const char*, JVM_GetCPClassNameUTF(JNIEnv *env, jclass cls, jint cp_in
 JVM_END
 
 
-JVM_ENTRY(const char*, JVM_GetCPFieldClassNameUTF(JNIEnv *env, jclass cls, jint cp_index))
+JVM_ENTRY_PROF(const char*, JVM_GetCPFieldClassNameUTF, JVM_GetCPFieldClassNameUTF(JNIEnv *env, jclass cls, jint cp_index))
   Klass* k = java_lang_Class::as_Klass(JNIHandles::resolve_non_null(cls));
   k = JvmtiThreadState::class_to_verify_considering_redefinition(k, thread);
   ConstantPool* cp = InstanceKlass::cast(k)->constants();
@@ -2581,7 +2595,7 @@ JVM_ENTRY(const char*, JVM_GetCPFieldClassNameUTF(JNIEnv *env, jclass cls, jint 
 JVM_END
 
 
-JVM_ENTRY(const char*, JVM_GetCPMethodClassNameUTF(JNIEnv *env, jclass cls, jint cp_index))
+JVM_ENTRY_PROF(const char*, JVM_GetCPMethodClassNameUTF, JVM_GetCPMethodClassNameUTF(JNIEnv *env, jclass cls, jint cp_index))
   Klass* k = java_lang_Class::as_Klass(JNIHandles::resolve_non_null(cls));
   k = JvmtiThreadState::class_to_verify_considering_redefinition(k, thread);
   ConstantPool* cp = InstanceKlass::cast(k)->constants();
@@ -2600,7 +2614,7 @@ JVM_ENTRY(const char*, JVM_GetCPMethodClassNameUTF(JNIEnv *env, jclass cls, jint
 JVM_END
 
 
-JVM_ENTRY(jint, JVM_GetCPFieldModifiers(JNIEnv *env, jclass cls, int cp_index, jclass called_cls))
+JVM_ENTRY_PROF(jint, JVM_GetCPFieldModifiers, JVM_GetCPFieldModifiers(JNIEnv *env, jclass cls, int cp_index, jclass called_cls))
   Klass* k = java_lang_Class::as_Klass(JNIHandles::resolve_non_null(cls));
   Klass* k_called = java_lang_Class::as_Klass(JNIHandles::resolve_non_null(called_cls));
   k        = JvmtiThreadState::class_to_verify_considering_redefinition(k, thread);
@@ -2627,7 +2641,7 @@ JVM_ENTRY(jint, JVM_GetCPFieldModifiers(JNIEnv *env, jclass cls, int cp_index, j
 JVM_END
 
 
-JVM_ENTRY(jint, JVM_GetCPMethodModifiers(JNIEnv *env, jclass cls, int cp_index, jclass called_cls))
+JVM_ENTRY_PROF(jint, JVM_GetCPMethodModifiers, JVM_GetCPMethodModifiers(JNIEnv *env, jclass cls, int cp_index, jclass called_cls))
   Klass* k = java_lang_Class::as_Klass(JNIHandles::resolve_non_null(cls));
   Klass* k_called = java_lang_Class::as_Klass(JNIHandles::resolve_non_null(called_cls));
   k        = JvmtiThreadState::class_to_verify_considering_redefinition(k, thread);
@@ -2658,12 +2672,12 @@ JVM_END
 
 // Misc //////////////////////////////////////////////////////////////////////////////////////////////
 
-JVM_LEAF(void, JVM_ReleaseUTF(const char *utf))
+JVM_LEAF_PROF(void, JVM_ReleaseUTF, JVM_ReleaseUTF(const char *utf))
   // So long as UTF8::convert_to_utf8 returns resource strings, we don't have to do anything
 JVM_END
 
 
-JVM_ENTRY(jboolean, JVM_IsSameClassPackage(JNIEnv *env, jclass class1, jclass class2))
+JVM_ENTRY_PROF(jboolean, JVM_IsSameClassPackage, JVM_IsSameClassPackage(JNIEnv *env, jclass class1, jclass class2))
   oop class1_mirror = JNIHandles::resolve_non_null(class1);
   oop class2_mirror = JNIHandles::resolve_non_null(class2);
   Klass* klass1 = java_lang_Class::as_Klass(class1_mirror);
@@ -2762,7 +2776,7 @@ static void thread_entry(JavaThread* thread, TRAPS) {
 }
 
 
-JVM_ENTRY(void, JVM_StartThread(JNIEnv* env, jobject jthread))
+JVM_ENTRY_PROF(void, JVM_StartThread, JVM_StartThread(JNIEnv* env, jobject jthread))
 #if INCLUDE_CDS
   if (CDSConfig::allow_only_single_java_thread()) {
     // During java -Xshare:dump, if we allow multiple Java threads to
@@ -2859,7 +2873,7 @@ JVM_ENTRY(void, JVM_StartThread(JNIEnv* env, jobject jthread))
 JVM_END
 
 
-JVM_ENTRY(void, JVM_SetThreadPriority(JNIEnv* env, jobject jthread, jint prio))
+JVM_ENTRY_PROF(void, JVM_SetThreadPriority, JVM_SetThreadPriority(JNIEnv* env, jobject jthread, jint prio))
   ThreadsListHandle tlh(thread);
   oop java_thread = nullptr;
   JavaThread* receiver = nullptr;
@@ -2876,12 +2890,12 @@ JVM_ENTRY(void, JVM_SetThreadPriority(JNIEnv* env, jobject jthread, jint prio))
 JVM_END
 
 
-JVM_LEAF(void, JVM_Yield(JNIEnv *env, jclass threadClass))
+JVM_LEAF_PROF(void, JVM_Yield, JVM_Yield(JNIEnv *env, jclass threadClass))
   HOTSPOT_THREAD_YIELD();
   os::naked_yield();
 JVM_END
 
-JVM_ENTRY(void, JVM_SleepNanos(JNIEnv* env, jclass threadClass, jlong nanos))
+JVM_ENTRY_PROF(void, JVM_SleepNanos, JVM_SleepNanos(JNIEnv* env, jclass threadClass, jlong nanos))
   if (nanos < 0) {
     THROW_MSG(vmSymbols::java_lang_IllegalArgumentException(), "nanosecond timeout value out of range");
   }
@@ -2917,19 +2931,19 @@ JVM_ENTRY(void, JVM_SleepNanos(JNIEnv* env, jclass threadClass, jlong nanos))
   HOTSPOT_THREAD_SLEEP_END(0);
 JVM_END
 
-JVM_ENTRY(jobject, JVM_CurrentCarrierThread(JNIEnv* env, jclass threadClass))
+JVM_ENTRY_PROF(jobject, JVM_CurrentCarrierThread, JVM_CurrentCarrierThread(JNIEnv* env, jclass threadClass))
   oop jthread = thread->threadObj();
   assert(jthread != nullptr, "no current carrier thread!");
   return JNIHandles::make_local(THREAD, jthread);
 JVM_END
 
-JVM_ENTRY(jobject, JVM_CurrentThread(JNIEnv* env, jclass threadClass))
+JVM_ENTRY_PROF(jobject, JVM_CurrentThread, JVM_CurrentThread(JNIEnv* env, jclass threadClass))
   oop theThread = thread->vthread();
   assert(theThread != (oop)nullptr, "no current thread!");
   return JNIHandles::make_local(THREAD, theThread);
 JVM_END
 
-JVM_ENTRY(void, JVM_SetCurrentThread(JNIEnv* env, jobject thisThread,
+JVM_ENTRY_PROF(void, JVM_SetCurrentThread, JVM_SetCurrentThread(JNIEnv* env, jobject thisThread,
                                      jobject theThread))
   oop threadObj = JNIHandles::resolve(theThread);
   thread->set_vthread(threadObj);
@@ -2940,11 +2954,11 @@ JVM_ENTRY(void, JVM_SetCurrentThread(JNIEnv* env, jobject thisThread,
   JFR_ONLY(Jfr::on_set_current_thread(thread, threadObj);)
 JVM_END
 
-JVM_ENTRY(jlong, JVM_GetNextThreadIdOffset(JNIEnv* env, jclass threadClass))
+JVM_ENTRY_PROF(jlong, JVM_GetNextThreadIdOffset, JVM_GetNextThreadIdOffset(JNIEnv* env, jclass threadClass))
   return ThreadIdentifier::unsafe_offset();
 JVM_END
 
-JVM_ENTRY(void, JVM_Interrupt(JNIEnv* env, jobject jthread))
+JVM_ENTRY_PROF(void, JVM_Interrupt, JVM_Interrupt(JNIEnv* env, jobject jthread))
   ThreadsListHandle tlh(thread);
   JavaThread* receiver = nullptr;
   bool is_alive = tlh.cv_internal_thread_to_JavaThread(jthread, &receiver, nullptr);
@@ -2956,7 +2970,7 @@ JVM_END
 
 // Return true iff the current thread has locked the object passed in
 
-JVM_ENTRY(jboolean, JVM_HoldsLock(JNIEnv* env, jclass threadClass, jobject obj))
+JVM_ENTRY_PROF(jboolean, JVM_HoldsLock, JVM_HoldsLock(JNIEnv* env, jclass threadClass, jobject obj))
   if (obj == nullptr) {
     THROW_(vmSymbols::java_lang_NullPointerException(), JNI_FALSE);
   }
@@ -2964,12 +2978,13 @@ JVM_ENTRY(jboolean, JVM_HoldsLock(JNIEnv* env, jclass threadClass, jobject obj))
   return ObjectSynchronizer::current_thread_holds_lock(thread, h_obj);
 JVM_END
 
-JVM_ENTRY(jobject, JVM_GetStackTrace(JNIEnv *env, jobject jthread))
+JVM_ENTRY_PROF(jobject, JVM_GetStackTrace, JVM_GetStackTrace(JNIEnv *env, jobject jthread))
   oop trace = java_lang_Thread::async_get_stack_trace(JNIHandles::resolve(jthread), THREAD);
   return JNIHandles::make_local(THREAD, trace);
 JVM_END
 
-JVM_ENTRY(void, JVM_SetNativeThreadName(JNIEnv* env, jobject jthread, jstring name))
+
+JVM_ENTRY_PROF(void, JVM_SetNativeThreadName, JVM_SetNativeThreadName(JNIEnv* env, jobject jthread, jstring name))
   // We don't use a ThreadsListHandle here because the current thread
   // must be alive.
   oop java_thread = JNIHandles::resolve_non_null(jthread);
@@ -2984,22 +2999,21 @@ JVM_ENTRY(void, JVM_SetNativeThreadName(JNIEnv* env, jobject jthread, jstring na
   }
 JVM_END
 
-JVM_ENTRY(jobject, JVM_ScopedValueCache(JNIEnv* env, jclass threadClass))
+JVM_ENTRY_PROF(jobject, JVM_ScopedValueCache, JVM_ScopedValueCache(JNIEnv* env, jclass threadClass))
   oop theCache = thread->scopedValueCache();
   return JNIHandles::make_local(THREAD, theCache);
 JVM_END
 
-JVM_ENTRY(void, JVM_SetScopedValueCache(JNIEnv* env, jclass threadClass,
+JVM_ENTRY_PROF(void, JVM_SetScopedValueCache, JVM_SetScopedValueCache(JNIEnv* env, jclass threadClass,
                                        jobject theCache))
   arrayOop objs = arrayOop(JNIHandles::resolve(theCache));
   thread->set_scopedValueCache(objs);
 JVM_END
 
-
 // java.lang.Package ////////////////////////////////////////////////////////////////
 
 
-JVM_ENTRY(jstring, JVM_GetSystemPackage(JNIEnv *env, jstring name))
+JVM_ENTRY_PROF(jstring, JVM_GetSystemPackage, JVM_GetSystemPackage(JNIEnv *env, jstring name))
   ResourceMark rm(THREAD);
   JvmtiVMObjectAllocEventCollector oam;
   char* str = java_lang_String::as_utf8_string(JNIHandles::resolve_non_null(name));
@@ -3008,7 +3022,7 @@ return (jstring) JNIHandles::make_local(THREAD, result);
 JVM_END
 
 
-JVM_ENTRY(jobjectArray, JVM_GetSystemPackages(JNIEnv *env))
+JVM_ENTRY_PROF(jobjectArray, JVM_GetSystemPackages, JVM_GetSystemPackages(JNIEnv *env))
   JvmtiVMObjectAllocEventCollector oam;
   objArrayOop result = ClassLoader::get_system_packages(CHECK_NULL);
   return (jobjectArray) JNIHandles::make_local(THREAD, result);
@@ -3018,7 +3032,7 @@ JVM_END
 // java.lang.ref.Reference ///////////////////////////////////////////////////////////////
 
 
-JVM_ENTRY(jobject, JVM_GetAndClearReferencePendingList(JNIEnv* env))
+JVM_ENTRY_PROF(jobject, JVM_GetAndClearReferencePendingList, JVM_GetAndClearReferencePendingList(JNIEnv* env))
   MonitorLocker ml(Heap_lock);
   oop ref = Universe::reference_pending_list();
   if (ref != nullptr) {
@@ -3027,19 +3041,19 @@ JVM_ENTRY(jobject, JVM_GetAndClearReferencePendingList(JNIEnv* env))
   return JNIHandles::make_local(THREAD, ref);
 JVM_END
 
-JVM_ENTRY(jboolean, JVM_HasReferencePendingList(JNIEnv* env))
+JVM_ENTRY_PROF(jboolean, JVM_HasReferencePendingList, JVM_HasReferencePendingList(JNIEnv* env))
   MonitorLocker ml(Heap_lock);
   return Universe::has_reference_pending_list();
 JVM_END
 
-JVM_ENTRY(void, JVM_WaitForReferencePendingList(JNIEnv* env))
+JVM_ENTRY_PROF(void, JVM_WaitForReferencePendingList, JVM_WaitForReferencePendingList(JNIEnv* env))
   MonitorLocker ml(Heap_lock);
   while (!Universe::has_reference_pending_list()) {
     ml.wait();
   }
 JVM_END
 
-JVM_ENTRY(jboolean, JVM_ReferenceRefersTo(JNIEnv* env, jobject ref, jobject o))
+JVM_ENTRY_PROF(jboolean, JVM_ReferenceRefersTo, JVM_ReferenceRefersTo(JNIEnv* env, jobject ref, jobject o))
   oop ref_oop = JNIHandles::resolve_non_null(ref);
   // PhantomReference has it's own implementation of refersTo().
   // See: JVM_PhantomReferenceRefersTo
@@ -3048,7 +3062,7 @@ JVM_ENTRY(jboolean, JVM_ReferenceRefersTo(JNIEnv* env, jobject ref, jobject o))
   return referent == JNIHandles::resolve(o);
 JVM_END
 
-JVM_ENTRY(void, JVM_ReferenceClear(JNIEnv* env, jobject ref))
+JVM_ENTRY_PROF(void, JVM_ReferenceClear, JVM_ReferenceClear(JNIEnv* env, jobject ref))
   oop ref_oop = JNIHandles::resolve_non_null(ref);
   // FinalReference has it's own implementation of clear().
   assert(!java_lang_ref_Reference::is_final(ref_oop), "precondition");
@@ -3070,7 +3084,7 @@ JVM_END
 // java.lang.ref.PhantomReference //////////////////////////////////////////////////
 
 
-JVM_ENTRY(jboolean, JVM_PhantomReferenceRefersTo(JNIEnv* env, jobject ref, jobject o))
+JVM_ENTRY_PROF(jboolean, JVM_PhantomReferenceRefersTo, JVM_PhantomReferenceRefersTo(JNIEnv* env, jobject ref, jobject o))
   oop ref_oop = JNIHandles::resolve_non_null(ref);
   oop referent = java_lang_ref_Reference::phantom_referent_no_keepalive(ref_oop);
   return referent == JNIHandles::resolve(o);
@@ -3082,7 +3096,7 @@ JVM_END
 // Return the first user-defined class loader up the execution stack, or null
 // if only code from the bootstrap or platform class loader is on the stack.
 
-JVM_ENTRY(jobject, JVM_LatestUserDefinedLoader(JNIEnv *env))
+JVM_ENTRY_PROF(jobject, JVM_LatestUserDefinedLoader, JVM_LatestUserDefinedLoader(JNIEnv *env))
   for (vframeStream vfst(thread); !vfst.at_end(); vfst.next()) {
     InstanceKlass* ik = vfst.method()->method_holder();
     oop loader = ik->class_loader();
@@ -3112,13 +3126,13 @@ static inline arrayOop check_array(JNIEnv *env, jobject arr, bool type_array_onl
 }
 
 
-JVM_ENTRY(jint, JVM_GetArrayLength(JNIEnv *env, jobject arr))
+JVM_ENTRY_PROF(jint, JVM_GetArrayLength, JVM_GetArrayLength(JNIEnv *env, jobject arr))
   arrayOop a = check_array(env, arr, false, CHECK_0);
   return a->length();
 JVM_END
 
 
-JVM_ENTRY(jobject, JVM_GetArrayElement(JNIEnv *env, jobject arr, jint index))
+JVM_ENTRY_PROF(jobject, JVM_GetArrayElement, JVM_GetArrayElement(JNIEnv *env, jobject arr, jint index))
   JvmtiVMObjectAllocEventCollector oam;
   arrayOop a = check_array(env, arr, false, CHECK_NULL);
   jvalue value;
@@ -3128,7 +3142,7 @@ JVM_ENTRY(jobject, JVM_GetArrayElement(JNIEnv *env, jobject arr, jint index))
 JVM_END
 
 
-JVM_ENTRY(jvalue, JVM_GetPrimitiveArrayElement(JNIEnv *env, jobject arr, jint index, jint wCode))
+JVM_ENTRY_PROF(jvalue, JVM_GetPrimitiveArrayElement, JVM_GetPrimitiveArrayElement(JNIEnv *env, jobject arr, jint index, jint wCode))
   jvalue value;
   value.i = 0; // to initialize value before getting used in CHECK
   arrayOop a = check_array(env, arr, true, CHECK_(value));
@@ -3142,7 +3156,7 @@ JVM_ENTRY(jvalue, JVM_GetPrimitiveArrayElement(JNIEnv *env, jobject arr, jint in
 JVM_END
 
 
-JVM_ENTRY(void, JVM_SetArrayElement(JNIEnv *env, jobject arr, jint index, jobject val))
+JVM_ENTRY_PROF(void, JVM_SetArrayElement, JVM_SetArrayElement(JNIEnv *env, jobject arr, jint index, jobject val))
   arrayOop a = check_array(env, arr, false, CHECK);
   oop box = JNIHandles::resolve(val);
   jvalue value;
@@ -3158,7 +3172,7 @@ JVM_ENTRY(void, JVM_SetArrayElement(JNIEnv *env, jobject arr, jint index, jobjec
 JVM_END
 
 
-JVM_ENTRY(void, JVM_SetPrimitiveArrayElement(JNIEnv *env, jobject arr, jint index, jvalue v, unsigned char vCode))
+JVM_ENTRY_PROF(void, JVM_SetPrimitiveArrayElement, JVM_SetPrimitiveArrayElement(JNIEnv *env, jobject arr, jint index, jvalue v, unsigned char vCode))
   arrayOop a = check_array(env, arr, true, CHECK);
   assert(a->is_typeArray(), "just checking");
   BasicType value_type = (BasicType) vCode;
@@ -3166,7 +3180,7 @@ JVM_ENTRY(void, JVM_SetPrimitiveArrayElement(JNIEnv *env, jobject arr, jint inde
 JVM_END
 
 
-JVM_ENTRY(jobject, JVM_NewArray(JNIEnv *env, jclass eltClass, jint length))
+JVM_ENTRY_PROF(jobject, JVM_NewArray, JVM_NewArray(JNIEnv *env, jclass eltClass, jint length))
   JvmtiVMObjectAllocEventCollector oam;
   oop element_mirror = JNIHandles::resolve(eltClass);
   oop result = Reflection::reflect_new_array(element_mirror, length, CHECK_NULL);
@@ -3174,7 +3188,7 @@ JVM_ENTRY(jobject, JVM_NewArray(JNIEnv *env, jclass eltClass, jint length))
 JVM_END
 
 
-JVM_ENTRY(jobject, JVM_NewMultiArray(JNIEnv *env, jclass eltClass, jintArray dim))
+JVM_ENTRY_PROF(jobject, JVM_NewMultiArray, JVM_NewMultiArray(JNIEnv *env, jclass eltClass, jintArray dim))
   JvmtiVMObjectAllocEventCollector oam;
   arrayOop dim_array = check_array(env, dim, true, CHECK_NULL);
   oop element_mirror = JNIHandles::resolve(eltClass);
@@ -3186,11 +3200,11 @@ JVM_END
 
 // Library support ///////////////////////////////////////////////////////////////////////////
 
-JVM_LEAF(void*, JVM_LoadZipLibrary())
+JVM_LEAF_PROF(void*, JVM_LoadZipLibrary, JVM_LoadZipLibrary())
   return ZipLibrary::handle();
 JVM_END
 
-JVM_ENTRY_NO_ENV(void*, JVM_LoadLibrary(const char* name, jboolean throwException))
+JVM_ENTRY_NO_ENV_PROF(void*, JVM_LoadLibrary, JVM_LoadLibrary(const char* name, jboolean throwException))
   //%note jvm_ct
   char ebuf[1024];
   void *load_result;
@@ -3222,13 +3236,13 @@ JVM_ENTRY_NO_ENV(void*, JVM_LoadLibrary(const char* name, jboolean throwExceptio
 JVM_END
 
 
-JVM_LEAF(void, JVM_UnloadLibrary(void* handle))
+JVM_LEAF_PROF(void, JVM_UnloadLibrary, JVM_UnloadLibrary(void* handle))
   os::dll_unload(handle);
   log_info(library)("Unloaded library with handle " INTPTR_FORMAT, p2i(handle));
 JVM_END
 
 
-JVM_LEAF(void*, JVM_FindLibraryEntry(void* handle, const char* name))
+JVM_LEAF_PROF(void*, JVM_FindLibraryEntry, JVM_FindLibraryEntry(void* handle, const char* name))
   void* find_result = os::dll_lookup(handle, name);
   log_info(library)("%s %s in library with handle " INTPTR_FORMAT,
                     find_result != nullptr ? "Found" : "Failed to find",
@@ -3239,20 +3253,20 @@ JVM_END
 
 // JNI version ///////////////////////////////////////////////////////////////////////////////
 
-JVM_LEAF(jboolean, JVM_IsSupportedJNIVersion(jint version))
+JVM_LEAF_PROF(jboolean, JVM_IsSupportedJNIVersion, JVM_IsSupportedJNIVersion(jint version))
   return Threads::is_supported_jni_version_including_1_1(version);
 JVM_END
 
 
-JVM_LEAF(jboolean, JVM_IsPreviewEnabled(void))
+JVM_LEAF_PROF(jboolean, JVM_IsPreviewEnabled, JVM_IsPreviewEnabled(void))
   return Arguments::enable_preview() ? JNI_TRUE : JNI_FALSE;
 JVM_END
 
-JVM_LEAF(jboolean, JVM_IsContinuationsSupported(void))
+JVM_LEAF_PROF(jboolean, JVM_IsContinuationsSupported, JVM_IsContinuationsSupported(void))
   return VMContinuations ? JNI_TRUE : JNI_FALSE;
 JVM_END
 
-JVM_LEAF(jboolean, JVM_IsForeignLinkerSupported(void))
+JVM_LEAF_PROF(jboolean, JVM_IsForeignLinkerSupported, JVM_IsForeignLinkerSupported(void))
   return ForeignGlobals::is_foreign_linker_supported() ? JNI_TRUE : JNI_FALSE;
 JVM_END
 
@@ -3262,7 +3276,7 @@ JVM_END
 
 // String support ///////////////////////////////////////////////////////////////////////////
 
-JVM_ENTRY(jstring, JVM_InternString(JNIEnv *env, jstring str))
+JVM_ENTRY_PROF(jstring, JVM_InternString, JVM_InternString(JNIEnv *env, jstring str))
   JvmtiVMObjectAllocEventCollector oam;
   if (str == nullptr) return nullptr;
   oop string = JNIHandles::resolve_non_null(str);
@@ -3322,7 +3336,7 @@ jclass find_class_from_class_loader(JNIEnv* env, Symbol* name, jboolean init,
 
 // Method ///////////////////////////////////////////////////////////////////////////////////////////
 
-JVM_ENTRY(jobject, JVM_InvokeMethod(JNIEnv *env, jobject method, jobject obj, jobjectArray args0))
+JVM_ENTRY_PROF(jobject, JVM_InvokeMethod, JVM_InvokeMethod(JNIEnv *env, jobject method, jobject obj, jobjectArray args0))
   Handle method_handle;
   if (thread->stack_overflow_state()->stack_available((address) &method_handle) >= JVMInvokeMethodSlack) {
     method_handle = Handle(THREAD, JNIHandles::resolve(method));
@@ -3346,7 +3360,7 @@ JVM_ENTRY(jobject, JVM_InvokeMethod(JNIEnv *env, jobject method, jobject obj, jo
 JVM_END
 
 
-JVM_ENTRY(jobject, JVM_NewInstanceFromConstructor(JNIEnv *env, jobject c, jobjectArray args0))
+JVM_ENTRY_PROF(jobject, JVM_NewInstanceFromConstructor, JVM_NewInstanceFromConstructor(JNIEnv *env, jobject c, jobjectArray args0))
   oop constructor_mirror = JNIHandles::resolve(c);
   objArrayHandle args(THREAD, objArrayOop(JNIHandles::resolve(args0)));
   oop result = Reflection::invoke_constructor(constructor_mirror, args, CHECK_NULL);
@@ -3357,13 +3371,13 @@ JVM_ENTRY(jobject, JVM_NewInstanceFromConstructor(JNIEnv *env, jobject c, jobjec
   return res;
 JVM_END
 
-JVM_ENTRY(void, JVM_InitializeFromArchive(JNIEnv* env, jclass cls))
+JVM_ENTRY_PROF(void, JVM_InitializeFromArchive, JVM_InitializeFromArchive(JNIEnv* env, jclass cls))
   Klass* k = java_lang_Class::as_Klass(JNIHandles::resolve(cls));
   assert(k->is_klass(), "just checking");
   HeapShared::initialize_from_archived_subgraph(THREAD, k);
 JVM_END
 
-JVM_ENTRY(void, JVM_RegisterLambdaProxyClassForArchiving(JNIEnv* env,
+JVM_ENTRY_PROF(void, JVM_RegisterLambdaProxyClassForArchiving, JVM_RegisterLambdaProxyClassForArchiving(JNIEnv* env,
                                               jclass caller,
                                               jstring interfaceMethodName,
                                               jobject factoryType,
@@ -3411,7 +3425,7 @@ JVM_ENTRY(void, JVM_RegisterLambdaProxyClassForArchiving(JNIEnv* env,
 #endif // INCLUDE_CDS
 JVM_END
 
-JVM_ENTRY(jclass, JVM_LookupLambdaProxyClassFromArchive(JNIEnv* env,
+JVM_ENTRY_PROF(jclass, JVM_LookupLambdaProxyClassFromArchive, JVM_LookupLambdaProxyClassFromArchive(JNIEnv* env,
                                                         jclass caller,
                                                         jstring interfaceMethodName,
                                                         jobject factoryType,
@@ -3459,7 +3473,7 @@ JVM_ENTRY(jclass, JVM_LookupLambdaProxyClassFromArchive(JNIEnv* env,
 #endif // INCLUDE_CDS
 JVM_END
 
-JVM_ENTRY_NO_ENV(jlong, JVM_GetRandomSeedForDumping())
+JVM_ENTRY_NO_ENV_PROF(jlong, JVM_GetRandomSeedForDumping, JVM_GetRandomSeedForDumping())
   if (CDSConfig::is_dumping_static_archive()) {
     // We do this so that the default CDS archive can be deterministic.
     const char* release = VM_Version::vm_release();
@@ -3482,18 +3496,18 @@ JVM_ENTRY_NO_ENV(jlong, JVM_GetRandomSeedForDumping())
   }
 JVM_END
 
-JVM_ENTRY_NO_ENV(jint, JVM_GetCDSConfigStatus())
+JVM_ENTRY_NO_ENV_PROF(jint, JVM_GetCDSConfigStatus, JVM_GetCDSConfigStatus())
   return CDSConfig::get_status();
 JVM_END
 
-JVM_ENTRY(void, JVM_LogLambdaFormInvoker(JNIEnv *env, jstring line))
+JVM_ENTRY_PROF(void, JVM_LogLambdaFormInvoker, JVM_LogLambdaFormInvoker(JNIEnv *env, jstring line))
 #if INCLUDE_CDS
   assert(CDSConfig::is_logging_lambda_form_invokers(), "sanity");
   if (line != nullptr) {
     ResourceMark rm(THREAD);
     Handle h_line (THREAD, JNIHandles::resolve_non_null(line));
     char* c_line = java_lang_String::as_utf8_string(h_line());
-    if (CDSConfig::is_dumping_dynamic_archive()) {
+    if (CDSConfig::is_dumping_dynamic_archive() || CDSConfig::is_dumping_preimage_static_archive()) {
       // Note: LambdaFormInvokers::append take same format which is not
       // same as below the print format. The line does not include LAMBDA_FORM_TAG.
       LambdaFormInvokers::append(os::strdup((const char*)c_line, mtInternal));
@@ -3506,7 +3520,21 @@ JVM_ENTRY(void, JVM_LogLambdaFormInvoker(JNIEnv *env, jstring line))
 #endif // INCLUDE_CDS
 JVM_END
 
-JVM_ENTRY(void, JVM_DumpClassListToFile(JNIEnv *env, jstring listFileName))
+JVM_ENTRY_PROF(void, JVM_LogDynamicProxy, JVM_LogDynamicProxy(JNIEnv *env, jobject loader, jstring proxy_name, jobjectArray interfaces, jint access_flags))
+#if INCLUDE_CDS
+  assert(CDSConfig::is_logging_dynamic_proxies(),  "sanity");
+
+  ResourceMark rm(THREAD);
+  oop proxy_name_oop = JNIHandles::resolve_non_null(proxy_name);
+  char* proxy_name_str = java_lang_String::as_utf8_string(proxy_name_oop);
+  oop loader_oop = JNIHandles::resolve(loader);
+  objArrayOop interfaces_oop = objArrayOop(JNIHandles::resolve_non_null(interfaces));
+
+  AOTConstantPoolResolver::trace_dynamic_proxy_class(loader_oop, proxy_name_str, interfaces_oop, access_flags);
+#endif // INCLUDE_CDS
+JVM_END
+
+JVM_ENTRY_PROF(void, JVM_DumpClassListToFile, JVM_DumpClassListToFile(JNIEnv *env, jstring listFileName))
 #if INCLUDE_CDS
   ResourceMark rm(THREAD);
   Handle file_handle(THREAD, JNIHandles::resolve_non_null(listFileName));
@@ -3515,7 +3543,7 @@ JVM_ENTRY(void, JVM_DumpClassListToFile(JNIEnv *env, jstring listFileName))
 #endif // INCLUDE_CDS
 JVM_END
 
-JVM_ENTRY(void, JVM_DumpDynamicArchive(JNIEnv *env, jstring archiveName))
+JVM_ENTRY_PROF(void, JVM_DumpDynamicArchive, JVM_DumpDynamicArchive(JNIEnv *env, jstring archiveName))
 #if INCLUDE_CDS
   ResourceMark rm(THREAD);
   Handle file_handle(THREAD, JNIHandles::resolve_non_null(archiveName));
@@ -3527,7 +3555,7 @@ JVM_END
 // Returns an array of all live Thread objects (VM internal JavaThreads,
 // jvmti agent threads, and JNI attaching threads  are skipped)
 // See CR 6404306 regarding JNI attaching threads
-JVM_ENTRY(jobjectArray, JVM_GetAllThreads(JNIEnv *env, jclass dummy))
+JVM_ENTRY_PROF(jobjectArray, JVM_GetAllThreads, JVM_GetAllThreads(JNIEnv *env, jclass dummy))
   ResourceMark rm(THREAD);
   ThreadsListEnumerator tle(THREAD, false, false);
   JvmtiVMObjectAllocEventCollector oam;
@@ -3548,7 +3576,7 @@ JVM_END
 // Support for java.lang.Thread.getStackTrace() and getAllStackTraces() methods
 // Return StackTraceElement[][], each element is the stack trace of a thread in
 // the corresponding entry in the given threads array
-JVM_ENTRY(jobjectArray, JVM_DumpThreads(JNIEnv *env, jclass threadClass, jobjectArray threads))
+JVM_ENTRY_PROF(jobjectArray, JVM_DumpThreads, JVM_DumpThreads(JNIEnv *env, jclass threadClass, jobjectArray threads))
   JvmtiVMObjectAllocEventCollector oam;
 
   // Check if threads is null
@@ -3587,14 +3615,14 @@ JVM_ENTRY(jobjectArray, JVM_DumpThreads(JNIEnv *env, jclass threadClass, jobject
 JVM_END
 
 // JVM monitoring and management support
-JVM_LEAF(void*, JVM_GetManagement(jint version))
+JVM_LEAF_PROF(void*, JVM_GetManagement, JVM_GetManagement(jint version))
   return Management::get_jmm_interface(version);
 JVM_END
 
 // com.sun.tools.attach.VirtualMachine agent properties support
 //
 // Initialize the agent properties with the properties maintained in the VM
-JVM_ENTRY(jobject, JVM_InitAgentProperties(JNIEnv *env, jobject properties))
+JVM_ENTRY_PROF(jobject, JVM_InitAgentProperties, JVM_InitAgentProperties(JNIEnv *env, jobject properties))
   ResourceMark rm;
 
   Handle props(THREAD, JNIHandles::resolve_non_null(properties));
@@ -3605,7 +3633,7 @@ JVM_ENTRY(jobject, JVM_InitAgentProperties(JNIEnv *env, jobject properties))
   return properties;
 JVM_END
 
-JVM_ENTRY(jobjectArray, JVM_GetEnclosingMethodInfo(JNIEnv *env, jclass ofClass))
+JVM_ENTRY_PROF(jobjectArray, JVM_GetEnclosingMethodInfo, JVM_GetEnclosingMethodInfo(JNIEnv *env, jclass ofClass))
 {
   JvmtiVMObjectAllocEventCollector oam;
 
@@ -3648,7 +3676,7 @@ JVM_ENTRY(jobjectArray, JVM_GetEnclosingMethodInfo(JNIEnv *env, jclass ofClass))
 JVM_END
 
 // Returns an array of java.lang.String objects containing the input arguments to the VM.
-JVM_ENTRY(jobjectArray, JVM_GetVmArguments(JNIEnv *env))
+JVM_ENTRY_PROF(jobjectArray, JVM_GetVmArguments, JVM_GetVmArguments(JNIEnv *env))
   ResourceMark rm(THREAD);
 
   if (Arguments::num_jvm_args() == 0 && Arguments::num_jvm_flags() == 0) {
@@ -3676,11 +3704,11 @@ JVM_ENTRY(jobjectArray, JVM_GetVmArguments(JNIEnv *env))
   return (jobjectArray) JNIHandles::make_local(THREAD, result_h());
 JVM_END
 
-JVM_LEAF(jint, JVM_FindSignal(const char *name))
+JVM_LEAF_PROF(jint, JVM_FindSignal, JVM_FindSignal(const char *name))
   return os::get_signal_number(name);
 JVM_END
 
-JVM_ENTRY(void, JVM_VirtualThreadStart(JNIEnv* env, jobject vthread))
+JVM_ENTRY_PROF(void, JVM_VirtualThreadStart, JVM_VirtualThreadStart(JNIEnv* env, jobject vthread))
 #if INCLUDE_JVMTI
   if (!DoJVMTIVirtualThreadTransitions) {
     assert(!JvmtiExport::can_support_virtual_threads(), "sanity check");
@@ -3695,7 +3723,7 @@ JVM_ENTRY(void, JVM_VirtualThreadStart(JNIEnv* env, jobject vthread))
 #endif
 JVM_END
 
-JVM_ENTRY(void, JVM_VirtualThreadEnd(JNIEnv* env, jobject vthread))
+JVM_ENTRY_PROF(void, JVM_VirtualThreadEnd, JVM_VirtualThreadEnd(JNIEnv* env, jobject vthread))
 #if INCLUDE_JVMTI
   if (!DoJVMTIVirtualThreadTransitions) {
     assert(!JvmtiExport::can_support_virtual_threads(), "sanity check");
@@ -3712,7 +3740,7 @@ JVM_END
 
 // If notifications are disabled then just update the VTMS transition bit and return.
 // Otherwise, the bit is updated in the given jvmtiVTMSTransitionDisabler function call.
-JVM_ENTRY(void, JVM_VirtualThreadMount(JNIEnv* env, jobject vthread, jboolean hide))
+JVM_ENTRY_PROF(void, JVM_VirtualThreadMount, JVM_VirtualThreadMount(JNIEnv* env, jobject vthread, jboolean hide))
 #if INCLUDE_JVMTI
   if (!DoJVMTIVirtualThreadTransitions) {
     assert(!JvmtiExport::can_support_virtual_threads(), "sanity check");
@@ -3729,7 +3757,7 @@ JVM_END
 
 // If notifications are disabled then just update the VTMS transition bit and return.
 // Otherwise, the bit is updated in the given jvmtiVTMSTransitionDisabler function call below.
-JVM_ENTRY(void, JVM_VirtualThreadUnmount(JNIEnv* env, jobject vthread, jboolean hide))
+JVM_ENTRY_PROF(void, JVM_VirtualThreadUnmount, JVM_VirtualThreadUnmount(JNIEnv* env, jobject vthread, jboolean hide))
 #if INCLUDE_JVMTI
   if (!DoJVMTIVirtualThreadTransitions) {
     assert(!JvmtiExport::can_support_virtual_threads(), "sanity check");
@@ -3796,7 +3824,7 @@ JVM_END
  * returned jint contain the class's major version.  The high order 16 bits
  * contain the class's minor version.
  */
-JVM_ENTRY(jint, JVM_GetClassFileVersion(JNIEnv* env, jclass current))
+JVM_ENTRY_PROF(jint, JVM_GetClassFileVersion, JVM_GetClassFileVersion(JNIEnv* env, jclass current))
   oop mirror = JNIHandles::resolve_non_null(current);
   if (java_lang_Class::is_primitive(mirror)) {
     // return latest major version and minor version of 0.
@@ -3815,13 +3843,241 @@ JVM_END
  * get the value will see a materialized value and not a scalar-replaced
  * null value.
  */
-JVM_ENTRY(void, JVM_EnsureMaterializedForStackWalk_func(JNIEnv* env, jobject vthread, jobject value))
+JVM_ENTRY_PROF(void, JVM_EnsureMaterializedForStackWalk_func, JVM_EnsureMaterializedForStackWalk_func(JNIEnv* env, jobject vthread, jobject value))
   JVM_EnsureMaterializedForStackWalk(env, value);
 JVM_END
 
 /*
  * Return JNI_TRUE if warnings are printed when agents are dynamically loaded.
  */
-JVM_LEAF(jboolean, JVM_PrintWarningAtDynamicAgentLoad(void))
+JVM_LEAF_PROF(jboolean, JVM_PrintWarningAtDynamicAgentLoad, JVM_PrintWarningAtDynamicAgentLoad(void))
   return (EnableDynamicAgentLoading && !FLAG_IS_CMDLINE(EnableDynamicAgentLoading)) ? JNI_TRUE : JNI_FALSE;
 JVM_END
+
+#define DO_COUNTERS(macro) \
+  macro(JVM_CurrentTimeMillis) \
+  macro(JVM_NanoTime) \
+  macro(JVM_GetNanoTimeAdjustment) \
+  macro(JVM_ArrayCopy) \
+  macro(JVM_GetProperties) \
+  macro(JVM_GetTemporaryDirectory) \
+  macro(JVM_BeforeHalt) \
+  macro(JVM_Halt) \
+  macro(JVM_GC) \
+  macro(JVM_MaxObjectInspectionAge) \
+  macro(JVM_TotalMemory) \
+  macro(JVM_FreeMemory) \
+  macro(JVM_MaxMemory) \
+  macro(JVM_ActiveProcessorCount) \
+  macro(JVM_IsUseContainerSupport) \
+  macro(JVM_FillInStackTrace) \
+  macro(JVM_GetExtendedNPEMessage) \
+  macro(JVM_InitStackTraceElementArray) \
+  macro(JVM_InitStackTraceElement) \
+  macro(JVM_ExpandStackFrameInfo) \
+  macro(JVM_CallStackWalk) \
+  macro(JVM_MoreStackWalk) \
+  macro(JVM_SetStackWalkContinuation) \
+  macro(JVM_IHashCode) \
+  macro(JVM_MonitorWait) \
+  macro(JVM_MonitorNotify) \
+  macro(JVM_MonitorNotifyAll) \
+  macro(JVM_Clone) \
+  macro(JVM_ReportFinalizationComplete) \
+  macro(JVM_IsFinalizationEnabled) \
+  macro(JVM_RegisterContinuationMethods) \
+  macro(JVM_NativePath) \
+  macro(JVM_GetCallerClass) \
+  macro(JVM_FindPrimitiveClass) \
+  macro(JVM_FindClassFromBootLoader) \
+  macro(JVM_FindClassFromCaller) \
+  macro(JVM_FindClassFromClass) \
+  macro(JVM_DefineClass) \
+  macro(JVM_LookupDefineClass) \
+  macro(JVM_DefineClassWithSource) \
+  macro(JVM_FindLoadedClass) \
+  macro(JVM_DefineModule) \
+  macro(JVM_SetBootLoaderUnnamedModule) \
+  macro(JVM_AddModuleExports) \
+  macro(JVM_AddModuleExportsToAllUnnamed) \
+  macro(JVM_AddModuleExportsToAll) \
+  macro(JVM_AddReadsModule) \
+  macro(JVM_DefineArchivedModules) \
+  macro(JVM_InitClassName) \
+  macro(JVM_GetClassInterfaces) \
+  macro(JVM_IsInterface) \
+  macro(JVM_IsHiddenClass) \
+  macro(JVM_FindScopedValueBindings) \
+  macro(JVM_IsArrayClass) \
+  macro(JVM_IsPrimitiveClass) \
+  macro(JVM_GetDeclaredClasses) \
+  macro(JVM_GetDeclaringClass) \
+  macro(JVM_GetSimpleBinaryName) \
+  macro(JVM_GetClassSignature) \
+  macro(JVM_GetClassAnnotations) \
+  macro(JVM_GetClassTypeAnnotations) \
+  macro(JVM_GetMethodTypeAnnotations) \
+  macro(JVM_GetFieldTypeAnnotations) \
+  macro(JVM_GetMethodParameters) \
+  macro(JVM_GetClassDeclaredFields) \
+  macro(JVM_IsRecord) \
+  macro(JVM_GetRecordComponents) \
+  macro(JVM_GetClassDeclaredMethods) \
+  macro(JVM_GetClassDeclaredConstructors) \
+  macro(JVM_GetClassAccessFlags) \
+  macro(JVM_AreNestMates) \
+  macro(JVM_GetNestHost) \
+  macro(JVM_GetNestMembers) \
+  macro(JVM_GetPermittedSubclasses) \
+  macro(JVM_GetClassConstantPool) \
+  macro(JVM_ConstantPoolGetSize) \
+  macro(JVM_ConstantPoolGetClassAt) \
+  macro(JVM_ConstantPoolGetClassAtIfLoaded) \
+  macro(JVM_ConstantPoolGetMethodAt) \
+  macro(JVM_ConstantPoolGetMethodAtIfLoaded) \
+  macro(JVM_ConstantPoolGetFieldAt) \
+  macro(JVM_ConstantPoolGetFieldAtIfLoaded) \
+  macro(JVM_ConstantPoolGetMemberRefInfoAt) \
+  macro(JVM_ConstantPoolGetClassRefIndexAt) \
+  macro(JVM_ConstantPoolGetNameAndTypeRefIndexAt) \
+  macro(JVM_ConstantPoolGetNameAndTypeRefInfoAt) \
+  macro(JVM_ConstantPoolGetIntAt) \
+  macro(JVM_ConstantPoolGetLongAt) \
+  macro(JVM_ConstantPoolGetFloatAt) \
+  macro(JVM_ConstantPoolGetDoubleAt) \
+  macro(JVM_ConstantPoolGetStringAt) \
+  macro(JVM_ConstantPoolGetUTF8At) \
+  macro(JVM_ConstantPoolGetTagAt) \
+  macro(JVM_DesiredAssertionStatus) \
+  macro(JVM_AssertionStatusDirectives) \
+  macro(JVM_GetClassNameUTF) \
+  macro(JVM_GetClassCPTypes) \
+  macro(JVM_GetClassCPEntriesCount) \
+  macro(JVM_GetClassFieldsCount) \
+  macro(JVM_GetClassMethodsCount) \
+  macro(JVM_GetMethodIxExceptionIndexes) \
+  macro(JVM_GetMethodIxExceptionsCount) \
+  macro(JVM_GetMethodIxByteCode) \
+  macro(JVM_GetMethodIxByteCodeLength) \
+  macro(JVM_GetMethodIxExceptionTableEntry) \
+  macro(JVM_GetMethodIxExceptionTableLength) \
+  macro(JVM_GetMethodIxModifiers) \
+  macro(JVM_GetFieldIxModifiers) \
+  macro(JVM_GetMethodIxLocalsCount) \
+  macro(JVM_GetMethodIxArgsSize) \
+  macro(JVM_GetMethodIxMaxStack) \
+  macro(JVM_IsConstructorIx) \
+  macro(JVM_IsVMGeneratedMethodIx) \
+  macro(JVM_GetMethodIxNameUTF) \
+  macro(JVM_GetMethodIxSignatureUTF) \
+  macro(JVM_GetCPFieldNameUTF) \
+  macro(JVM_GetCPMethodNameUTF) \
+  macro(JVM_GetCPMethodSignatureUTF) \
+  macro(JVM_GetCPFieldSignatureUTF) \
+  macro(JVM_GetCPClassNameUTF) \
+  macro(JVM_GetCPFieldClassNameUTF) \
+  macro(JVM_GetCPMethodClassNameUTF) \
+  macro(JVM_GetCPFieldModifiers) \
+  macro(JVM_GetCPMethodModifiers) \
+  macro(JVM_ReleaseUTF) \
+  macro(JVM_IsSameClassPackage) \
+  macro(JVM_StartThread) \
+  macro(JVM_SetThreadPriority) \
+  macro(JVM_Yield) \
+  macro(JVM_SleepNanos) \
+  macro(JVM_CurrentCarrierThread) \
+  macro(JVM_CurrentThread) \
+  macro(JVM_SetCurrentThread) \
+  macro(JVM_GetNextThreadIdOffset) \
+  macro(JVM_Interrupt) \
+  macro(JVM_HoldsLock) \
+  macro(JVM_GetStackTrace) \
+  macro(JVM_SetNativeThreadName) \
+  macro(JVM_ScopedValueCache) \
+  macro(JVM_SetScopedValueCache) \
+  macro(JVM_GetSystemPackage) \
+  macro(JVM_GetSystemPackages) \
+  macro(JVM_GetAndClearReferencePendingList) \
+  macro(JVM_HasReferencePendingList) \
+  macro(JVM_WaitForReferencePendingList) \
+  macro(JVM_ReferenceRefersTo) \
+  macro(JVM_ReferenceClear) \
+  macro(JVM_PhantomReferenceRefersTo) \
+  macro(JVM_LatestUserDefinedLoader) \
+  macro(JVM_GetArrayLength) \
+  macro(JVM_GetArrayElement) \
+  macro(JVM_GetPrimitiveArrayElement) \
+  macro(JVM_SetArrayElement) \
+  macro(JVM_SetPrimitiveArrayElement) \
+  macro(JVM_NewArray) \
+  macro(JVM_NewMultiArray) \
+  macro(JVM_LoadZipLibrary) \
+  macro(JVM_LoadLibrary) \
+  macro(JVM_UnloadLibrary) \
+  macro(JVM_FindLibraryEntry) \
+  macro(JVM_IsSupportedJNIVersion) \
+  macro(JVM_IsPreviewEnabled) \
+  macro(JVM_IsContinuationsSupported) \
+  macro(JVM_IsForeignLinkerSupported) \
+  macro(JVM_InternString) \
+  macro(JVM_InvokeMethod) \
+  macro(JVM_NewInstanceFromConstructor) \
+  macro(JVM_InitializeFromArchive) \
+  macro(JVM_RegisterLambdaProxyClassForArchiving) \
+  macro(JVM_LookupLambdaProxyClassFromArchive) \
+  macro(JVM_GetRandomSeedForDumping) \
+  macro(JVM_LogLambdaFormInvoker) \
+  macro(JVM_LogDynamicProxy) \
+  macro(JVM_DumpClassListToFile) \
+  macro(JVM_DumpDynamicArchive) \
+  macro(JVM_GetAllThreads) \
+  macro(JVM_DumpThreads) \
+  macro(JVM_GetManagement) \
+  macro(JVM_InitAgentProperties) \
+  macro(JVM_GetEnclosingMethodInfo) \
+  macro(JVM_GetVmArguments) \
+  macro(JVM_FindSignal) \
+  macro(JVM_VirtualThreadStart) \
+  macro(JVM_VirtualThreadEnd) \
+  macro(JVM_VirtualThreadMount) \
+  macro(JVM_VirtualThreadUnmount) \
+  macro(JVM_GetClassFileVersion) \
+  macro(JVM_EnsureMaterializedForStackWalk_func) \
+  macro(JVM_PrintWarningAtDynamicAgentLoad)
+
+#define INIT_COUNTER(name) \
+    NEWPERFTICKCOUNTERS(_perf_##name##_timer, SUN_RT, #name); \
+    NEWPERFEVENTCOUNTER(_perf_##name##_count, SUN_RT, #name "_count"); \
+
+void perf_jvm_init() {
+  if (ProfileVMCalls && UsePerfData) {
+    EXCEPTION_MARK;
+
+    DO_COUNTERS(INIT_COUNTER)
+
+    if (HAS_PENDING_EXCEPTION) {
+      vm_exit_during_initialization("jvm_perf_init failed unexpectedly");
+    }
+  }
+}
+
+#undef INIT_COUNTER
+
+#define PRINT_COUNTER(name) {\
+  jlong count = _perf_##name##_count->get_value(); \
+  if (count > 0) { \
+    st->print_cr("  %-40s = " JLONG_FORMAT_W(6) "us (elapsed) " JLONG_FORMAT_W(6) "us (thread) (" JLONG_FORMAT_W(5) " events)", \
+                 #name,                                                   \
+                 _perf_##name##_timer->elapsed_counter_value_us(),        \
+                 _perf_##name##_timer->thread_counter_value_us(), count); \
+  }}
+
+void perf_jvm_print_on(outputStream* st) {
+  if (ProfileVMCalls && UsePerfData) {
+    DO_COUNTERS(PRINT_COUNTER)
+  } else {
+    st->print_cr("  JVM:  no info (%s is disabled)", (UsePerfData ? "ProfileVMCalls" : "UsePerfData"));
+  }
+}
+
+#undef PRINT_COUNTER

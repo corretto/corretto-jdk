@@ -39,6 +39,7 @@
 
 class CompileTask;
 class OopMapSet;
+class SCCEntry;
 
 // ciEnv
 //
@@ -374,11 +375,15 @@ public:
                        ExceptionHandlerTable*    handler_table,
                        ImplicitExceptionTable*   inc_table,
                        AbstractCompiler*         compiler,
+                       bool                      has_clinit_barriers,
+                       bool                      for_preload,
                        bool                      has_unsafe_access,
                        bool                      has_wide_vectors,
                        bool                      has_monitors,
                        bool                      has_scoped_access,
-                       int                       immediate_oops_patched);
+                       int                       immediate_oops_patched,
+                       bool                      install_code,
+                       SCCEntry*                 entry = nullptr);
 
   // Access to certain well known ciObjects.
 #define VM_CLASS_FUNC(name, ignore_s) \
@@ -468,6 +473,13 @@ public:
   // RedefineClasses support
   void metadata_do(MetadataClosure* f) { _factory->metadata_do(f); }
 
+private:
+  SCCEntry* _scc_clinit_barriers_entry;
+
+public:
+  void  set_scc_clinit_barriers_entry(SCCEntry* entry) { _scc_clinit_barriers_entry = entry; }
+  SCCEntry* scc_clinit_barriers_entry()          const { return _scc_clinit_barriers_entry; }
+
   // Replay support
 private:
   static int klass_compare(const InstanceKlass* const &ik1, const InstanceKlass* const &ik2) {
@@ -512,6 +524,10 @@ public:
   void process_invokedynamic(const constantPoolHandle &cp, int index, JavaThread* thread);
   void process_invokehandle(const constantPoolHandle &cp, int index, JavaThread* thread);
   void find_dynamic_call_sites();
+
+  bool is_precompiled();
+  bool is_fully_initialized(InstanceKlass* ik);
+  InstanceKlass::ClassState compute_init_state_for_precompiled(InstanceKlass* ik);
 };
 
 #endif // SHARE_CI_CIENV_HPP

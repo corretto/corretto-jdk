@@ -62,6 +62,7 @@ public:
 
 #if INCLUDE_CDS_JAVA_HEAP
 class ArchiveHeapWriter : AllStatic {
+  friend class HeapShared;
   // ArchiveHeapWriter manipulates three types of addresses:
   //
   //     "source" vs "buffered" vs "requested"
@@ -196,6 +197,7 @@ private:
   static void copy_roots_to_buffer(GrowableArrayCHeap<oop, mtClassShared>* roots);
   static void copy_source_objs_to_buffer(GrowableArrayCHeap<oop, mtClassShared>* roots);
   static size_t copy_one_source_obj_to_buffer(oop src_obj);
+  static void update_stats(oop src_obj);
 
   static void maybe_fill_gc_region_gap(size_t required_byte_size);
   static size_t filler_array_byte_size(int length);

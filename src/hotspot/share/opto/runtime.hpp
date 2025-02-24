@@ -113,7 +113,7 @@ enum class OptoStubId :int {
 
 class OptoRuntime : public AllStatic {
   friend class Matcher;  // allow access to stub names
-
+  friend class SCAddressTable;
  private:
   // declare opto stub address/blob holder static fields
 #define C2_BLOB_FIELD_DECLARE(name, type) \
@@ -205,6 +205,8 @@ class OptoRuntime : public AllStatic {
   // define stubs
   static address generate_stub(ciEnv* ci_env, TypeFunc_generator gen, address C_function, const char* name, int is_fancy_jump, bool pass_tls, bool return_pc);
 
+  static address _vtable_must_compile_Java;
+
   //
   // Implementation of runtime methods
   // =================================
@@ -255,7 +257,7 @@ private:
   static void generate_exception_blob();
 
   static void register_finalizer_C(oopDesc* obj, JavaThread* current);
-
+  static void class_init_barrier_C(Klass* k, JavaThread* current);
  public:
 
   static bool is_callee_saved_register(MachRegisterNumbers reg);
@@ -283,12 +285,14 @@ private:
   static address multianewarray4_Java()                  { return _multianewarray4_Java; }
   static address multianewarray5_Java()                  { return _multianewarray5_Java; }
   static address multianewarrayN_Java()                  { return _multianewarrayN_Java; }
+  static address vtable_must_compile_stub()              { return _vtable_must_compile_Java; }
   static address complete_monitor_locking_Java()         { return _complete_monitor_locking_Java; }
   static address monitor_notify_Java()                   { return _monitor_notify_Java; }
   static address monitor_notifyAll_Java()                { return _monitor_notifyAll_Java; }
 
   static address slow_arraycopy_Java()                   { return _slow_arraycopy_Java; }
   static address register_finalizer_Java()               { return _register_finalizer_Java; }
+  static address class_init_barrier_Java()               { return _class_init_barrier_Java; }
 #if INCLUDE_JVMTI
   static address notify_jvmti_vthread_start()            { return _notify_jvmti_vthread_start; }
   static address notify_jvmti_vthread_end()              { return _notify_jvmti_vthread_end; }
@@ -652,12 +656,17 @@ private:
   }
 #endif // INCLUDE_JFR
 
+  static const TypeFunc* class_init_barrier_Type();
+
 #if INCLUDE_JVMTI
   static inline const TypeFunc* notify_jvmti_vthread_Type() {
     assert(_notify_jvmti_vthread_Type != nullptr, "should be initialized");
     return _notify_jvmti_vthread_Type;
   }
 #endif
+
+  // runtime upcalls support
+  static const TypeFunc* runtime_up_call_Type();
 
   // Dtrace support. entry and exit probes have the same signature
   static inline const TypeFunc* dtrace_method_entry_exit_Type() {
@@ -681,6 +690,9 @@ private:
  // dumps all the named counters
  static void          print_named_counters();
 
+ public:
+  static void init_counters();
+  static void print_counters_on(outputStream* st);
  static void          initialize_types();
 };
 

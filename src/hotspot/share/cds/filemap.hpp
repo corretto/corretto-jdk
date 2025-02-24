@@ -236,6 +236,11 @@ private:
   bool   _has_aot_linked_classes;       // Was the CDS archive created with -XX:+AOTClassLinking
   bool   _has_full_module_graph;        // Does this CDS archive contain the full archived module graph?
   bool   _has_archived_invokedynamic;   // Does the archive have aot-linked invokedynamic CP entries?
+  bool   _has_archived_packages;
+  bool   _has_archived_protection_domains;
+  int    _gc_kind;                      // Universe::heap()->kind();
+  char   _gc_name[32];                  // Universe::heap()->name();
+  size_t _ptrmap_size_in_bits;          // Size of pointer relocation bitmap
   HeapRootSegments _heap_root_segments; // Heap root segments info
   size_t _heap_oopmap_start_pos;        // The first bit in the oopmap corresponds to this position in the heap.
   size_t _heap_ptrmap_start_pos;        // The first bit in the ptrmap corresponds to this position in the heap.
@@ -281,6 +286,9 @@ public:
   bool has_platform_or_app_classes()       const { return _has_platform_or_app_classes; }
   bool has_non_jar_in_classpath()          const { return _has_non_jar_in_classpath; }
   bool has_aot_linked_classes()            const { return _has_aot_linked_classes; }
+  int gc_kind()                            const { return _gc_kind; }
+  const char* gc_name()                    const { return _gc_name; }
+  size_t ptrmap_size_in_bits()             const { return _ptrmap_size_in_bits; }
   bool compressed_oops()                   const { return _compressed_oops; }
   bool compressed_class_pointers()         const { return _compressed_class_ptrs; }
   int narrow_klass_pointer_bits()          const { return _narrow_klass_pointer_bits; }
@@ -465,7 +473,8 @@ public:
   void  write_region(int region, char* base, size_t size,
                      bool read_only, bool allow_exec);
   size_t remove_bitmap_zeros(CHeapBitMap* map);
-  char* write_bitmap_region(CHeapBitMap* rw_ptrmap, CHeapBitMap* ro_ptrmap, ArchiveHeapInfo* heap_info,
+  char* write_bitmap_region(CHeapBitMap* rw_ptrmap, CHeapBitMap* ro_ptrmap,
+                            CHeapBitMap* cc_ptrmap, ArchiveHeapInfo* heap_info,
                             size_t &size_in_bytes);
   size_t write_heap_region(ArchiveHeapInfo* heap_info);
   void  write_bytes(const void* buffer, size_t count);
@@ -481,6 +490,7 @@ public:
   MemRegion get_heap_region_requested_range() NOT_CDS_JAVA_HEAP_RETURN_(MemRegion());
   bool  read_region(int i, char* base, size_t size, bool do_commit);
   char* map_bitmap_region();
+  bool map_cached_code_region(ReservedSpace rs);
   void  unmap_region(int i);
   void  close();
   bool  is_open() { return _file_open; }
@@ -588,7 +598,7 @@ public:
   void  init_heap_region_relocation();
   MapArchiveResult map_region(int i, intx addr_delta, char* mapped_base_address, ReservedSpace rs);
   bool  relocate_pointers_in_core_regions(intx addr_delta);
-
+  void  relocate_pointers_in_cached_code_region();
   static MemRegion _mapped_heap_memregion;
 
 public:

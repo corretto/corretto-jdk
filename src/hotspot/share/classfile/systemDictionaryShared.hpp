@@ -35,6 +35,7 @@
 #include "classfile/systemDictionary.hpp"
 #include "oops/klass.hpp"
 #include "oops/oopHandle.hpp"
+#include "oops/trainingData.hpp"
 
 
 /*===============================================================================
@@ -182,25 +183,30 @@ private:
                                  const ClassFileStream* cfs,
                                  TRAPS);
 
-  // Guaranteed to return non-null value for non-shared classes.
-  // k must not be a shared class.
-  static DumpTimeClassInfo* get_info(InstanceKlass* k);
-  static DumpTimeClassInfo* get_info_locked(InstanceKlass* k);
 
   static void write_dictionary(RunTimeSharedDictionary* dictionary,
                                bool is_builtin);
   static void write_lambda_proxy_class_dictionary(LambdaProxyClassDictionary* dictionary);
   static void cleanup_lambda_proxy_class_dictionary();
   static void reset_registered_lambda_proxy_class(InstanceKlass* ik);
-  static bool is_jfr_event_class(InstanceKlass *k);
   static bool check_for_exclusion_impl(InstanceKlass* k);
   static void remove_dumptime_info(InstanceKlass* k) NOT_CDS_RETURN;
-  static bool has_been_redefined(InstanceKlass* k);
   static InstanceKlass* retrieve_lambda_proxy_class(const RunTimeLambdaProxyClassInfo* info) NOT_CDS_RETURN_(nullptr);
   DEBUG_ONLY(static bool _class_loading_may_happen;)
 
 public:
+  // Guaranteed to return non-null value for non-shared classes.
+  // k must not be a shared class.
+  static DumpTimeClassInfo* get_info(InstanceKlass* k);
+  static DumpTimeClassInfo* get_info_locked(InstanceKlass* k);
+  static DumpTimeSharedClassTable* dumptime_table() { return _dumptime_table; }
+
+  static bool should_hidden_class_be_archived(InstanceKlass* k);
+  static void mark_required_hidden_class(InstanceKlass* k);
+  static bool has_been_redefined(InstanceKlass* k);
+  static bool is_jfr_event_class(InstanceKlass *k);
   static bool is_registered_lambda_proxy_class(InstanceKlass* ik);
+
   static bool is_hidden_lambda_proxy(InstanceKlass* ik);
   static bool is_early_klass(InstanceKlass* k);   // Was k loaded while JvmtiExport::is_early_phase()==true
   static bool has_archived_enum_objs(InstanceKlass* ik);
@@ -230,6 +236,10 @@ public:
   static void initialize() NOT_CDS_RETURN;
   static void init_dumptime_info(InstanceKlass* k) NOT_CDS_RETURN;
   static void handle_class_unloading(InstanceKlass* k) NOT_CDS_RETURN;
+
+  static bool can_be_preinited(InstanceKlass* ik);
+  static bool can_be_preinited_locked(InstanceKlass* ik);
+  static void reset_preinit_check();
 
   static Dictionary* boot_loader_dictionary() {
     return ClassLoaderData::the_null_class_loader_data()->dictionary();
@@ -281,13 +291,12 @@ public:
   static bool check_linking_constraints(Thread* current, InstanceKlass* klass) NOT_CDS_RETURN_(false);
   static void record_linking_constraint(Symbol* name, InstanceKlass* klass,
                                      Handle loader1, Handle loader2) NOT_CDS_RETURN;
-  static bool is_builtin(InstanceKlass* k) {
+  static bool is_builtin(const InstanceKlass* k) {
     return (k->shared_classpath_index() != UNREGISTERED_INDEX);
   }
   static bool add_unregistered_class(Thread* current, InstanceKlass* k);
 
   static void finish_exclusion_checks();
-  static DumpTimeSharedClassTable* dumptime_table() { return _dumptime_table; }
 
   static bool should_be_excluded(Klass* k);
   static bool check_for_exclusion(InstanceKlass* k, DumpTimeClassInfo* info);
@@ -300,6 +309,7 @@ public:
   static size_t estimate_size_for_archive();
   static void write_to_archive(bool is_static_archive = true);
   static void adjust_lambda_proxy_class_dictionary();
+
   static void serialize_dictionary_headers(class SerializeClosure* soc,
                                            bool is_static_archive = true);
   static void serialize_vm_classes(class SerializeClosure* soc);
@@ -310,6 +320,9 @@ public:
   static bool is_dumptime_table_empty() NOT_CDS_RETURN_(true);
   static bool is_supported_invokedynamic(BootstrapInfo* bsi) NOT_CDS_RETURN_(false);
   DEBUG_ONLY(static bool class_loading_may_happen() {return _class_loading_may_happen;})
+  // Do not archive any new InstanceKlasses that are loaded after this method is called.
+  // This avoids polluting the archive with classes that are only used by GenerateJLIClassesHelper.
+  static void ignore_new_classes();
 
 #ifdef ASSERT
   // This object marks a critical period when writing the CDS archive. During this
@@ -336,6 +349,8 @@ public:
   }
 
   static unsigned int hash_for_shared_dictionary(address ptr);
+  static const char* class_loader_name_for_shared(Klass* k);
+  static void create_loader_positive_lookup_cache(TRAPS);
 };
 
 #endif // SHARE_CLASSFILE_SYSTEMDICTIONARYSHARED_HPP

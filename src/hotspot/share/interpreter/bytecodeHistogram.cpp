@@ -28,56 +28,45 @@
 #include "utilities/growableArray.hpp"
 
 // ------------------------------------------------------------------------------------------------
-// Non-product code
-#ifndef PRODUCT
 
 // Implementation of BytecodeCounter
 
-int   BytecodeCounter::_counter_value = 0;
+jlong BytecodeCounter::_counter_value = 0;
 jlong BytecodeCounter::_reset_time    = 0;
-
 
 void BytecodeCounter::reset() {
   _counter_value = 0;
   _reset_time    = os::elapsed_counter();
 }
 
-
 double BytecodeCounter::elapsed_time() {
   return (double)(os::elapsed_counter() - _reset_time) / (double)os::elapsed_frequency();
 }
-
 
 double BytecodeCounter::frequency() {
   return (double)counter_value() / elapsed_time();
 }
 
-
 void BytecodeCounter::print() {
-  tty->print_cr(
-    "%d bytecodes executed in %.1fs (%.3fMHz)",
-    counter_value(),
-    elapsed_time(),
-    frequency() / 1000000.0
-  );
+  tty->print_cr(JLONG_FORMAT " bytecodes executed in %.1fs (%.3fMHz)",
+                counter_value(), elapsed_time(), frequency() / 1000000.0);
 }
 
 
 // Helper class for sorting
 
 class HistoEntry: public ResourceObj {
- private:
+private:
   int             _index;
   int             _count;
 
- public:
+public:
   HistoEntry(int index, int count)                         { _index = index; _count = count; }
   int             index() const                            { return _index; }
   int             count() const                            { return _count; }
 
   static int      compare(HistoEntry** x, HistoEntry** y)  { return (*x)->count() - (*y)->count(); }
 };
-
 
 // Helper functions
 
@@ -141,6 +130,8 @@ void BytecodeHistogram::print(float cutoff) {
   tty->cr();
 }
 
+// Non-product code
+#ifndef PRODUCT
 
 // Implementation of BytecodePairHistogram
 

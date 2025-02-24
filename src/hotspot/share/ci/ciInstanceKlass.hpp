@@ -44,6 +44,7 @@ class ciInstanceKlass : public ciKlass {
   friend class ciMethod;
   friend class ciField;
   friend class ciReplay;
+  friend class CompileTrainingData;
 
 private:
   enum SubklassValue { subklass_unknown, subklass_false, subklass_true };
@@ -114,6 +115,8 @@ protected:
       if (is_loaded()) compute_shared_init_state();
     }
   }
+
+  static InstanceKlass::ClassState compute_init_state(InstanceKlass* ik);
 
 public:
   // Has this klass been initialized?

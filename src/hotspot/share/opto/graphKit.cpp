@@ -3005,6 +3005,79 @@ bool GraphKit::seems_never_null(Node* obj, ciProfileData* data, bool& speculatin
   return false;
 }
 
+void GraphKit::guard_klass_is_initialized(Node* klass) {
+  assert(ClassInitBarrierMode > 0, "no barriers");
+  int init_state_off = in_bytes(InstanceKlass::init_state_offset());
+  Node* adr = basic_plus_adr(top(), klass, init_state_off);
+  Node* init_state = LoadNode::make(_gvn, nullptr, immutable_memory(), adr,
+                                    adr->bottom_type()->is_ptr(), TypeInt::BYTE,
+                                    T_BYTE, MemNode::unordered);
+  init_state = _gvn.transform(init_state);
+
+  Node* initialized_state = makecon(TypeInt::make(InstanceKlass::fully_initialized));
+
+  Node* chk = _gvn.transform(new CmpINode(initialized_state, init_state));
+  Node* tst = _gvn.transform(new BoolNode(chk, BoolTest::eq));
+
+  switch (ClassInitBarrierMode) {
+    case 1: { // uncommon trap on slow path
+      BuildCutout unless(this, tst, PROB_MAX);
+      // Do not deoptimize this nmethod. Go to Interpreter to initialize class.
+      uncommon_trap(Deoptimization::Reason_uninitialized, Deoptimization::Action_none);
+      break;
+    }
+    case 2: { // runtime call on slow path
+      if (StressClassInitBarriers) {
+        tst = makecon(TypeInt::ZERO); // always go through slow path
+      }
+      IfNode* iff = create_and_xform_if(control(), tst, PROB_MAX, COUNT_UNKNOWN);
+//    IfNode* iff = create_and_map_if(control(), tst, PROB_MAX, COUNT_UNKNOWN);
+
+      RegionNode* r = new RegionNode(3);
+      r->init_req(1, _gvn.transform(new IfTrueNode(iff)));
+
+      set_control(_gvn.transform(new IfFalseNode(iff)));
+
+      if (!stopped()) {
+        kill_dead_locals();
+
+        Node* call = make_runtime_call(RC_NO_LEAF,
+                                       OptoRuntime::class_init_barrier_Type(),
+                                       OptoRuntime::class_init_barrier_Java(),
+                                       nullptr, TypePtr::BOTTOM,
+                                       klass);
+        // Deoptimization during class init barrier execution should trigger current bytecode reexecution.
+        call->jvms()->set_should_reexecute(true);
+
+        // FIXME: deoptimize for now. deoptimize=false doesn't work with late inlining yet.
+        // Parse::create_entry_map() introduces a barrier which uses distinct JVM state (*before* call).
+        // Compilation fails when distinct exception states are combined.
+        make_slow_call_ex(call, env()->Throwable_klass(), /*separate_io_proj=*/true, /*deoptimize=*/true);
+
+        Node* fast_io  = call->in(TypeFunc::I_O);
+        Node* fast_mem = call->in(TypeFunc::Memory);
+        // These two phis are pre-filled with copies of of the fast IO and Memory
+        Node* io_phi   = PhiNode::make(r, fast_io,  Type::ABIO);
+        Node* mem_phi  = PhiNode::make(r, fast_mem, Type::MEMORY, TypePtr::BOTTOM);
+
+        r->init_req(2, control());
+        io_phi->init_req(2, i_o());
+        mem_phi->init_req(2, reset_memory());
+
+        set_all_memory(_gvn.transform(mem_phi));
+        set_i_o(_gvn.transform(io_phi));
+      } else {
+        r->init_req(2, top());
+      }
+      set_control(_gvn.transform(r));
+      break;
+    }
+
+    default: fatal("unknown barrier mode: %d", ClassInitBarrierMode);
+  }
+  C->set_has_clinit_barriers(true);
+}
+
 void GraphKit::guard_klass_being_initialized(Node* klass) {
   int init_state_off = in_bytes(InstanceKlass::init_state_offset());
   Node* adr = basic_plus_adr(top(), klass, init_state_off);
@@ -3043,9 +3116,14 @@ void GraphKit::guard_init_thread(Node* klass) {
 }
 
 void GraphKit::clinit_barrier(ciInstanceKlass* ik, ciMethod* context) {
+  if (C->do_clinit_barriers()) {
+    Node* klass = makecon(TypeKlassPtr::make(ik, Type::trust_interfaces));
+    guard_klass_is_initialized(klass);
+    return;
+  }
   if (ik->is_being_initialized()) {
     if (C->needs_clinit_barrier(ik, context)) {
-      Node* klass = makecon(TypeKlassPtr::make(ik));
+      Node* klass = makecon(TypeKlassPtr::make(ik, Type::trust_interfaces));
       guard_klass_being_initialized(klass);
       guard_init_thread(klass);
       insert_mem_bar(Op_MemBarCPUOrder);

@@ -67,6 +67,12 @@ class AOTConstantPoolResolver :  AllStatic {
   static bool is_class_resolution_deterministic(InstanceKlass* cp_holder, Klass* resolved_class);
   static bool is_indy_resolution_deterministic(ConstantPool* cp, int cp_index);
 
+  // helper
+  static Klass* resolve_boot_class_or_fail(const char* class_name, TRAPS);
+
+  // java/lang/reflect/Proxy caching
+  static void init_dynamic_proxy_cache(TRAPS);
+
   static Klass* find_loaded_class(Thread* current, oop class_loader, Symbol* name);
   static Klass* find_loaded_class(Thread* current, ConstantPool* cp, int class_cp_index);
 
@@ -87,6 +93,13 @@ public:
   static void preresolve_field_and_method_cp_entries(JavaThread* current, InstanceKlass* ik, GrowableArray<bool>* preresolve_list);
   static void preresolve_indy_cp_entries(JavaThread* current, InstanceKlass* ik, GrowableArray<bool>* preresolve_list);
 
+  // java/lang/Class$ReflectionData caching
+  static int class_reflection_data_flags(InstanceKlass* ik, TRAPS);
+  static void generate_reflection_data(JavaThread* current, InstanceKlass* ik, int rd_flags);
+
+  // java/lang/reflect/Proxy caching
+  static void trace_dynamic_proxy_class(oop loader, const char* proxy_name, objArrayOop interfaces, int access_flags);
+  static void define_dynamic_proxy_class(Handle loader, Handle proxy_name, Handle interfaces, int access_flags, TRAPS);
 
   // Resolve all constant pool entries that are safe to be stored in the
   // CDS archive.

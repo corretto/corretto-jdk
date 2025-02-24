@@ -68,7 +68,7 @@
 #include "runtime/java.hpp"
 #include "runtime/javaCalls.hpp"
 #include "runtime/os.hpp"
-#include "runtime/perfData.hpp"
+#include "runtime/perfData.inline.hpp"
 #include "runtime/threadCritical.hpp"
 #include "runtime/timer.hpp"
 #include "runtime/vm_version.hpp"
@@ -106,6 +106,7 @@ PerfCounter*    ClassLoader::_perf_accumulated_time = nullptr;
 PerfCounter*    ClassLoader::_perf_classes_inited = nullptr;
 PerfCounter*    ClassLoader::_perf_class_init_time = nullptr;
 PerfCounter*    ClassLoader::_perf_class_init_selftime = nullptr;
+PerfCounter*    ClassLoader::_perf_class_init_bytecodes_count = nullptr;
 PerfCounter*    ClassLoader::_perf_classes_verified = nullptr;
 PerfCounter*    ClassLoader::_perf_class_verify_time = nullptr;
 PerfCounter*    ClassLoader::_perf_class_verify_selftime = nullptr;
@@ -122,6 +123,11 @@ PerfCounter*    ClassLoader::_perf_define_appclass_time = nullptr;
 PerfCounter*    ClassLoader::_perf_define_appclass_selftime = nullptr;
 PerfCounter*    ClassLoader::_perf_app_classfile_bytes_read = nullptr;
 PerfCounter*    ClassLoader::_perf_sys_classfile_bytes_read = nullptr;
+PerfCounter*    ClassLoader::_perf_preload_total_time = nullptr;
+PerfCounter*    ClassLoader::_perf_preload_time = nullptr;
+PerfCounter*    ClassLoader::_perf_prelink_time = nullptr;
+PerfCounter*    ClassLoader::_perf_preinit_time = nullptr;
+PerfCounter*    ClassLoader::_perf_preresolve_time = nullptr;
 PerfCounter*    ClassLoader::_perf_ik_link_methods_time = nullptr;
 PerfCounter*    ClassLoader::_perf_method_adapters_time = nullptr;
 PerfCounter*    ClassLoader::_perf_ik_link_methods_count = nullptr;
@@ -129,10 +135,10 @@ PerfCounter*    ClassLoader::_perf_method_adapters_count = nullptr;
 PerfCounter*    ClassLoader::_unsafe_defineClassCallCounter = nullptr;
 PerfCounter*    ClassLoader::_perf_secondary_hash_time = nullptr;
 
-PerfCounter*    ClassLoader::_perf_resolve_indy_time = nullptr;
-PerfCounter*    ClassLoader::_perf_resolve_invokehandle_time = nullptr;
-PerfCounter*    ClassLoader::_perf_resolve_mh_time = nullptr;
-PerfCounter*    ClassLoader::_perf_resolve_mt_time = nullptr;
+PerfTickCounters*    ClassLoader::_perf_resolve_indy_time = nullptr;
+PerfTickCounters*    ClassLoader::_perf_resolve_invokehandle_time = nullptr;
+PerfTickCounters*    ClassLoader::_perf_resolve_mh_time = nullptr;
+PerfTickCounters*    ClassLoader::_perf_resolve_mt_time = nullptr;
 
 PerfCounter*    ClassLoader::_perf_resolve_indy_count = nullptr;
 PerfCounter*    ClassLoader::_perf_resolve_invokehandle_count = nullptr;
@@ -141,15 +147,32 @@ PerfCounter*    ClassLoader::_perf_resolve_mt_count = nullptr;
 
 void ClassLoader::print_counters(outputStream *st) {
   st->print_cr("ClassLoader:");
-  st->print_cr("  clinit:               " JLONG_FORMAT "ms / " JLONG_FORMAT " events", ClassLoader::class_init_time_ms(), ClassLoader::class_init_count());
-  st->print_cr("  link methods:         " JLONG_FORMAT "ms / " JLONG_FORMAT " events", Management::ticks_to_ms(_perf_ik_link_methods_time->get_value())   , _perf_ik_link_methods_count->get_value());
-  st->print_cr("  method adapters:      " JLONG_FORMAT "ms / " JLONG_FORMAT " events", Management::ticks_to_ms(_perf_method_adapters_time->get_value())   , _perf_method_adapters_count->get_value());
+  st->print_cr(   "  clinit:               " JLONG_FORMAT_W(6) "us / " JLONG_FORMAT " events",
+               ClassLoader::class_init_time_ms(), ClassLoader::class_init_count());
+  st->print_cr("  link methods:         " JLONG_FORMAT_W(6) "us / " JLONG_FORMAT " events",
+               Management::ticks_to_us(_perf_ik_link_methods_time->get_value())   , _perf_ik_link_methods_count->get_value());
+  st->print_cr("  method adapters:      " JLONG_FORMAT_W(6) "us / " JLONG_FORMAT " events",
+               Management::ticks_to_us(_perf_method_adapters_time->get_value())   , _perf_method_adapters_count->get_value());
+  if (CountBytecodes || CountBytecodesPerThread) {
+    st->print_cr("; executed " JLONG_FORMAT " bytecodes", ClassLoader::class_init_bytecodes_count());
+  }
   st->print_cr("  resolve...");
-  st->print_cr("    invokedynamic:   " JLONG_FORMAT "ms / " JLONG_FORMAT " events", Management::ticks_to_ms(_perf_resolve_indy_time->get_value())         , _perf_resolve_indy_count->get_value());
-  st->print_cr("    invokehandle:    " JLONG_FORMAT "ms / " JLONG_FORMAT " events", Management::ticks_to_ms(_perf_resolve_invokehandle_time->get_value()) , _perf_resolve_invokehandle_count->get_value());
-  st->print_cr("    CP_MethodHandle: " JLONG_FORMAT "ms / " JLONG_FORMAT " events", Management::ticks_to_ms(_perf_resolve_mh_time->get_value())           , _perf_resolve_mh_count->get_value());
-  st->print_cr("    CP_MethodType:   " JLONG_FORMAT "ms / " JLONG_FORMAT " events", Management::ticks_to_ms(_perf_resolve_mt_time->get_value())           , _perf_resolve_mt_count->get_value());
-  st->cr();
+  st->print_cr("    invokedynamic:   " JLONG_FORMAT_W(6) "us (elapsed) " JLONG_FORMAT_W(6) "us (thread) / " JLONG_FORMAT_W(5) " events",
+               _perf_resolve_indy_time->elapsed_counter_value_us(),
+               _perf_resolve_indy_time->thread_counter_value_us(),
+               _perf_resolve_indy_count->get_value());
+  st->print_cr("    invokehandle:    " JLONG_FORMAT_W(6) "us (elapsed) " JLONG_FORMAT_W(6) "us (thread) / " JLONG_FORMAT_W(5) " events",
+               _perf_resolve_invokehandle_time->elapsed_counter_value_us(),
+               _perf_resolve_invokehandle_time->thread_counter_value_us(),
+               _perf_resolve_invokehandle_count->get_value());
+  st->print_cr("    CP_MethodHandle: " JLONG_FORMAT_W(6) "us (elapsed) " JLONG_FORMAT_W(6) "us (thread) / " JLONG_FORMAT_W(5) " events",
+               _perf_resolve_mh_time->elapsed_counter_value_us(),
+               _perf_resolve_mh_time->thread_counter_value_us(),
+               _perf_resolve_mh_count->get_value());
+  st->print_cr("    CP_MethodType:   " JLONG_FORMAT_W(6) "us (elapsed) " JLONG_FORMAT_W(6) "us (thread) / " JLONG_FORMAT_W(5) " events",
+               _perf_resolve_mt_time->elapsed_counter_value_us(),
+               _perf_resolve_mt_time->thread_counter_value_us(),
+               _perf_resolve_mt_count->get_value());
 }
 
 GrowableArray<ModuleClassPathList*>* ClassLoader::_patch_mod_entries = nullptr;
@@ -302,7 +325,7 @@ ClassFileStream* ClassPathDirEntry::open_stream(JavaThread* current, const char*
 }
 
 ClassPathZipEntry::ClassPathZipEntry(jzfile* zip, const char* zip_name,
-                                     bool is_boot_append, bool from_class_path_attr, bool multi_release) : ClassPathEntry() {
+                                     bool from_class_path_attr, bool multi_release) : ClassPathEntry() {
   _zip = zip;
   _zip_name = copy_path(zip_name);
   _from_class_path_attr = from_class_path_attr;
@@ -312,6 +335,20 @@ ClassPathZipEntry::ClassPathZipEntry(jzfile* zip, const char* zip_name,
 ClassPathZipEntry::~ClassPathZipEntry() {
   ZipLibrary::close(_zip);
   FREE_C_HEAP_ARRAY(char, _zip_name);
+}
+
+bool ClassPathZipEntry::has_entry(JavaThread* current, const char* name) {
+  ThreadToNativeFromVM ttn(current);
+  // check whether zip archive contains name
+  jint name_len;
+  jint filesize;
+  jzentry* entry = ZipLibrary::find_entry(_zip, name, &filesize, &name_len);
+  if (entry == nullptr) {
+    return false;
+  } else {
+     ZipLibrary::free_entry(_zip, entry);
+    return true;
+  }
 }
 
 u1* ClassPathZipEntry::open_entry(JavaThread* current, const char* name, jint* filesize, bool nul_terminate) {
@@ -338,6 +375,8 @@ u1* ClassPathZipEntry::open_entry(JavaThread* current, const char* name, jint* f
     }
     size++;
   }
+
+  // ZIP_ReadEntry also frees zentry
   buffer = NEW_RESOURCE_ARRAY(u1, size);
   if (!ZipLibrary::read_entry(_zip, entry, buffer, filename)) {
     return nullptr;
@@ -540,10 +579,39 @@ void ClassLoader::setup_app_search_path(JavaThread* current, const char *class_p
   ResourceMark rm(current);
   ClasspathStream cp_stream(class_path);
 
+  int exclusion_start_index = INT_MAX;
+  size_t limit = SIZE_MAX;
+  if (CacheOnlyClassesIn != nullptr) {
+    char* appclasspath = Arguments::get_appclasspath();
+    bool bad = false;
+    if (strstr(appclasspath, CacheOnlyClassesIn) != appclasspath) {
+      bad = true;
+    } else {
+      limit = strlen(CacheOnlyClassesIn);
+      if (limit > 0 && limit < strlen(appclasspath)
+          && CacheOnlyClassesIn[limit-1] != os::path_separator()[0]
+          && appclasspath[limit] != os::path_separator()[0]) {
+        bad = true;
+      }
+    }
+    if (bad) {
+      vm_exit_during_initialization(err_msg("CacheOnlyClassesIn \"%s\" must be a proper prefix of the CLASSPATH \"%s\"",
+                                            CacheOnlyClassesIn, appclasspath));
+    }
+  }
+
   while (cp_stream.has_next()) {
+    if (cp_stream.num_chars_consumed() >= limit && exclusion_start_index == INT_MAX) {
+      exclusion_start_index = num_boot_classpath_entries() + num_app_classpath_entries();
+    }
     const char* path = cp_stream.get_next();
     update_class_path_entry_list(current, path, /* check_for_duplicates */ true,
                                  /* is_boot_append */ false, /* from_class_path_attr */ false);
+  }
+
+  ClassLoaderExt::set_app_class_exclusion_start_path_index(exclusion_start_index);
+  if (exclusion_start_index != INT_MAX) {
+    log_info(cds)("Exclude all app classes whose shared_classpath_index is greater than %d", exclusion_start_index);
   }
 }
 
@@ -764,7 +832,7 @@ ClassPathEntry* ClassLoader::create_class_path_entry(JavaThread* current,
     char* error_msg = nullptr;
     jzfile* zip = open_zip_file(canonical_path, &error_msg, current);
     if (zip != nullptr && error_msg == nullptr) {
-      new_entry = new ClassPathZipEntry(zip, path, is_boot_append, from_class_path_attr, is_multi_release);
+      new_entry = new ClassPathZipEntry(zip, path, from_class_path_attr, is_multi_release);
     } else {
 #if INCLUDE_CDS
       ClassLoaderExt::set_has_non_jar_in_classpath();
@@ -784,7 +852,7 @@ ClassPathEntry* ClassLoader::create_class_path_entry(JavaThread* current,
 
 // Create a class path zip entry for a given path (return null if not found
 // or zip/JAR file cannot be opened)
-ClassPathZipEntry* ClassLoader::create_class_path_zip_entry(const char *path, bool is_boot_append) {
+ClassPathZipEntry* ClassLoader::create_class_path_zip_entry(const char *path) {
   // check for a regular file
   struct stat st;
   if (os::stat(path, &st) == 0) {
@@ -797,7 +865,7 @@ ClassPathZipEntry* ClassLoader::create_class_path_zip_entry(const char *path, bo
         jzfile* zip = open_zip_file(canonical_path, &error_msg, thread);
         if (zip != nullptr && error_msg == nullptr) {
           // create using canonical path
-          return new ClassPathZipEntry(zip, canonical_path, is_boot_append, false, false);
+          return new ClassPathZipEntry(zip, canonical_path, false, false);
         }
       }
     }
@@ -1457,6 +1525,7 @@ void ClassLoader::initialize(TRAPS) {
     NEWPERFEVENTCOUNTER(_perf_classes_inited, SUN_CLS, "initializedClasses");
     NEWPERFEVENTCOUNTER(_perf_classes_linked, SUN_CLS, "linkedClasses");
     NEWPERFEVENTCOUNTER(_perf_classes_verified, SUN_CLS, "verifiedClasses");
+    NEWPERFEVENTCOUNTER(_perf_class_init_bytecodes_count, SUN_CLS, "clinitBytecodesCount");
 
     NEWPERFTICKCOUNTER(_perf_shared_classload_time, SUN_CLS, "sharedClassLoadTime");
     NEWPERFTICKCOUNTER(_perf_sys_classload_time, SUN_CLS, "sysClassLoadTime");
@@ -1471,16 +1540,22 @@ void ClassLoader::initialize(TRAPS) {
     NEWPERFEVENTCOUNTER(_unsafe_defineClassCallCounter, SUN_CLS, "unsafeDefineClassCalls");
     NEWPERFTICKCOUNTER(_perf_secondary_hash_time, SUN_CLS, "secondarySuperHashTime");
 
-    if (log_is_enabled(Info, perf, class, link)) {
+    if (log_is_enabled(Info, perf, class, link) || log_is_enabled(Info, init)) {
+      NEWPERFTICKCOUNTER(_perf_preload_total_time, SUN_CLS, "preloadTotalTime");
+      NEWPERFTICKCOUNTER(_perf_preload_time, SUN_CLS, "preloadTime");
+      NEWPERFTICKCOUNTER(_perf_prelink_time, SUN_CLS, "prelinkTime");
+      NEWPERFTICKCOUNTER(_perf_preinit_time, SUN_CLS, "preinitTime");
+      NEWPERFTICKCOUNTER(_perf_preresolve_time, SUN_CLS, "preresolveTime");
+
       NEWPERFTICKCOUNTER(_perf_ik_link_methods_time, SUN_CLS, "linkMethodsTime");
       NEWPERFTICKCOUNTER(_perf_method_adapters_time, SUN_CLS, "makeAdaptersTime");
       NEWPERFEVENTCOUNTER(_perf_ik_link_methods_count, SUN_CLS, "linkMethodsCount");
       NEWPERFEVENTCOUNTER(_perf_method_adapters_count, SUN_CLS, "makeAdaptersCount");
 
-      NEWPERFTICKCOUNTER(_perf_resolve_indy_time, SUN_CLS, "resolve_invokedynamic_time");
-      NEWPERFTICKCOUNTER(_perf_resolve_invokehandle_time, SUN_CLS, "resolve_invokehandle_time");
-      NEWPERFTICKCOUNTER(_perf_resolve_mh_time, SUN_CLS, "resolve_MethodHandle_time");
-      NEWPERFTICKCOUNTER(_perf_resolve_mt_time, SUN_CLS, "resolve_MethodType_time");
+      NEWPERFTICKCOUNTERS(_perf_resolve_indy_time, SUN_CLS, "resolve_invokedynamic_time");
+      NEWPERFTICKCOUNTERS(_perf_resolve_invokehandle_time, SUN_CLS, "resolve_invokehandle_time");
+      NEWPERFTICKCOUNTERS(_perf_resolve_mh_time, SUN_CLS, "resolve_MethodHandle_time");
+      NEWPERFTICKCOUNTERS(_perf_resolve_mt_time, SUN_CLS, "resolve_MethodType_time");
 
       NEWPERFEVENTCOUNTER(_perf_resolve_indy_count, SUN_CLS, "resolve_invokedynamic_count");
       NEWPERFEVENTCOUNTER(_perf_resolve_invokehandle_count, SUN_CLS, "resolve_invokehandle_count");
@@ -1571,6 +1646,10 @@ int ClassLoader::num_module_path_entries() {
 jlong ClassLoader::classloader_time_ms() {
   return UsePerfData ?
     Management::ticks_to_ms(_perf_accumulated_time->get_value()) : -1;
+}
+
+jlong ClassLoader::class_init_bytecodes_count() {
+  return UsePerfData ? _perf_class_init_bytecodes_count->get_value() : -1;
 }
 
 jlong ClassLoader::class_init_count() {

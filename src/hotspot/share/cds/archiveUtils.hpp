@@ -51,6 +51,7 @@ class ArchivePtrMarker : AllStatic {
   static CHeapBitMap*  _ptrmap;
   static CHeapBitMap*  _rw_ptrmap;
   static CHeapBitMap*  _ro_ptrmap;
+  static CHeapBitMap*  _cc_ptrmap;
   static VirtualSpace* _vs;
 
   // Once _ptrmap is compacted, we don't allow bit marking anymore. This is to
@@ -62,7 +63,7 @@ class ArchivePtrMarker : AllStatic {
 
 public:
   static void initialize(CHeapBitMap* ptrmap, VirtualSpace* vs);
-  static void initialize_rw_ro_maps(CHeapBitMap* rw_ptrmap, CHeapBitMap* ro_ptrmap);
+  static void initialize_rw_ro_cc_maps(CHeapBitMap* rw_ptrmap, CHeapBitMap* ro_ptrmap, CHeapBitMap* cc_ptrmap);
   static void mark_pointer(address* ptr_loc);
   static void clear_pointer(address* ptr_loc);
   static void compact(address relocatable_base, address relocatable_end);
@@ -91,10 +92,15 @@ public:
     return _ro_ptrmap;
   }
 
+  static CHeapBitMap* cc_ptrmap() {
+    return _cc_ptrmap;
+  }
+
   static void reset_map_and_vs() {
     _ptrmap = nullptr;
     _rw_ptrmap = nullptr;
     _ro_ptrmap = nullptr;
+    _cc_ptrmap = nullptr;
     _vs = nullptr;
   }
 };
@@ -181,6 +187,8 @@ public:
     return !is_packed() && _base != nullptr;
   }
 
+  bool is_empty()   const { return _base == _top; }
+
   void print(size_t total_bytes) const;
   void print_out_of_space_msg(const char* failing_region, size_t needed_bytes);
 
@@ -260,6 +268,12 @@ public:
   static void log_to_classlist(BootstrapInfo* bootstrap_specifier, TRAPS) NOT_CDS_RETURN;
   static bool has_aot_initialized_mirror(InstanceKlass* src_ik);
   template <typename T> static Array<T>* archive_array(GrowableArray<T>* tmp_array);
+
+  static const char* builtin_loader_name_or_null(oop loader); // "boot", "platform", "app", or nullptr
+  static const char* builtin_loader_name(oop loader); // "boot", "platform", or "app". Asserts if not a built-in-loader.
+
+  static bool builtin_loader_from_type(const char* loader_type, oop* value_ret);
+  static oop builtin_loader_from_type(int loader_type);
 
   // The following functions translate between a u4 offset and an address in the
   // the range of the mapped CDS archive (e.g., Metaspace::is_in_shared_metaspace()).

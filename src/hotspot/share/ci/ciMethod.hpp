@@ -72,6 +72,7 @@ class ciMethod : public ciMetadata {
   ciInstanceKlass* _holder;
   ciSignature*     _signature;
   ciMethodData*    _method_data;
+  ciMethodData*    _method_data_recorded;
   ciMethodBlocks*   _method_blocks;
 
   // Code attributes.
@@ -95,6 +96,8 @@ class ciMethod : public ciMetadata {
   bool _has_reserved_stack_access;
   bool _is_overpass;
 
+  GrowableArray<int>* _has_trap_at_bci;
+
   // Lazy fields, filled in on demand
   address              _code;
   ciExceptionHandler** _exception_handlers;
@@ -117,7 +120,7 @@ class ciMethod : public ciMetadata {
 
   void load_code();
 
-  bool ensure_method_data(const methodHandle& h_m);
+  bool ensure_method_data(const methodHandle& h_m, bool training_data_only);
 
   void code_at_put(int bci, Bytecodes::Code code) {
     Bytecodes::check(code);
@@ -194,13 +197,15 @@ class ciMethod : public ciMetadata {
   // Code size for inlining decisions.
   int code_size_for_inlining();
 
-  bool caller_sensitive()       const { return get_Method()->caller_sensitive();       }
-  bool force_inline()           const { return get_Method()->force_inline();           }
-  bool dont_inline()            const { return get_Method()->dont_inline();            }
-  bool intrinsic_candidate()    const { return get_Method()->intrinsic_candidate();    }
-  bool is_static_initializer()  const { return get_Method()->is_static_initializer();  }
-  bool changes_current_thread() const { return get_Method()->changes_current_thread(); }
-  bool deprecated()             const { return is_loaded() && get_Method()->deprecated(); }
+  bool caller_sensitive()           const { return get_Method()->caller_sensitive();           }
+  bool force_inline()               const { return get_Method()->force_inline();               }
+  bool dont_inline()                const { return get_Method()->dont_inline();                }
+  bool intrinsic_candidate()        const { return get_Method()->intrinsic_candidate();        }
+  bool is_static_initializer()      const { return get_Method()->is_static_initializer();      }
+  bool changes_current_thread()     const { return get_Method()->changes_current_thread();     }
+  bool deprecated()                 const { return is_loaded() && get_Method()->deprecated();  }
+  bool has_upcall_on_method_entry() const { return get_Method()->has_upcall_on_method_entry(); }
+  bool has_upcall_on_method_exit()  const { return get_Method()->has_upcall_on_method_exit();  }
 
   bool check_intrinsic_candidate() const {
     if (intrinsic_id() == vmIntrinsics::_blackhole) {
@@ -314,7 +319,7 @@ class ciMethod : public ciMetadata {
   bool has_unloaded_classes_in_signature();
   bool is_klass_loaded(int refinfo_index, Bytecodes::Code bc, bool must_be_resolved) const;
   bool check_call(int refinfo_index, bool is_static) const;
-  bool ensure_method_data();  // make sure it exists in the VM also
+  bool ensure_method_data(bool training_data_only = false);  // make sure it exists in the VM also
   MethodCounters* ensure_method_counters();
 
   int inline_instructions_size();
@@ -383,6 +388,10 @@ class ciMethod : public ciMetadata {
   void print_short_name(outputStream* st = tty);
 
   static bool is_consistent_info(ciMethod* declared_method, ciMethod* resolved_method);
+  bool has_trap_at(int bci) {
+    return _has_trap_at_bci != nullptr &&
+           _has_trap_at_bci->contains(bci);
+  }
 };
 
 #endif // SHARE_CI_CIMETHOD_HPP

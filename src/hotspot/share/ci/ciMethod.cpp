@@ -22,6 +22,7 @@
  *
  */
 
+#include "cds/aotLinkedClassBulkLoader.hpp"
 #include "ci/ciCallProfile.hpp"
 #include "ci/ciExceptionHandler.hpp"
 #include "ci/ciInstanceKlass.hpp"
@@ -33,6 +34,7 @@
 #include "ci/ciReplay.hpp"
 #include "ci/ciSymbols.hpp"
 #include "ci/ciUtilities.inline.hpp"
+#include "compiler/compileTask.hpp"
 #include "compiler/abstractCompiler.hpp"
 #include "compiler/compilerDefinitions.inline.hpp"
 #include "compiler/compilerOracle.hpp"
@@ -47,6 +49,7 @@
 #include "oops/generateOopMap.hpp"
 #include "oops/method.inline.hpp"
 #include "oops/oop.inline.hpp"
+#include "oops/trainingData.hpp"
 #include "prims/methodHandles.hpp"
 #include "runtime/deoptimization.hpp"
 #include "runtime/handles.inline.hpp"
@@ -142,6 +145,7 @@ ciMethod::ciMethod(const methodHandle& h_m, ciInstanceKlass* holder) :
   constantPoolHandle cpool(Thread::current(), h_m->constants());
   _signature = new (env->arena()) ciSignature(_holder, cpool, sig_symbol);
   _method_data = nullptr;
+  _method_data_recorded = nullptr;
   // Take a snapshot of these values, so they will be commensurate with the MDO.
   if (ProfileInterpreter || CompilerConfig::is_c1_profiling()) {
     int invcnt = h_m->interpreter_invocation_count();
@@ -158,6 +162,22 @@ ciMethod::ciMethod(const methodHandle& h_m, ciInstanceKlass* holder) :
   if (ReplayCompiles) {
     ciReplay::initialize(this);
   }
+  DirectiveSet* directives = DirectivesStack::getMatchingDirective(h_m, CURRENT_ENV->task()->compiler());
+  ccstrlist bci_list = directives->TooManyTrapsAtBCIOption;
+  int len = (int)strlen(bci_list);
+  Arena* arena = CURRENT_ENV->arena();
+  _has_trap_at_bci = new (arena) GrowableArray<int>(arena, 2, 0, 0);
+  for (int i = 0; i < len; i++) {
+    int v = -1;
+    int read;
+    if (sscanf(bci_list + i, "%i%n", &v, &read) != 1) {
+      warning("wrong format for TooManyTrapsAtBCI option: \"%s\"", bci_list);
+      break;
+    }
+    assert(v >= 0 && v < (1<<16), "%i", v);
+    _has_trap_at_bci->append_if_missing(v);
+    i += read;
+  }
 }
 
 
@@ -173,11 +193,13 @@ ciMethod::ciMethod(ciInstanceKlass* holder,
   _name(                   name),
   _holder(                 holder),
   _method_data(            nullptr),
+  _method_data_recorded(   nullptr),
   _method_blocks(          nullptr),
   _intrinsic_id(           vmIntrinsics::_none),
   _inline_instructions_size(-1),
   _can_be_statically_bound(false),
   _can_omit_stack_trace(true),
+  _has_trap_at_bci(        nullptr),
   _liveness(               nullptr)
 #if defined(COMPILER2)
   ,
@@ -996,15 +1018,19 @@ bool ciMethod::has_member_arg() const {
 //
 // Generate new MethodData* objects at compile time.
 // Return true if allocation was successful or no MDO is required.
-bool ciMethod::ensure_method_data(const methodHandle& h_m) {
+bool ciMethod::ensure_method_data(const methodHandle& h_m, bool training_data_only) {
   EXCEPTION_CONTEXT;
   if (is_native() || is_abstract() || h_m()->is_accessor()) {
     return true;
   }
   if (h_m()->method_data() == nullptr) {
-    Method::build_profiling_method_data(h_m, THREAD);
-    if (HAS_PENDING_EXCEPTION) {
-      CLEAR_PENDING_EXCEPTION;
+    if (training_data_only) {
+      Method::install_training_method_data(h_m);
+    } else {
+      Method::build_profiling_method_data(h_m, THREAD);
+      if (HAS_PENDING_EXCEPTION) {
+        CLEAR_PENDING_EXCEPTION;
+      }
     }
   }
   if (h_m()->method_data() != nullptr) {
@@ -1017,12 +1043,12 @@ bool ciMethod::ensure_method_data(const methodHandle& h_m) {
 }
 
 // public, retroactive version
-bool ciMethod::ensure_method_data() {
+bool ciMethod::ensure_method_data(bool training_data_only) {
   bool result = true;
   if (_method_data == nullptr || _method_data->is_empty()) {
     GUARDED_VM_ENTRY({
       methodHandle mh(Thread::current(), get_Method());
-      result = ensure_method_data(mh);
+      result = ensure_method_data(mh, training_data_only);
     });
   }
   return result;
@@ -1033,22 +1059,55 @@ bool ciMethod::ensure_method_data() {
 // ciMethod::method_data
 //
 ciMethodData* ciMethod::method_data() {
-  if (_method_data != nullptr) {
+  if (CURRENT_ENV->task()->is_precompiled() && CURRENT_ENV->task()->comp_level() == CompLevel_full_optimization) {
+    if (_method_data_recorded == nullptr) {
+      VM_ENTRY_MARK;
+      methodHandle h_m(thread, get_Method());
+      MethodTrainingData* mtd = MethodTrainingData::find(h_m);
+      MethodData* mdo = (mtd != nullptr ? mtd->final_profile() : nullptr);
+      DirectiveSet* directives = DirectivesStack::getMatchingDirective(h_m, CURRENT_ENV->task()->compiler());
+      if (mdo == nullptr || directives->IgnoreRecordedProfileOption) {
+        if (directives->IgnoreRecordedProfileOption) {
+          ResourceMark rm;
+          log_debug(precompile)("Ignore recorded profile for %s", h_m->name_and_sig_as_C_string());
+        } else {
+          ResourceMark rm;
+          log_debug(precompile)("No profile for %s", h_m->name_and_sig_as_C_string());
+        }
+        _method_data_recorded = CURRENT_ENV->get_empty_methodData();
+      } else {
+#if INCLUDE_CDS
+        if (mdo->extra_data_lock() == nullptr) {
+          assert(!HAS_PENDING_EXCEPTION, "");
+          mdo->restore_unshareable_info(thread);
+          assert(!HAS_PENDING_EXCEPTION, "");
+        }
+#endif
+        _method_data_recorded = CURRENT_ENV->get_method_data(mdo);
+        _method_data_recorded->load_data();
+        {
+          ResourceMark rm;
+          log_debug(precompile)("Recorded profile " PTR_FORMAT " for %s", p2i(mdo), h_m->name_and_sig_as_C_string());
+        }
+      }
+    }
+    assert(_method_data_recorded != nullptr, "");
+    return _method_data_recorded;
+  } else {
+    if (_method_data != nullptr) {
+      return _method_data;
+    }
+    VM_ENTRY_MARK;
+    methodHandle h_m(thread, get_Method());
+    MethodData* mdo = h_m()->method_data();
+    if (mdo != nullptr) {
+      _method_data = CURRENT_ENV->get_method_data(mdo);
+      _method_data->load_data();
+    } else {
+      _method_data = CURRENT_ENV->get_empty_methodData();
+    }
     return _method_data;
   }
-  VM_ENTRY_MARK;
-  ciEnv* env = CURRENT_ENV;
-  Thread* my_thread = JavaThread::current();
-  methodHandle h_m(my_thread, get_Method());
-
-  if (h_m()->method_data() != nullptr) {
-    _method_data = CURRENT_ENV->get_method_data(h_m()->method_data());
-    _method_data->load_data();
-  } else {
-    _method_data = CURRENT_ENV->get_empty_methodData();
-  }
-  return _method_data;
-
 }
 
 // ------------------------------------------------------------------
@@ -1103,6 +1162,13 @@ bool ciMethod::can_be_compiled() {
   if (is_c1_compile(env->comp_level())) {
     return _is_c1_compilable;
   }
+
+#if INCLUDE_JVMCI
+  if (EnableJVMCI && UseJVMCICompiler &&
+      env->comp_level() == CompLevel_full_optimization && !AOTLinkedClassBulkLoader::class_preloading_finished()) {
+    return false;
+  }
+#endif
   return _is_c2_compilable;
 }
 
@@ -1143,13 +1209,43 @@ int ciMethod::code_size_for_inlining() {
 // heuristic (e.g. post call nop instructions; see InlineSkippedInstructionsCounter)
 int ciMethod::inline_instructions_size() {
   if (_inline_instructions_size == -1) {
+    if (TrainingData::have_data()) {
+      GUARDED_VM_ENTRY(
+        CompLevel level = static_cast<CompLevel>(CURRENT_ENV->comp_level());
+        methodHandle top_level_mh(Thread::current(), CURRENT_ENV->task()->method());
+        MethodTrainingData* mtd = MethodTrainingData::find(top_level_mh);
+        if (mtd != nullptr) {
+          CompileTrainingData* ctd = mtd->last_toplevel_compile(level);
+          if (ctd != nullptr) {
+            methodHandle mh(Thread::current(), get_Method());
+            MethodTrainingData* this_mtd = MethodTrainingData::find(mh);
+            if (this_mtd != nullptr) {
+              auto r = ctd->ci_records().ciMethod__inline_instructions_size.find(this_mtd);
+              if (r.is_valid()) {
+                _inline_instructions_size = r.result();
+              }
+            }
+          }
+        }
+      );
+    }
+  }
+  if (_inline_instructions_size == -1) {
     GUARDED_VM_ENTRY(
       nmethod* code = get_Method()->code();
-      if (code != nullptr && (code->comp_level() == CompLevel_full_optimization)) {
+      if (code != nullptr && !code->is_scc() && (code->comp_level() == CompLevel_full_optimization)) {
         int isize = code->insts_end() - code->verified_entry_point() - code->skipped_instructions_size();
         _inline_instructions_size = isize > 0 ? isize : 0;
       } else {
         _inline_instructions_size = 0;
+      }
+      if (TrainingData::need_data()) {
+        CompileTrainingData* ctd = CURRENT_ENV->task()->training_data();
+        if (ctd != nullptr) {
+          methodHandle mh(Thread::current(), get_Method());
+          MethodTrainingData* this_mtd = MethodTrainingData::make(mh);
+          ctd->ci_records().ciMethod__inline_instructions_size.append_if_missing(_inline_instructions_size, this_mtd);
+        }
       }
     );
   }
@@ -1179,6 +1275,17 @@ bool ciMethod::is_not_reached(int bci) {
 // ------------------------------------------------------------------
 // ciMethod::was_never_executed
 bool ciMethod::was_executed_more_than(int times) {
+  // Invocation counter is reset when the Method* is compiled.
+  // If the method has compiled code we therefore assume it has
+  // be executed more than n times.
+  if (is_accessor() || is_empty() || has_compiled_code()) {
+    // interpreter doesn't bump invocation counter of trivial methods
+    // compiler does not bump invocation counter of compiled methods
+    return true;
+  }
+  if (!method_data()->is_empty()) {
+    return (method_data()->invocation_count() > times);
+  }
   VM_ENTRY_MARK;
   return get_Method()->was_executed_more_than(times);
 }

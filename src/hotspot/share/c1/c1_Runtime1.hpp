@@ -161,7 +161,10 @@ public:
 
   static void check_abort_on_vm_exception(oopDesc* ex);
 
-  static void print_statistics()                 PRODUCT_RETURN;
+  static void print_statistics_on(outputStream* st) PRODUCT_RETURN;
+
+  static void init_counters();
+  static void print_counters_on(outputStream* st);
 };
 
 #endif // SHARE_C1_C1_RUNTIME1_HPP

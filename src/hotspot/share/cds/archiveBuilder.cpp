@@ -32,6 +32,7 @@
 #include "cds/cppVtables.hpp"
 #include "cds/dumpAllocStats.hpp"
 #include "cds/dynamicArchive.hpp"
+#include "cds/finalImageRecipes.hpp"
 #include "cds/heapShared.hpp"
 #include "cds/metaspaceShared.hpp"
 #include "cds/regeneratedClasses.hpp"
@@ -42,6 +43,7 @@
 #include "classfile/symbolTable.hpp"
 #include "classfile/systemDictionaryShared.hpp"
 #include "classfile/vmClasses.hpp"
+#include "code/SCCache.hpp"
 #include "interpreter/abstractInterpreter.hpp"
 #include "jvm.h"
 #include "logging/log.hpp"
@@ -52,9 +54,12 @@
 #include "memory/resourceArea.hpp"
 #include "oops/compressedKlass.inline.hpp"
 #include "oops/instanceKlass.hpp"
+#include "oops/methodCounters.hpp"
+#include "oops/methodData.hpp"
 #include "oops/objArrayKlass.hpp"
 #include "oops/objArrayOop.inline.hpp"
 #include "oops/oopHandle.inline.hpp"
+#include "oops/trainingData.hpp"
 #include "runtime/arguments.hpp"
 #include "runtime/fieldDescriptor.inline.hpp"
 #include "runtime/globals_extension.hpp"
@@ -163,9 +168,11 @@ ArchiveBuilder::ArchiveBuilder() :
   _buffer_to_requested_delta(0),
   _rw_region("rw", MAX_SHARED_DELTA),
   _ro_region("ro", MAX_SHARED_DELTA),
+  _cc_region("cc", MAX_SHARED_DELTA),
   _ptrmap(mtClassShared),
   _rw_ptrmap(mtClassShared),
   _ro_ptrmap(mtClassShared),
+  _cc_ptrmap(mtClassShared),
   _rw_src_objs(),
   _ro_src_objs(),
   _src_obj_table(INITIAL_TABLE_SIZE, MAX_TABLE_SIZE),
@@ -306,7 +313,8 @@ void ArchiveBuilder::sort_klasses() {
 }
 
 address ArchiveBuilder::reserve_buffer() {
-  size_t buffer_size = LP64_ONLY(CompressedClassSpaceSize) NOT_LP64(256 * M);
+  // SCCache::max_aot_code_size() accounts for cached code region.
+  size_t buffer_size = LP64_ONLY(CompressedClassSpaceSize) NOT_LP64(256 * M) + SCCache::max_aot_code_size();
   ReservedSpace rs = MemoryReserver::reserve(buffer_size,
                                              MetaspaceShared::core_region_alignment(),
                                              os::vm_page_size());
@@ -507,7 +515,7 @@ bool ArchiveBuilder::is_excluded(Klass* klass) {
     return SystemDictionaryShared::is_excluded_class(ik);
   } else if (klass->is_objArray_klass()) {
     Klass* bottom = ObjArrayKlass::cast(klass)->bottom_klass();
-    if (MetaspaceShared::is_shared_static(bottom)) {
+    if (CDSConfig::is_dumping_dynamic_archive() && MetaspaceShared::is_shared_static(bottom)) {
       // The bottom class is in the static archive so it's clearly not excluded.
       assert(CDSConfig::is_dumping_dynamic_archive(), "sanity");
       return false;
@@ -521,12 +529,22 @@ bool ArchiveBuilder::is_excluded(Klass* klass) {
 
 ArchiveBuilder::FollowMode ArchiveBuilder::get_follow_mode(MetaspaceClosure::Ref *ref) {
   address obj = ref->obj();
-  if (MetaspaceShared::is_in_shared_metaspace(obj)) {
+  if (CDSConfig::is_dumping_dynamic_archive() && MetaspaceShared::is_in_shared_metaspace(obj)) {
     // Don't dump existing shared metadata again.
     return point_to_it;
   } else if (ref->msotype() == MetaspaceObj::MethodDataType ||
-             ref->msotype() == MetaspaceObj::MethodCountersType) {
-    return set_to_null;
+             ref->msotype() == MetaspaceObj::MethodCountersType ||
+             ref->msotype() == MetaspaceObj::KlassTrainingDataType ||
+             ref->msotype() == MetaspaceObj::MethodTrainingDataType ||
+             ref->msotype() == MetaspaceObj::CompileTrainingDataType) {
+      return TrainingData::need_data() ? make_a_copy : set_to_null;
+  } else if (ref->msotype() == MetaspaceObj::AdapterHandlerEntryType) {
+    if (CDSConfig::is_dumping_adapters()) {
+      AdapterHandlerEntry* entry = (AdapterHandlerEntry*)ref->obj();
+      return AdapterHandlerLibrary::is_abstract_method_adapter(entry) ? set_to_null : make_a_copy;
+    } else {
+      return set_to_null;
+    }
   } else {
     if (ref->msotype() == MetaspaceObj::ClassType) {
       Klass* klass = (Klass*)ref->obj();
@@ -717,6 +735,11 @@ address ArchiveBuilder::get_buffered_addr(address src_addr) const {
          p2i(src_addr));
 
   return p->buffered_addr();
+}
+
+bool ArchiveBuilder::has_been_archived(address src_addr) const {
+  SourceObjInfo* p = _src_obj_table.get(src_addr);
+  return (p != nullptr);
 }
 
 address ArchiveBuilder::get_source_addr(address buffered_addr) const {
@@ -932,11 +955,35 @@ void ArchiveBuilder::make_klasses_shareable() {
   DynamicArchive::make_array_klasses_shareable();
 }
 
+void ArchiveBuilder::make_training_data_shareable() {
+  auto clean_td = [&] (address& src_obj,  SourceObjInfo& info) {
+    if (!is_in_buffer_space(info.buffered_addr())) {
+      return;
+    }
+
+    if (info.msotype() == MetaspaceObj::KlassTrainingDataType ||
+        info.msotype() == MetaspaceObj::MethodTrainingDataType ||
+        info.msotype() == MetaspaceObj::CompileTrainingDataType) {
+      TrainingData* buffered_td = (TrainingData*)info.buffered_addr();
+      buffered_td->remove_unshareable_info();
+    } else if (info.msotype() == MetaspaceObj::MethodDataType) {
+      MethodData* buffered_mdo = (MethodData*)info.buffered_addr();
+      buffered_mdo->remove_unshareable_info();
+    } else if (info.msotype() == MetaspaceObj::MethodCountersType) {
+      MethodCounters* buffered_mc = (MethodCounters*)info.buffered_addr();
+      buffered_mc->remove_unshareable_info();
+    }
+  };
+  _src_obj_table.iterate_all(clean_td);
+}
+
 void ArchiveBuilder::serialize_dynamic_archivable_items(SerializeClosure* soc) {
   SymbolTable::serialize_shared_table_header(soc, false);
   SystemDictionaryShared::serialize_dictionary_headers(soc, false);
   DynamicArchive::serialize_array_klasses(soc);
   AOTLinkedClassBulkLoader::serialize(soc, false);
+  FinalImageRecipes::serialize(soc, false);
+  TrainingData::serialize_training_data(soc);
 }
 
 uintx ArchiveBuilder::buffer_to_offset(address p) const {
@@ -955,6 +1002,15 @@ uintx ArchiveBuilder::any_to_offset(address p) const {
     p = get_buffered_addr(p);
   }
   return buffer_to_offset(p);
+}
+
+void ArchiveBuilder::start_cc_region() {
+  ro_region()->pack();
+  start_dump_region(&_cc_region);
+}
+
+void ArchiveBuilder::end_cc_region() {
+  _cc_region.pack();
 }
 
 address ArchiveBuilder::offset_to_buffered_address(u4 offset) const {
@@ -1073,7 +1129,9 @@ int ArchiveBuilder::precomputed_narrow_klass_shift() {
 #endif // _LP64
 
 void ArchiveBuilder::relocate_to_requested() {
-  ro_region()->pack();
+  if (!ro_region()->is_packed()) {
+    ro_region()->pack();
+  }
 
   size_t my_archive_size = buffer_top() - buffer_bottom();
 
@@ -1395,7 +1453,7 @@ class ArchiveBuilder::CDSMapLogger : AllStatic {
     if (st.is_enabled()) {
       for (int i = 0; i < HeapShared::pending_roots()->length(); i++) {
         st.print("roots[%4d]: ", i);
-        print_oop_info_cr(&st, HeapShared::pending_roots()->at(i));
+        print_oop_info_cr(&st, HeapShared::pending_roots()->at(i).resolve());
       }
     }
   }
@@ -1426,6 +1484,9 @@ class ArchiveBuilder::CDSMapLogger : AllStatic {
         if (java_lang_String::is_instance(source_oop)) {
           st->print(" ");
           java_lang_String::print(source_oop, st);
+        } else if (java_lang_invoke_MethodType::is_instance(source_oop)) {
+          st->print(" ");
+          java_lang_invoke_MethodType::print_signature(source_oop, st);
         } else if (java_lang_Class::is_instance(source_oop)) {
           oop scratch_mirror = source_oop;
 
@@ -1514,12 +1575,16 @@ void ArchiveBuilder::write_archive(FileMapInfo* mapinfo, ArchiveHeapInfo* heap_i
 
   write_region(mapinfo, MetaspaceShared::rw, &_rw_region, /*read_only=*/false,/*allow_exec=*/false);
   write_region(mapinfo, MetaspaceShared::ro, &_ro_region, /*read_only=*/true, /*allow_exec=*/false);
+  write_region(mapinfo, MetaspaceShared::cc, &_cc_region, /*read_only=*/false,/*allow_exec=*/false);
 
   // Split pointer map into read-write and read-only bitmaps
-  ArchivePtrMarker::initialize_rw_ro_maps(&_rw_ptrmap, &_ro_ptrmap);
+  ArchivePtrMarker::initialize_rw_ro_cc_maps(&_rw_ptrmap, &_ro_ptrmap, &_cc_ptrmap);
 
   size_t bitmap_size_in_bytes;
-  char* bitmap = mapinfo->write_bitmap_region(ArchivePtrMarker::rw_ptrmap(), ArchivePtrMarker::ro_ptrmap(), heap_info,
+  char* bitmap = mapinfo->write_bitmap_region(ArchivePtrMarker::rw_ptrmap(),
+                                              ArchivePtrMarker::ro_ptrmap(),
+                                              ArchivePtrMarker::cc_ptrmap(),
+                                              heap_info,
                                               bitmap_size_in_bytes);
 
   if (heap_info->is_used()) {
@@ -1565,6 +1630,7 @@ void ArchiveBuilder::print_region_stats(FileMapInfo *mapinfo, ArchiveHeapInfo* h
 
   _rw_region.print(total_reserved);
   _ro_region.print(total_reserved);
+  _cc_region.print(total_reserved);
 
   print_bitmap_region_stats(bitmap_used, total_reserved);
 

@@ -139,6 +139,17 @@ Thread::Thread(MemTag mem_tag) {
   }
 
   MACOS_AARCH64_ONLY(DEBUG_ONLY(_wx_init = false));
+
+  _profile_vm_locks = false;
+  _profile_vm_calls = false;
+  _profile_vm_ops   = false;
+  _profile_rt_calls = false;
+  _profile_upcalls  = false;
+
+  _all_bc_counter_value = 0;
+  _clinit_bc_counter_value = 0;
+
+  _current_rt_call_timer = nullptr;
 }
 
 #ifdef ASSERT
@@ -603,3 +614,15 @@ void Thread::SpinRelease(volatile int * adr) {
   // more than covers this on all platforms.
   *adr = 0;
 }
+
+const char* ProfileVMCallContext::name(PerfTraceTime* t) {
+  return t->name();
+}
+
+int ProfileVMCallContext::_perf_nested_runtime_calls_count = 0;
+
+void ProfileVMCallContext::notify_nested_rt_call(PerfTraceTime* outer_timer, PerfTraceTime* inner_timer) {
+  log_debug(init)("Nested runtime call: inner=%s outer=%s", inner_timer->name(), outer_timer->name());
+  Atomic::inc(&ProfileVMCallContext::_perf_nested_runtime_calls_count);
+}
+

@@ -523,6 +523,8 @@ public:
   const char* init_state_name() const;
   bool is_rewritten() const                { return _misc_flags.rewritten(); }
 
+  static const char* state2name(ClassState state);
+
   // is this a sealed class
   bool is_sealed() const;
 
@@ -806,7 +808,7 @@ public:
   }
   // allocation
   instanceOop allocate_instance(TRAPS);
-  static instanceOop allocate_instance(oop cls, TRAPS);
+  static instanceOop allocate_instance(oop cls, const char* who, TRAPS);
 
   // additional member function to return a handle
   instanceHandle allocate_instance_handle(TRAPS);
@@ -1086,7 +1088,7 @@ private:
   bool link_class_impl                           (TRAPS);
   bool verify_code                               (TRAPS);
   void initialize_impl                           (TRAPS);
-  void initialize_super_interfaces               (TRAPS);
+  void initialize_super_interfaces(TRAPS);
 
   void add_initialization_error(JavaThread* current, Handle exception);
   oop get_initialization_error(JavaThread* current);
@@ -1124,6 +1126,13 @@ public:
   bool can_be_verified_at_dumptime() const;
   void compute_has_loops_flag_for_methods();
 #endif
+
+  bool     has_init_deps_processed() const { return _misc_flags.has_init_deps_processed(); }
+  void set_has_init_deps_processed() {
+    assert(is_initialized(), "");
+    assert(!has_init_deps_processed(), "already set"); // one-off action
+    _misc_flags.set_has_init_deps_processed(true);
+  }
 
   u2 compute_modifier_flags() const;
 

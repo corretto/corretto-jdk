@@ -167,6 +167,7 @@
   do_stub(rethrow, 2, true, true)                                      \
   do_stub(slow_arraycopy, 0, false, false)                             \
   do_stub(register_finalizer, 0, false, false)                         \
+  do_stub(class_init_barrier, 0, false, false)                         \
 
 #else
 #define C2_STUBS_DO(do_blob, do_stub, do_jvmti_stub)

@@ -36,6 +36,7 @@
 #include "code/scopeDesc.hpp"
 #include "code/vtableStubs.hpp"
 #include "compiler/compilationPolicy.hpp"
+#include "compiler/compilerDefinitions.inline.hpp"
 #include "compiler/disassembler.hpp"
 #include "compiler/oopMap.hpp"
 #include "gc/shared/barrierSet.hpp"
@@ -59,12 +60,15 @@
 #include "runtime/handles.inline.hpp"
 #include "runtime/interfaceSupport.inline.hpp"
 #include "runtime/javaCalls.hpp"
+#include "runtime/perfData.inline.hpp"
+#include "runtime/runtimeUpcalls.hpp"
 #include "runtime/sharedRuntime.hpp"
 #include "runtime/stackWatermarkSet.hpp"
 #include "runtime/stubRoutines.hpp"
 #include "runtime/vframe.inline.hpp"
 #include "runtime/vframeArray.hpp"
 #include "runtime/vm_version.hpp"
+#include "services/management.hpp"
 #include "utilities/copy.hpp"
 #include "utilities/events.hpp"
 
@@ -260,6 +264,7 @@ void Runtime1::generate_blob_for(BufferBlob* buffer_blob, C1StubId id) {
 }
 
 void Runtime1::initialize(BufferBlob* blob) {
+  init_counters();
   // platform-dependent initialization
   initialize_pd();
   // generate stubs
@@ -346,12 +351,18 @@ const char* Runtime1::name_for_address(address entry) {
 
 #undef FUNCTION_CASE
 
+  // Runtime upcalls also has a map of addresses to names
+  const char* upcall_name = RuntimeUpcalls::get_name_for_upcall_address(entry);
+  if (upcall_name != nullptr) {
+    return upcall_name;
+  }
+
   // Soft float adds more runtime names.
   return pd_name_for_address(entry);
 }
 
 
-JRT_ENTRY(void, Runtime1::new_instance(JavaThread* current, Klass* klass))
+JRT_ENTRY_PROF(void, Runtime1, new_instance, Runtime1::new_instance(JavaThread* current, Klass* klass))
 #ifndef PRODUCT
   if (PrintC1Statistics) {
     _new_instance_slowcase_cnt++;
@@ -369,7 +380,7 @@ JRT_ENTRY(void, Runtime1::new_instance(JavaThread* current, Klass* klass))
 JRT_END
 
 
-JRT_ENTRY(void, Runtime1::new_type_array(JavaThread* current, Klass* klass, jint length))
+JRT_ENTRY_PROF(void, Runtime1, new_type_array, Runtime1::new_type_array(JavaThread* current, Klass* klass, jint length))
 #ifndef PRODUCT
   if (PrintC1Statistics) {
     _new_type_array_slowcase_cnt++;
@@ -391,7 +402,7 @@ JRT_ENTRY(void, Runtime1::new_type_array(JavaThread* current, Klass* klass, jint
 JRT_END
 
 
-JRT_ENTRY(void, Runtime1::new_object_array(JavaThread* current, Klass* array_klass, jint length))
+JRT_ENTRY_PROF(void, Runtime1, new_object_array, Runtime1::new_object_array(JavaThread* current, Klass* array_klass, jint length))
 #ifndef PRODUCT
   if (PrintC1Statistics) {
     _new_object_array_slowcase_cnt++;
@@ -413,7 +424,7 @@ JRT_ENTRY(void, Runtime1::new_object_array(JavaThread* current, Klass* array_kla
 JRT_END
 
 
-JRT_ENTRY(void, Runtime1::new_multi_array(JavaThread* current, Klass* klass, int rank, jint* dims))
+JRT_ENTRY_PROF(void, Runtime1, new_multi_array, Runtime1::new_multi_array(JavaThread* current, Klass* klass, int rank, jint* dims))
 #ifndef PRODUCT
   if (PrintC1Statistics) {
     _new_multi_array_slowcase_cnt++;
@@ -484,7 +495,7 @@ static nmethod* counter_overflow_helper(JavaThread* current, int branch_bci, Met
   return osr_nm;
 }
 
-JRT_BLOCK_ENTRY(address, Runtime1::counter_overflow(JavaThread* current, int bci, Method* method))
+JRT_BLOCK_ENTRY_PROF(address, Runtime1, counter_overflow, Runtime1::counter_overflow(JavaThread* current, int bci, Method* method))
   nmethod* osr_nm;
   JRT_BLOCK
     osr_nm = counter_overflow_helper(current, bci, method);
@@ -518,7 +529,7 @@ extern void vm_exit(int code);
 // been deoptimized. If that is the case we return the deopt blob
 // unpack_with_exception entry instead. This makes life for the exception blob easier
 // because making that same check and diverting is painful from assembly language.
-JRT_ENTRY_NO_ASYNC(static address, exception_handler_for_pc_helper(JavaThread* current, oopDesc* ex, address pc, nmethod*& nm))
+JRT_ENTRY_NO_ASYNC_PROF(static address, Runtime1, exception_handler_for_pc_helper, exception_handler_for_pc_helper(JavaThread* current, oopDesc* ex, address pc, nmethod*& nm))
   // Reset method handle flag.
   current->set_is_method_handle_return(false);
 
@@ -750,7 +761,7 @@ JRT_ENTRY(void, Runtime1::throw_incompatible_class_change_error(JavaThread* curr
 JRT_END
 
 
-JRT_BLOCK_ENTRY(void, Runtime1::monitorenter(JavaThread* current, oopDesc* obj, BasicObjectLock* lock))
+JRT_BLOCK_ENTRY_PROF(void, Runtime1, monitorenter, Runtime1::monitorenter(JavaThread* current, oopDesc* obj, BasicObjectLock* lock))
 #ifndef PRODUCT
   if (PrintC1Statistics) {
     _monitorenter_slowcase_cnt++;
@@ -764,7 +775,7 @@ JRT_BLOCK_ENTRY(void, Runtime1::monitorenter(JavaThread* current, oopDesc* obj, 
 JRT_END
 
 
-JRT_LEAF(void, Runtime1::monitorexit(JavaThread* current, BasicObjectLock* lock))
+JRT_LEAF_PROF(void, Runtime1, monitorexit, Runtime1::monitorexit(JavaThread* current, BasicObjectLock* lock))
   assert(current == JavaThread::current(), "pre-condition");
 #ifndef PRODUCT
   if (PrintC1Statistics) {
@@ -778,7 +789,7 @@ JRT_LEAF(void, Runtime1::monitorexit(JavaThread* current, BasicObjectLock* lock)
 JRT_END
 
 // Cf. OptoRuntime::deoptimize_caller_frame
-JRT_ENTRY(void, Runtime1::deoptimize(JavaThread* current, jint trap_request))
+JRT_ENTRY_PROF(void, Runtime1, deoptimize, Runtime1::deoptimize(JavaThread* current, jint trap_request))
   // Called from within the owner thread, so no need for safepoint
   RegisterMap reg_map(current,
                       RegisterMap::UpdateMap::skip,
@@ -821,7 +832,8 @@ static Klass* resolve_field_return_klass(const methodHandle& caller, int bci, TR
   // We must load class, initialize class and resolve the field
   fieldDescriptor result; // initialize class if needed
   constantPoolHandle constants(THREAD, caller->constants());
-  LinkResolver::resolve_field_access(result, constants, field_access.index(), caller, Bytecodes::java_code(code), CHECK_NULL);
+  LinkResolver::resolve_field_access(result, constants, field_access.index(), caller,
+                                     Bytecodes::java_code(code), true /*initialize_class*/, CHECK_NULL);
   return result.field_holder();
 }
 
@@ -924,7 +936,7 @@ static Klass* resolve_field_return_klass(const methodHandle& caller, int bci, TR
 // Therefore, if there is any chance of a race condition, we try to
 // patch only naturally aligned words, as single, full-word writes.
 
-JRT_ENTRY(void, Runtime1::patch_code(JavaThread* current, C1StubId stub_id ))
+JRT_ENTRY_PROF(void, Runtime1, patch_code, Runtime1::patch_code(JavaThread* current, C1StubId stub_id))
 #ifndef PRODUCT
   if (PrintC1Statistics) {
     _patch_code_slowcase_cnt++;
@@ -969,7 +981,8 @@ JRT_ENTRY(void, Runtime1::patch_code(JavaThread* current, C1StubId stub_id ))
     fieldDescriptor result; // initialize class if needed
     Bytecodes::Code code = field_access.code();
     constantPoolHandle constants(current, caller_method->constants());
-    LinkResolver::resolve_field_access(result, constants, field_access.index(), caller_method, Bytecodes::java_code(code), CHECK);
+    LinkResolver::resolve_field_access(result, constants, field_access.index(), caller_method,
+                                       Bytecodes::java_code(code), true /*initialize_class*/, CHECK);
     patch_field_offset = result.offset();
 
     // If we're patching a field which is volatile then at compile it
@@ -1307,7 +1320,7 @@ static bool is_patching_needed(JavaThread* current, C1StubId stub_id) {
   return true;
 }
 
-void Runtime1::patch_code(JavaThread* current, C1StubId stub_id) {
+PROF_ENTRY(void, Runtime1, patch_code, Runtime1::patch_code(JavaThread* current, C1StubId stub_id))
 #ifndef PRODUCT
   if (PrintC1Statistics) {
     _patch_code_slowcase_cnt++;
@@ -1342,7 +1355,7 @@ void Runtime1::patch_code(JavaThread* current, C1StubId stub_id) {
   Deoptimization::deoptimize_frame(current, caller_frame.id());
   // Return to the now deoptimized frame.
   postcond(caller_is_deopted(current));
-}
+PROF_END
 
 #endif // DEOPTIMIZE_WHEN_PATCHING
 
@@ -1433,13 +1446,13 @@ int Runtime1::access_field_patching(JavaThread* current) {
 }
 
 
-JRT_LEAF(void, Runtime1::trace_block_entry(jint block_id))
+JRT_LEAF_PROF_NO_THREAD(void, Runtime1, trace_block_entry, Runtime1::trace_block_entry(jint block_id))
   // for now we just print out the block id
   tty->print("%d ", block_id);
 JRT_END
 
 
-JRT_LEAF(int, Runtime1::is_instance_of(oopDesc* mirror, oopDesc* obj))
+JRT_LEAF_PROF_NO_THREAD(int, Runtime1, is_instance_of, Runtime1::is_instance_of(oopDesc* mirror, oopDesc* obj))
   // had to return int instead of bool, otherwise there may be a mismatch
   // between the C calling convention and the Java one.
   // e.g., on x86, GCC may clear only %al when returning a bool false, but
@@ -1451,7 +1464,7 @@ JRT_LEAF(int, Runtime1::is_instance_of(oopDesc* mirror, oopDesc* obj))
   return (k != nullptr && obj != nullptr && obj->is_a(k)) ? 1 : 0;
 JRT_END
 
-JRT_ENTRY(void, Runtime1::predicate_failed_trap(JavaThread* current))
+JRT_ENTRY_PROF(void, Runtime1, predicate_failed_trap, Runtime1::predicate_failed_trap(JavaThread* current))
   ResourceMark rm;
 
   RegisterMap reg_map(current,
@@ -1511,41 +1524,97 @@ JRT_LEAF(void, Runtime1::check_abort_on_vm_exception(oopDesc* ex))
   Exceptions::debug_check_abort(ex->klass()->external_name(), message);
 JRT_END
 
+#define DO_COUNTERS(macro) \
+  macro(Runtime1, new_instance) \
+  macro(Runtime1, new_type_array) \
+  macro(Runtime1, new_object_array) \
+  macro(Runtime1, new_multi_array) \
+  macro(Runtime1, counter_overflow) \
+  macro(Runtime1, exception_handler_for_pc_helper) \
+  macro(Runtime1, monitorenter) \
+  macro(Runtime1, monitorexit) \
+  macro(Runtime1, deoptimize) \
+  macro(Runtime1, is_instance_of) \
+  macro(Runtime1, predicate_failed_trap) \
+  macro(Runtime1, patch_code)
+
+#define INIT_COUNTER(sub, name) \
+  NEWPERFTICKCOUNTERS(_perf_##sub##_##name##_timer, SUN_CI, #sub "::" #name); \
+  NEWPERFEVENTCOUNTER(_perf_##sub##_##name##_count, SUN_CI, #sub "::" #name "_count");
+
+void Runtime1::init_counters() {
+  assert(CompilerConfig::is_c1_enabled(), "");
+
+  if (UsePerfData) {
+    EXCEPTION_MARK;
+
+    DO_COUNTERS(INIT_COUNTER)
+
+    if (HAS_PENDING_EXCEPTION) {
+      vm_exit_during_initialization("Runtime1::init_counters() failed unexpectedly");
+    }
+  }
+}
+#undef INIT_COUNTER
+
+#define PRINT_COUNTER(sub, name) { \
+  if (_perf_##sub##_##name##_count != nullptr) {  \
+    jlong count = _perf_##sub##_##name##_count->get_value(); \
+    if (count > 0) { \
+      st->print_cr("  %-50s = " JLONG_FORMAT_W(6) "us (elapsed) " JLONG_FORMAT_W(6) "us (thread) (" JLONG_FORMAT_W(5) " events)", #sub "::" #name, \
+                   _perf_##sub##_##name##_timer->elapsed_counter_value_us(), \
+                   _perf_##sub##_##name##_timer->thread_counter_value_us(), \
+                   count); \
+    }}}
+
+
+void Runtime1::print_counters_on(outputStream* st) {
+  if (UsePerfData && ProfileRuntimeCalls && CompilerConfig::is_c1_enabled()) {
+    DO_COUNTERS(PRINT_COUNTER)
+  } else {
+    st->print_cr("  Runtime1: no info (%s is disabled)",
+                 (!CompilerConfig::is_c1_enabled() ? "C1" : (UsePerfData ? "ProfileRuntimeCalls" : "UsePerfData")));
+  }
+}
+
+#undef PRINT_COUNTER
+#undef DO_COUNTERS
+
 #ifndef PRODUCT
-void Runtime1::print_statistics() {
-  tty->print_cr("C1 Runtime statistics:");
-  tty->print_cr(" _resolve_invoke_virtual_cnt:     %u", SharedRuntime::_resolve_virtual_ctr);
-  tty->print_cr(" _resolve_invoke_opt_virtual_cnt: %u", SharedRuntime::_resolve_opt_virtual_ctr);
-  tty->print_cr(" _resolve_invoke_static_cnt:      %u", SharedRuntime::_resolve_static_ctr);
-  tty->print_cr(" _handle_wrong_method_cnt:        %u", SharedRuntime::_wrong_method_ctr);
-  tty->print_cr(" _ic_miss_cnt:                    %u", SharedRuntime::_ic_miss_ctr);
-  tty->print_cr(" _generic_arraycopystub_cnt:      %u", _generic_arraycopystub_cnt);
-  tty->print_cr(" _byte_arraycopy_cnt:             %u", _byte_arraycopy_stub_cnt);
-  tty->print_cr(" _short_arraycopy_cnt:            %u", _short_arraycopy_stub_cnt);
-  tty->print_cr(" _int_arraycopy_cnt:              %u", _int_arraycopy_stub_cnt);
-  tty->print_cr(" _long_arraycopy_cnt:             %u", _long_arraycopy_stub_cnt);
-  tty->print_cr(" _oop_arraycopy_cnt:              %u", _oop_arraycopy_stub_cnt);
-  tty->print_cr(" _arraycopy_slowcase_cnt:         %u", _arraycopy_slowcase_cnt);
-  tty->print_cr(" _arraycopy_checkcast_cnt:        %u", _arraycopy_checkcast_cnt);
-  tty->print_cr(" _arraycopy_checkcast_attempt_cnt:%u", _arraycopy_checkcast_attempt_cnt);
+void Runtime1::print_statistics_on(outputStream* st) {
+  st->print_cr("C1 Runtime statistics:");
+  st->print_cr(" _resolve_invoke_virtual_cnt:     %u", SharedRuntime::_resolve_virtual_ctr);
+  st->print_cr(" _resolve_invoke_opt_virtual_cnt: %u", SharedRuntime::_resolve_opt_virtual_ctr);
+  st->print_cr(" _resolve_invoke_static_cnt:      %u", SharedRuntime::_resolve_static_ctr);
+  st->print_cr(" _handle_wrong_method_cnt:        %u", SharedRuntime::_wrong_method_ctr);
+  st->print_cr(" _ic_miss_cnt:                    %u", SharedRuntime::_ic_miss_ctr);
+  st->print_cr(" _generic_arraycopystub_cnt:      %u", _generic_arraycopystub_cnt);
+  st->print_cr(" _byte_arraycopy_cnt:             %u", _byte_arraycopy_stub_cnt);
+  st->print_cr(" _short_arraycopy_cnt:            %u", _short_arraycopy_stub_cnt);
+  st->print_cr(" _int_arraycopy_cnt:              %u", _int_arraycopy_stub_cnt);
+  st->print_cr(" _long_arraycopy_cnt:             %u", _long_arraycopy_stub_cnt);
+  st->print_cr(" _oop_arraycopy_cnt:              %u", _oop_arraycopy_stub_cnt);
+  st->print_cr(" _arraycopy_slowcase_cnt:         %u", _arraycopy_slowcase_cnt);
+  st->print_cr(" _arraycopy_checkcast_cnt:        %u", _arraycopy_checkcast_cnt);
+  st->print_cr(" _arraycopy_checkcast_attempt_cnt:%u", _arraycopy_checkcast_attempt_cnt);
 
-  tty->print_cr(" _new_type_array_slowcase_cnt:    %u", _new_type_array_slowcase_cnt);
-  tty->print_cr(" _new_object_array_slowcase_cnt:  %u", _new_object_array_slowcase_cnt);
-  tty->print_cr(" _new_instance_slowcase_cnt:      %u", _new_instance_slowcase_cnt);
-  tty->print_cr(" _new_multi_array_slowcase_cnt:   %u", _new_multi_array_slowcase_cnt);
-  tty->print_cr(" _monitorenter_slowcase_cnt:      %u", _monitorenter_slowcase_cnt);
-  tty->print_cr(" _monitorexit_slowcase_cnt:       %u", _monitorexit_slowcase_cnt);
-  tty->print_cr(" _patch_code_slowcase_cnt:        %u", _patch_code_slowcase_cnt);
+  st->print_cr(" _new_type_array_slowcase_cnt:    %u", _new_type_array_slowcase_cnt);
+  st->print_cr(" _new_object_array_slowcase_cnt:  %u", _new_object_array_slowcase_cnt);
+  st->print_cr(" _new_instance_slowcase_cnt:      %u", _new_instance_slowcase_cnt);
+  st->print_cr(" _new_multi_array_slowcase_cnt:   %u", _new_multi_array_slowcase_cnt);
+  st->print_cr(" _monitorenter_slowcase_cnt:      %u", _monitorenter_slowcase_cnt);
+  st->print_cr(" _monitorexit_slowcase_cnt:       %u", _monitorexit_slowcase_cnt);
+  st->print_cr(" _patch_code_slowcase_cnt:        %u", _patch_code_slowcase_cnt);
 
-  tty->print_cr(" _throw_range_check_exception_count:            %u:", _throw_range_check_exception_count);
-  tty->print_cr(" _throw_index_exception_count:                  %u:", _throw_index_exception_count);
-  tty->print_cr(" _throw_div0_exception_count:                   %u:", _throw_div0_exception_count);
-  tty->print_cr(" _throw_null_pointer_exception_count:           %u:", _throw_null_pointer_exception_count);
-  tty->print_cr(" _throw_class_cast_exception_count:             %u:", _throw_class_cast_exception_count);
-  tty->print_cr(" _throw_incompatible_class_change_error_count:  %u:", _throw_incompatible_class_change_error_count);
-  tty->print_cr(" _throw_count:                                  %u:", _throw_count);
+  st->print_cr(" _throw_range_check_exception_count:            %u:", _throw_range_check_exception_count);
+  st->print_cr(" _throw_index_exception_count:                  %u:", _throw_index_exception_count);
+  st->print_cr(" _throw_div0_exception_count:                   %u:", _throw_div0_exception_count);
+  st->print_cr(" _throw_null_pointer_exception_count:           %u:", _throw_null_pointer_exception_count);
+  st->print_cr(" _throw_class_cast_exception_count:             %u:", _throw_class_cast_exception_count);
+  st->print_cr(" _throw_incompatible_class_change_error_count:  %u:", _throw_incompatible_class_change_error_count);
+  st->print_cr(" _throw_count:                                  %u:", _throw_count);
 
-  SharedRuntime::print_ic_miss_histogram();
-  tty->cr();
+  SharedRuntime::print_ic_miss_histogram_on(st);
+  st->cr();
 }
 #endif // PRODUCT

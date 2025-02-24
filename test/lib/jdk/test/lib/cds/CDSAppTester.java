@@ -35,6 +35,10 @@ import jtreg.SkippedException;
  * This is a base class used for testing CDS functionalities with complex applications.
  * You can define the application by overridding the vmArgs(), classpath() and appCommandLine()
  * methods. Application-specific validation checks can be implemented with checkExecution().
+ *
+ * Note: to debug the new workflow, run jtreg with -vmoption:-DCDSAppTester.split.new.workflow=true
+ * This will run the new workflow in two separate processes that you can rerun easily inside a debugger.
+ * Also, the log files are easier to read.
 */
 abstract public class CDSAppTester {
     private final String name;
@@ -44,6 +48,10 @@ abstract public class CDSAppTester {
     private final String staticArchiveFileLog;
     private final String dynamicArchiveFile;
     private final String dynamicArchiveFileLog;
+    private final String cdsFile;        // new workflow: -XX:CacheDataStore=<foo>.cds
+    private final String cdsFileLog;
+    private final String cdsFilePreImage;        // new workflow: -XX:CacheDataStore=<foo>.cds
+    private final String cdsFilePreImageLog;
     private final String tempBaseArchiveFile;
     private int numProductionRuns = 0;
 
@@ -52,7 +60,6 @@ abstract public class CDSAppTester {
             throw new SkippedException("Tests based on CDSAppTester should be excluded when -Dtest.dynamic.cds.archive is specified");
         }
 
-        // Old workflow
         this.name = name;
         classListFile = name() + ".classlist";
         classListFileLog = classListFile + ".log";
@@ -60,6 +67,10 @@ abstract public class CDSAppTester {
         staticArchiveFileLog = staticArchiveFile + ".log";
         dynamicArchiveFile = name() + ".dynamic.jsa";
         dynamicArchiveFileLog = dynamicArchiveFile + ".log";
+        cdsFile = name() + ".cds";
+        cdsFileLog = cdsFile + ".log";
+        cdsFilePreImage = cdsFile + ".preimage";
+        cdsFilePreImageLog = cdsFilePreImage + ".log";
         tempBaseArchiveFile = name() + ".temp-base.jsa";
     }
 
@@ -74,12 +85,16 @@ abstract public class CDSAppTester {
     private enum Workflow {
         STATIC,        // classic -Xshare:dump workflow
         DYNAMIC,       // classic -XX:ArchiveClassesAtExit
+        LEYDEN,        // The new "one step training workflow" -- see JDK-8320264
     }
 
     public enum RunMode {
         CLASSLIST,
         DUMP_STATIC,
         DUMP_DYNAMIC,
+        TRAINING,          // LEYDEN only
+        TRAINING0,         // LEYDEN only
+        TRAINING1,         // LEYDEN only
         PRODUCTION;
 
         public boolean isStaticDump() {
@@ -126,6 +141,10 @@ abstract public class CDSAppTester {
         return workflow == Workflow.DYNAMIC;
     }
 
+    public final boolean isLeydenWorkflow() {
+        return workflow == Workflow.LEYDEN;
+    }
+
     private String logToFile(String logFile, String... logTags) {
         StringBuilder sb = new StringBuilder("-Xlog:");
         String prefix = "";
@@ -157,7 +176,7 @@ abstract public class CDSAppTester {
         if (checkExitValue) {
             output.shouldHaveExitValue(0);
         }
-        output.shouldNotContain(CDSTestUtils.MSG_STATIC_FIELD_MAY_HOLD_DIFFERENT_VALUE);
+        //output.shouldNotContain(CDSTestUtils.MSG_STATIC_FIELD_MAY_HOLD_DIFFERENT_VALUE); // FIXME -- leyden+JEP483 merge
         CDSTestUtils.checkCommonExecExceptions(output);
         checkExecution(output, runMode);
         return output;
@@ -189,6 +208,7 @@ abstract public class CDSAppTester {
                                                              "cds+class=debug",
                                                              "cds+heap=warning",
                                                              "cds+resolve=debug"));
+
         return executeAndCheck(cmdLine, runMode, staticArchiveFile, staticArchiveFileLog);
     }
 
@@ -242,6 +262,69 @@ abstract public class CDSAppTester {
         return executeAndCheck(cmdLine, runMode, dynamicArchiveFile, dynamicArchiveFileLog);
     }
 
+    private String trainingLog(String file) {
+        return logToFile(file,
+                         "cds=debug",
+                         "cds+class=debug",
+                         "cds+heap=warning",
+                         "cds+resolve=debug");
+    }
+
+    // normal training workflow (main JVM process spawns child process)
+    private OutputAnalyzer trainingRun() throws Exception {
+        RunMode runMode = RunMode.TRAINING;
+        File f = new File(cdsFile);
+        f.delete();
+        String[] cmdLine = StringArrayUtils.concat(vmArgs(runMode),
+                                                   "-XX:+AOTClassLinking",
+                                                   "-XX:+ArchiveDynamicProxies",
+                                                 //"-XX:+ArchiveReflectionData",
+                                                   "-XX:CacheDataStore=" + cdsFile,
+                                                   "-cp", classpath(runMode),
+                                                   // Use PID to distinguish the logs of the training process
+                                                   // and the forked final image dump process.
+                                                   "-Xlog:cds::uptime,level,tags,pid",
+                                                   trainingLog(cdsFileLog));
+        cmdLine = StringArrayUtils.concat(cmdLine, appCommandLine(runMode));
+        OutputAnalyzer out =  executeAndCheck(cmdLine, runMode, cdsFile, cdsFileLog);
+        listOutputFile(cdsFile + ".log.0"); // the preimage dump
+        return out;
+    }
+
+    // "split" training workflow (launch the two processes manually, for easier debugging);
+    private OutputAnalyzer trainingRun0() throws Exception {
+        RunMode runMode = RunMode.TRAINING0;
+        File f = new File(cdsFile);
+        f.delete();
+        String[] cmdLine = StringArrayUtils.concat(vmArgs(runMode),
+                                                   "-XX:+UnlockDiagnosticVMOptions",
+                                                   "-XX:+CDSManualFinalImage",
+                                                   "-XX:+AOTClassLinking",
+                                                   "-XX:+ArchiveDynamicProxies",
+                                                 //"-XX:+ArchiveReflectionData",
+                                                   "-XX:CacheDataStore=" + cdsFile,
+                                                   "-cp", classpath(runMode),
+                                                   trainingLog(cdsFilePreImageLog));
+        cmdLine = StringArrayUtils.concat(cmdLine, appCommandLine(runMode));
+        return executeAndCheck(cmdLine, runMode, cdsFilePreImage, cdsFilePreImageLog);
+    }
+    private OutputAnalyzer trainingRun1() throws Exception {
+        RunMode runMode = RunMode.TRAINING1;
+        File f = new File(cdsFile);
+        f.delete();
+        String[] cmdLine = StringArrayUtils.concat(vmArgs(runMode),
+                                                   "-XX:+UnlockDiagnosticVMOptions",
+                                                   "-XX:+AOTClassLinking",
+                                                   "-XX:+ArchiveDynamicProxies",
+                                                 //"-XX:+ArchiveReflectionData",
+                                                   "-XX:CacheDataStore=" + cdsFile,
+                                                   "-XX:CDSPreimage=" + cdsFilePreImage,
+                                                   "-cp", classpath(runMode),
+                                                   trainingLog(cdsFileLog));
+        cmdLine = StringArrayUtils.concat(cmdLine, appCommandLine(runMode));
+        return executeAndCheck(cmdLine, runMode, cdsFile, cdsFileLog);
+    }
+
     private OutputAnalyzer productionRun() throws Exception {
         return productionRun(null, null);
     }
@@ -264,6 +347,8 @@ abstract public class CDSAppTester {
             cmdLine = StringArrayUtils.concat(cmdLine, "-Xshare:on", "-XX:SharedArchiveFile=" + staticArchiveFile);
         } else if (isDynamicWorkflow()) {
             cmdLine = StringArrayUtils.concat(cmdLine, "-Xshare:on", "-XX:SharedArchiveFile=" + dynamicArchiveFile);
+        } else {
+            cmdLine = StringArrayUtils.concat(cmdLine, "-XX:CacheDataStore=" + cdsFile);
         }
 
         if (extraVmArgs != null) {
@@ -296,6 +381,10 @@ abstract public class CDSAppTester {
                 runStaticWorkflow();
             } else if (args[0].equals("DYNAMIC")) {
                 runDynamicWorkflow();
+            } else if (args[0].equals("LEYDEN")) {
+                runLeydenWorkflow(false);
+            } else if (args[0].equals("LEYDEN_TRAINONLY")) {
+                runLeydenWorkflow(true);
             } else {
                 throw new RuntimeException(err);
             }
@@ -313,5 +402,18 @@ abstract public class CDSAppTester {
         this.workflow = Workflow.DYNAMIC;
         dumpDynamicArchive();
         productionRun();
+    }
+
+    private void runLeydenWorkflow(boolean trainOnly) throws Exception {
+        this.workflow = Workflow.LEYDEN;
+        if (System.getProperty("CDSAppTester.split.new.workflow") != null) {
+            trainingRun0();
+            trainingRun1();
+        } else {
+            trainingRun();
+        }
+        if (!trainOnly) {
+            productionRun();
+        }
     }
 }

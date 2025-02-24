@@ -146,6 +146,10 @@ private:
         _buffered_addr = nullptr;
       }
     }
+    SourceObjInfo(address src, address buf) {
+      _source_addr = src;
+      _buffered_addr = buf;
+    }
 
     // This constructor is only used for regenerated objects (created by LambdaFormInvokers, etc).
     //   src = address of a Method or InstanceKlass that has been regenerated.
@@ -212,6 +216,7 @@ private:
 
   DumpRegion _rw_region;
   DumpRegion _ro_region;
+  DumpRegion _cc_region;
 
   // Combined bitmap to track pointers in both RW and RO regions. This is updated
   // as objects are copied into RW and RO.
@@ -220,6 +225,7 @@ private:
   // _ptrmap is split into these two bitmaps which are written into the archive.
   CHeapBitMap _rw_ptrmap;   // marks pointers in the RW region
   CHeapBitMap _ro_ptrmap;   // marks pointers in the RO region
+  CHeapBitMap _cc_ptrmap;   // marks pointers in the CC region
 
   SourceObjList _rw_src_objs;                 // objs to put in rw region
   SourceObjList _ro_src_objs;                 // objs to put in ro region
@@ -259,6 +265,7 @@ private:
   void sort_klasses();
   static int compare_symbols_by_address(Symbol** a, Symbol** b);
   static int compare_klass_by_name(Klass** a, Klass** b);
+  void update_hidden_class_loader_type(InstanceKlass* ik) NOT_CDS_JAVA_HEAP_RETURN;
 
   void make_shallow_copies(DumpRegion *dump_region, const SourceObjList* src_objs);
   void make_shallow_copy(DumpRegion *dump_region, SourceObjInfo* src_info);
@@ -369,12 +376,19 @@ public:
 
   DumpRegion* rw_region() { return &_rw_region; }
   DumpRegion* ro_region() { return &_ro_region; }
+  DumpRegion* cc_region() { return &_cc_region; }
+
+  void start_cc_region();
+  void end_cc_region();
 
   static char* rw_region_alloc(size_t num_bytes) {
     return current()->rw_region()->allocate(num_bytes);
   }
   static char* ro_region_alloc(size_t num_bytes) {
     return current()->ro_region()->allocate(num_bytes);
+  }
+  static char* cc_region_alloc(size_t num_bytes) {
+    return current()->cc_region()->allocate(num_bytes);
   }
 
   template <typename T>
@@ -408,6 +422,7 @@ public:
   void relocate_metaspaceobj_embedded_pointers();
   void record_regenerated_object(address orig_src_obj, address regen_src_obj);
   void make_klasses_shareable();
+  void make_training_data_shareable();
   void relocate_to_requested();
   void write_archive(FileMapInfo* mapinfo, ArchiveHeapInfo* heap_info);
   void write_region(FileMapInfo* mapinfo, int region_idx, DumpRegion* dump_region,
@@ -423,14 +438,16 @@ public:
     mark_and_relocate_to_buffered_addr((address*)ptr_location);
   }
 
+  bool has_been_archived(address src_addr) const;
+
   bool has_been_buffered(address src_addr) const;
   template <typename T> bool has_been_buffered(T src_addr) const {
     return has_been_buffered((address)src_addr);
   }
-
   address get_buffered_addr(address src_addr) const;
   template <typename T> T get_buffered_addr(T src_addr) const {
-    return (T)get_buffered_addr((address)src_addr);
+    CDS_ONLY(return (T)get_buffered_addr((address)src_addr);)
+    NOT_CDS(return nullptr;)
   }
 
   address get_source_addr(address buffered_addr) const;
@@ -443,7 +460,8 @@ public:
   GrowableArray<Symbol*>* symbols() const { return _symbols; }
 
   static bool is_active() {
-    return (_current != nullptr);
+    CDS_ONLY(return (_current != nullptr));
+    NOT_CDS(return false;)
   }
 
   static ArchiveBuilder* current() {

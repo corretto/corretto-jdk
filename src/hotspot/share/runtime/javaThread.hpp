@@ -480,6 +480,8 @@ class JavaThread: public Thread {
   intx _jni_monitor_count;
   ObjectMonitor* _unlocked_inflated_monitor;
 
+  bool _can_call_java;
+
   // This is the field we poke in the interpreter and native
   // wrapper (Object.wait) to check for preemption.
   address _preempt_alternate_return;
@@ -554,9 +556,22 @@ private:
 
   void cleanup_failed_attach_current_thread(bool is_daemon);
 
+  class NoJavaCodeMark : public StackObj {
+    friend JavaThread;
+    JavaThread* _target;
+    bool _orig;
+   public:
+    NoJavaCodeMark(JavaThread* t) : _target(t), _orig(t->_can_call_java) {
+      _target->_can_call_java = false;
+    }
+    ~NoJavaCodeMark() {
+      _target->_can_call_java = _orig;
+    }
+  };
+
   // Testers
   virtual bool is_Java_thread() const            { return true;  }
-  virtual bool can_call_java() const             { return true; }
+  virtual bool can_call_java() const             { return _can_call_java; }
 
   virtual bool is_active_Java_thread() const;
 
@@ -1216,8 +1231,9 @@ private:
   void set_class_to_be_initialized(InstanceKlass* k);
   InstanceKlass* class_to_be_initialized() const;
 
-  // Track executing class initializer, see ThreadInClassInitializer
-  void set_class_being_initialized(InstanceKlass* k);
+  // The most recent active <clinit> invocation is tracked by this variable.
+  // The setter returns the previous value, so it can be restored later if needed.
+  InstanceKlass* set_class_being_initialized(InstanceKlass* k);
   InstanceKlass* class_being_initialized() const;
 
 private:

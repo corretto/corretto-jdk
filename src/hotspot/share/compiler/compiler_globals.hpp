@@ -269,6 +269,17 @@
           "Maximum rate sampling interval (in milliseconds)")               \
           range(0, max_intx)                                                \
                                                                             \
+  product(double, Tier0ProfileDelayFactor, 100.0, DIAGNOSTIC,               \
+          "Delay profiling/compiling of methods that were "                 \
+          "observed to be lukewarm")                                        \
+                                                                            \
+  product(double, Tier2ProfileDelayFactor, 250.0, DIAGNOSTIC,               \
+          "Delay profiling of methods that were observed to be lukewarm")   \
+                                                                            \
+  product(bool, SkipTier2IfPossible, false, DIAGNOSTIC,                     \
+          "Compile at tier 4 instead of tier 2 in training replay "         \
+          "mode if posssible")                                              \
+                                                                            \
   product(ccstr, CompilationMode, "default",                                \
           "Compilation modes: "                                             \
           "default: normal tiered compilation; "                            \
@@ -381,6 +392,112 @@
   product(bool, CaptureBailoutInformation, trueInDebug, DIAGNOSTIC,         \
           "If compilation is stopped with an error, capture diagnostic "    \
           "information at the bailout point")                               \
+                                                                            \
+  /* flags to control training and deployment modes  */                     \
+                                                                            \
+  product(bool, RecordTraining, false, DIAGNOSTIC,                          \
+          "Request output of training data for improved deployment.")       \
+                                                                            \
+  product(bool, ReplayTraining, false, DIAGNOSTIC,                          \
+          "Read training data, if available, for use in this execution")    \
+                                                                            \
+  product(bool, PrintTrainingInfo, false, DIAGNOSTIC,                       \
+          "Print additional information about training")                    \
+                                                                            \
+  product(bool, RecordOptCompilationOrder, false,                           \
+          "Record c2/jvmci nmethod temperature to guide compilation order.")\
+                                                                            \
+  product(bool, RecordOnlyTopCompilations, false,                           \
+          "Record only top compilations (non-zero counts)")                 \
+                                                                            \
+  product(int, RecordOptCompilationOrderInterval, 10,                       \
+          "Sampling interval for RecordOptCompilationOrder")                \
+                                                                            \
+  /* Code Caching flags */                                                  \
+                                                                            \
+  product(bool, UseC2asC3, false,                                           \
+          "Use C2 as 3rd compiler when other high-optimizing compiler "     \
+          "is used")                                                        \
+                                                                            \
+  product(bool, StoreCachedCode, false,                                     \
+          "Store cached compiled code")                                     \
+                                                                            \
+  product(bool, LoadCachedCode, false,                                      \
+          "Load cached compiled code")                                      \
+                                                                            \
+  product(uint, DisableCachedCode, 0,                                       \
+          "Disable cached code on some compilation levels "                 \
+          "(T1=1; T2=2; T4=4; T5/preload=8")                                \
+                                                                            \
+  product(uint, ClassInitBarrierMode, 0,                                    \
+          "Produce and use startup code which could be called "             \
+          "on first method invocation, add class initialization barriers, " \
+          "other checks and constrains if needed "                          \
+          "(0: no barriers; 1: uncommon trap; 2: full barrier)")            \
+                                                                            \
+  product(bool, StressClassInitBarriers, false, DIAGNOSTIC,                 \
+          "Force slow path in class initialization barriers")               \
+                                                                            \
+  product(bool, UseMetadataPointers, true,                                  \
+          "Store Metadata pointers in Relocation Info for cached code")     \
+                                                                            \
+  product(bool, UseCodeLoadThread, true,                                    \
+          "Use separate thread for cached code load")                       \
+                                                                            \
+  product(uint, SCLoadStart, 0,                                             \
+          "The id of the first cached code to load")                        \
+                                                                            \
+  product(uint, SCLoadStop, max_jint,                                       \
+          "The id of the last cached code to load")                         \
+                                                                            \
+  product(ccstr, CachedCodeFile, "code.jsa",                                \
+          "File with cached compiled code")                                 \
+                                                                            \
+  product(uint, CachedCodeMaxSize, 10*M,                                    \
+          "Buffer size in bytes for code caching")                          \
+                                                                            \
+  product(bool, VerifyCachedCode, false, DIAGNOSTIC,                        \
+          "Load compiled code but not publish")                             \
+                                                                            \
+  /* Recompilation flags */                                                 \
+                                                                            \
+  product(int, RecompilationLoadAverageThreshold, 5,                        \
+          "Queues load avergage after while recompilations are allowed")    \
+                                                                            \
+  product(int, RecompilationWorkUnitSize, 5,                                \
+          "Queues load avergage after while recompilations are allowed")    \
+                                                                            \
+  product(bool, UseRecompilation, false,                                    \
+          "Recompile methods for peak performance")                         \
+                                                                            \
+  product(bool, ForceRecompilation, false,                                  \
+          "Testing mode for recompilation")                                 \
+                                                                            \
+  product(double, DelayRecompilation, 0.0,                                  \
+          "Delay recompilation for given number of seconds")                \
+                                                                            \
+  product(bool, UseConcurrentTrainingReplay, true,                          \
+          "Replay training after class initialization in a separate thread")\
+                                                                            \
+  product(bool, UseGlobalCompileQueueLock, false,                           \
+          "Use a global lock for all compilation queues")                   \
+                                                                            \
+  product(bool, UseLockFreeCompileQueues, true,                             \
+          "Use lock free compile queues")                                   \
+                                                                            \
+  product(bool, PrecompileCode, false,                                      \
+          "Precompile code")                                                \
+                                                                            \
+  product(bool, PrecompileOnlyAndExit, false,                               \
+          "Exit after precompilation step is over")                         \
+                                                                            \
+  product(bool, PreloadBlocking, false, DIAGNOSTIC,                         \
+          "Preload code is processed with blocking. Startup would not "     \
+          "proceed until all code preloaded code is done loading.")         \
+                                                                            \
+  product(bool, PreloadOnly, false, EXPERIMENTAL,                           \
+          "Use preload code exclusively. This effectively disables most of "\
+          "profiling and JIT compilation, running close to AOT-only mode.") \
                                                                             \
 
 // end of COMPILER_FLAGS

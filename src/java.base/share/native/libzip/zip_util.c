@@ -1116,7 +1116,7 @@ newEntry(jzfile *zip, jzcell *zc, AccessHint accessHint)
  * jzentry for each zip.  This optimizes a common access pattern.
  */
 
-void
+JNIEXPORT void
 ZIP_FreeEntry(jzfile *jz, jzentry *ze)
 {
     jzentry *last;

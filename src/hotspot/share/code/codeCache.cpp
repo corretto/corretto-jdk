@@ -22,6 +22,7 @@
  *
  */
 
+#include "cds/cdsAccess.hpp"
 #include "code/codeBlob.hpp"
 #include "code/codeCache.hpp"
 #include "code/codeHeapState.hpp"
@@ -30,6 +31,7 @@
 #include "code/dependencyContext.hpp"
 #include "code/nmethod.hpp"
 #include "code/pcDesc.hpp"
+#include "code/SCCache.hpp"
 #include "compiler/compilationPolicy.hpp"
 #include "compiler/compileBroker.hpp"
 #include "compiler/compilerDefinitions.inline.hpp"
@@ -170,6 +172,8 @@ address CodeCache::_high_bound = nullptr;
 volatile int CodeCache::_number_of_nmethods_with_dependencies = 0;
 ExceptionCache* volatile CodeCache::_exception_cache_purge_list = nullptr;
 
+static ReservedSpace _cds_code_space;
+
 // Initialize arrays of CodeHeap subsets
 GrowableArray<CodeHeap*>* CodeCache::_heaps = new(mtCode) GrowableArray<CodeHeap*> (static_cast<int>(CodeBlobType::All), mtCode);
 GrowableArray<CodeHeap*>* CodeCache::_nmethod_heaps = new(mtCode) GrowableArray<CodeHeap*> (static_cast<int>(CodeBlobType::All), mtCode);
@@ -197,7 +201,6 @@ static void set_size_of_unset_code_heap(CodeHeapInfo* heap, size_t available_siz
 }
 
 void CodeCache::initialize_heaps() {
-
   CodeHeapInfo non_nmethod = {NonNMethodCodeHeapSize, FLAG_IS_CMDLINE(NonNMethodCodeHeapSize), true};
   CodeHeapInfo profiled = {ProfiledCodeHeapSize, FLAG_IS_CMDLINE(ProfiledCodeHeapSize), true};
   CodeHeapInfo non_profiled = {NonProfiledCodeHeapSize, FLAG_IS_CMDLINE(NonProfiledCodeHeapSize), true};
@@ -224,6 +227,7 @@ void CodeCache::initialize_heaps() {
   size_t compiler_buffer_size = 0;
   COMPILER1_PRESENT(compiler_buffer_size += CompilationPolicy::c1_count() * Compiler::code_buffer_size());
   COMPILER2_PRESENT(compiler_buffer_size += CompilationPolicy::c2_count() * C2Compiler::initial_code_buffer_size());
+  COMPILER2_PRESENT(compiler_buffer_size += (CompilationPolicy::c2_count() + CompilationPolicy::c3_count()) * C2Compiler::initial_code_buffer_size());
 
   if (!non_nmethod.set) {
     non_nmethod.size += compiler_buffer_size;
@@ -318,12 +322,21 @@ void CodeCache::initialize_heaps() {
   FLAG_SET_ERGO(NonProfiledCodeHeapSize, non_profiled.size);
   FLAG_SET_ERGO(ReservedCodeCacheSize, cache_size);
 
+  const size_t cds_code_size = align_up(CDSAccess::get_cached_code_size(), min_size);
+  cache_size += cds_code_size;
+
   ReservedSpace rs = reserve_heap_memory(cache_size, ps);
 
   // Register CodeHeaps with LSan as we sometimes embed pointers to malloc memory.
   LSAN_REGISTER_ROOT_REGION(rs.base(), rs.size());
 
   size_t offset = 0;
+  if (cds_code_size > 0) {
+    // FIXME: use CodeHeapInfo for this hack ...
+    _cds_code_space = rs.partition(offset, cds_code_size);
+    offset += cds_code_size;
+  }
+
   if (profiled.enabled) {
     ReservedSpace profiled_space = rs.partition(offset, profiled.size);
     offset += profiled.size;
@@ -340,6 +353,14 @@ void CodeCache::initialize_heaps() {
     ReservedSpace non_profiled_space  = rs.partition(offset, non_profiled.size);
     // Tier 1 and tier 4 (non-profiled) methods and native methods
     add_heap(non_profiled_space, "CodeHeap 'non-profiled nmethods'", CodeBlobType::MethodNonProfiled);
+  }
+}
+
+void* CodeCache::map_cached_code() {
+  if (_cds_code_space.size() > 0 && CDSAccess::map_cached_code(_cds_code_space)) {
+    return _cds_code_space.base();
+  } else {
+    return nullptr;
   }
 }
 
@@ -1208,11 +1229,12 @@ static void check_live_nmethods_dependencies(DepChange& changes) {
         // Determine if dependency is already checked. table->put(...) returns
         // 'true' if the dependency is added (i.e., was not in the hashtable).
         if (table->put(*current_sig, 1)) {
-          if (deps.check_dependency() != nullptr) {
+          Klass* witness = deps.check_dependency();
+          if (witness != nullptr) {
             // Dependency checking failed. Print out information about the failed
             // dependency and finally fail with an assert. We can fail here, since
             // dependency checking is never done in a product build.
-            tty->print_cr("Failed dependency:");
+            deps.print_dependency(tty, witness, true);
             changes.print();
             nm->print();
             nm->print_dependencies_on(tty);
@@ -1238,6 +1260,13 @@ void CodeCache::mark_for_deoptimization(DeoptimizationScope* deopt_scope, KlassD
   NoSafepointVerifier nsv;
   for (DepChange::ContextStream str(changes, nsv); str.next(); ) {
     InstanceKlass* d = str.klass();
+    {
+      LogStreamHandle(Trace, dependencies) log;
+      if (log.is_enabled()) {
+        log.print("Processing context ");
+        d->name()->print_value_on(&log);
+      }
+    }
     d->mark_dependent_nmethods(deopt_scope, changes);
   }
 
@@ -1496,6 +1525,85 @@ void CodeCache::print_memory_overhead() {
   tty->print_cr("Segment map size:               %zdkB",  allocated_segments()/K); // 1 byte per segment
 }
 
+static void print_helper1(outputStream* st, const char* prefix, int total, int not_entrant, int used) {
+  if (total > 0) {
+    double ratio = (100.0 * used) / total;
+    st->print("%s %3d nmethods: %3d not_entrant, %d used (%2.1f%%)", prefix, total, not_entrant, used, ratio);
+  }
+}
+
+void CodeCache::print_nmethod_statistics_on(outputStream* st) {
+  int stats     [2][6][3][2] = {0};
+  int stats_used[2][6][3][2] = {0};
+
+  int total_osr = 0;
+  int total_entrant = 0;
+  int total_non_entrant = 0;
+  int total_other = 0;
+  int total_used = 0;
+
+  NMethodIterator iter(NMethodIterator::all);
+  while (iter.next()) {
+    nmethod* nm = iter.method();
+    if (nm->is_in_use()) {
+      ++total_entrant;
+    } else if (nm->is_not_entrant()) {
+      ++total_non_entrant;
+    } else {
+      ++total_other;
+    }
+    if (nm->is_osr_method()) {
+      ++total_osr;
+    }
+    if (nm->used()) {
+      ++total_used;
+    }
+    assert(!nm->preloaded() || nm->comp_level() == CompLevel_full_optimization, "");
+
+    int idx1 = nm->is_scc() ? 1 : 0;
+    int idx2 = nm->comp_level() + (nm->preloaded() ? 1 : 0);
+    int idx3 = (nm->is_in_use()      ? 0 :
+               (nm->is_not_entrant() ? 1 :
+                                       2));
+    int idx4 = (nm->is_osr_method() ? 1 : 0);
+    stats[idx1][idx2][idx3][idx4] += 1;
+    if (nm->used()) {
+      stats_used[idx1][idx2][idx3][idx4] += 1;
+    }
+  }
+
+  st->print("Total: %d methods (%d entrant / %d not_entrant; osr: %d ",
+               total_entrant + total_non_entrant + total_other,
+               total_entrant, total_non_entrant, total_osr);
+  if (total_other > 0) {
+    st->print("; %d other", total_other);
+  }
+  st->print_cr(")");
+
+  for (int i = CompLevel_simple; i <= CompLevel_full_optimization; i++) {
+    int total_normal = stats[0][i][0][0] + stats[0][i][1][0] + stats[0][i][2][0];
+    int total_osr    = stats[0][i][0][1] + stats[0][i][1][1] + stats[0][i][2][1];
+    if (total_normal + total_osr > 0) {
+      st->print("  Tier%d:", i);
+      print_helper1(st,      "", total_normal, stats[0][i][1][0], stats_used[0][i][0][0] + stats_used[0][i][1][0]);
+      print_helper1(st, "; osr:", total_osr,    stats[0][i][1][1], stats_used[0][i][0][1] + stats_used[0][i][1][1]);
+      st->cr();
+    }
+  }
+  st->cr();
+  for (int i = CompLevel_simple; i <= CompLevel_full_optimization + 1; i++) {
+    int total_normal = stats[1][i][0][0] + stats[1][i][1][0] + stats[1][i][2][0];
+    int total_osr    = stats[1][i][0][1] + stats[1][i][1][1] + stats[1][i][2][1];
+    assert(total_osr == 0, "sanity");
+    if (total_normal + total_osr > 0) {
+      st->print("  SC T%d:", i);
+      print_helper1(st,      "", total_normal, stats[1][i][1][0], stats_used[1][i][0][0] + stats_used[1][i][1][0]);
+      print_helper1(st, "; osr:", total_osr,    stats[1][i][1][1], stats_used[1][i][0][1] + stats_used[1][i][1][1]);
+      st->cr();
+    }
+  }
+}
+
 //------------------------------------------------------------------------------------------------
 // Non-product version
 
@@ -1534,20 +1642,16 @@ void CodeCache::print_internals() {
 
   int i = 0;
   FOR_ALL_ALLOCABLE_HEAPS(heap) {
-    if ((_nmethod_heaps->length() >= 1) && Verbose) {
-      tty->print_cr("-- %s --", (*heap)->name());
-    }
+    int heap_total = 0;
+    tty->print_cr("-- %s --", (*heap)->name());
     FOR_ALL_BLOBS(cb, *heap) {
       total++;
+      heap_total++;
       if (cb->is_nmethod()) {
         nmethod* nm = (nmethod*)cb;
 
-        if (Verbose && nm->method() != nullptr) {
-          ResourceMark rm;
-          char *method_name = nm->method()->name_and_sig_as_C_string();
-          tty->print("%s", method_name);
-          if(nm->is_not_entrant()) { tty->print_cr(" not-entrant"); }
-        }
+        tty->print("%4d: ", heap_total);
+        CompileTask::print(tty, nm, (nm->is_not_entrant() ? "non-entrant" : ""), true, true);
 
         nmethodCount++;
 
@@ -1742,6 +1846,25 @@ void CodeCache::print() {
   }
 
 #endif // !PRODUCT
+}
+
+void CodeCache::print_nmethods_on(outputStream* st) {
+  ResourceMark rm;
+  int i = 0;
+  FOR_ALL_ALLOCABLE_HEAPS(heap) {
+    st->print_cr("-- %s --", (*heap)->name());
+    FOR_ALL_BLOBS(cb, *heap) {
+      i++;
+      if (cb->is_nmethod()) {
+        nmethod* nm = (nmethod*)cb;
+        st->print("%4d: ", i);
+        CompileTask::print(st, nm, nullptr, true, false);
+
+        const char non_entrant_char = (nm->is_not_entrant() ? 'N' : ' ');
+        st->print_cr(" %c", non_entrant_char);
+      }
+    }
+  }
 }
 
 void CodeCache::print_summary(outputStream* st, bool detailed) {

@@ -46,6 +46,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.NoSuchElementException;
 import java.util.Optional;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Function;
 import java.util.jar.Attributes;
@@ -53,6 +54,7 @@ import java.util.jar.Manifest;
 import java.util.stream.Stream;
 
 import jdk.internal.access.SharedSecrets;
+import jdk.internal.misc.CDS;
 import jdk.internal.misc.VM;
 import jdk.internal.module.ModulePatcher.PatchedModuleReader;
 import jdk.internal.module.Resources;
@@ -99,6 +101,12 @@ public class BuiltinClassLoader
 
     // the URL class path, or null if there is no class path
     private @Stable URLClassPath ucp;
+
+    private Set<String> negativeLookupCache;
+    private Map<String, Class<? extends Object>> positiveLookupCache;
+
+    public boolean useNegativeCache = false;
+    public boolean usePositiveCache = false;
 
     /**
      * A module defined/loaded by a built-in class loader.
@@ -192,6 +200,8 @@ public class BuiltinClassLoader
 
         this.nameToModule = new ConcurrentHashMap<>(32);
         this.moduleToReader = new ConcurrentHashMap<>();
+        this.negativeLookupCache = ConcurrentHashMap.newKeySet();
+        this.positiveLookupCache = new ConcurrentHashMap<>();
     }
 
     /**
@@ -575,9 +585,15 @@ public class BuiltinClassLoader
     protected Class<?> loadClass(String cn, boolean resolve)
         throws ClassNotFoundException
     {
-        Class<?> c = loadClassOrNull(cn, resolve);
-        if (c == null)
+        if (useNegativeCache && checkNegativeLookupCache(cn)) {
             throw new ClassNotFoundException(cn);
+        }
+        Class<?> c = loadClassOrNull(cn, resolve);
+        if (c == null) {
+            addToNegativeLookupCache(cn);
+            throw new ClassNotFoundException(cn);
+        }
+
         return c;
     }
 
@@ -982,6 +998,53 @@ public class BuiltinClassLoader
         resourceCache = null;
         if (!moduleToReader.isEmpty()) {
             moduleToReader.clear();
+        }
+    }
+
+    public boolean checkNegativeLookupCache(String className) {
+        return negativeLookupCache.contains(className);
+    }
+
+    public void addToNegativeLookupCache(String className) {
+        negativeLookupCache.add(className);
+    }
+
+    public String negativeLookupCacheContents() {
+        String[] contents = negativeLookupCache.toArray(new String[]{});
+        StringBuilder builder = new StringBuilder();
+        if (contents.length != 0) {
+            for (String name: contents) {
+                if (builder.length() != 0) {
+                    builder.append(" ");
+                }
+                builder.append(name);
+            }
+            return builder.toString();
+        } else {
+            return null;
+        }
+    }
+
+    public void generateNegativeLookupCache(String contents) {
+        String[] tokens = contents.split(" ");
+        if (tokens.length > 0) {
+            for (String token : tokens) {
+                negativeLookupCache.add(token);
+            }
+            useNegativeCache = true;
+        }
+    }
+
+    public Class<?> checkPositiveLookupCache(String className) {
+        return positiveLookupCache.get(className);
+    }
+
+    public void generatePositiveLookupCache(Class<?>[] cls) {
+        if (cls.length > 0) {
+            for (Class<?> c : cls) {
+                positiveLookupCache.put(c.getName(), c);
+            }
+            usePositiveCache = true;
         }
     }
 }

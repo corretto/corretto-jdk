@@ -26,6 +26,7 @@
 #include "cds/cdsConfig.hpp"
 #include "cds/filemap.hpp"
 #include "cds/heapShared.hpp"
+#include "cds/regeneratedClasses.hpp"
 #include "classfile/javaClasses.hpp"
 #include "classfile/modules.hpp"
 #include "classfile/systemDictionary.hpp"
@@ -59,6 +60,11 @@ HeapRootSegments ArchiveHeapWriter::_heap_root_segments;
 
 address ArchiveHeapWriter::_requested_bottom;
 address ArchiveHeapWriter::_requested_top;
+
+static size_t _num_strings = 0;
+static size_t _string_bytes = 0; 
+static size_t _num_packages = 0;
+static size_t _num_protection_domains = 0;
 
 GrowableArrayCHeap<ArchiveHeapWriter::NativePointerInfo, mtClassShared>* ArchiveHeapWriter::_native_pointers;
 GrowableArrayCHeap<oop, mtClassShared>* ArchiveHeapWriter::_source_objs;
@@ -320,6 +326,8 @@ void ArchiveHeapWriter::copy_source_objs_to_buffer(GrowableArrayCHeap<oop, mtCla
     assert(info != nullptr, "must be");
     size_t buffer_offset = copy_one_source_obj_to_buffer(src_obj);
     info->set_buffer_offset(buffer_offset);
+    assert(buffer_offset <= 0x7fffffff, "sanity");
+    HeapShared::add_to_permanent_oop_table(src_obj, (int)buffer_offset);
 
     _buffer_offset_to_source_obj_table->put_when_absent(buffer_offset, src_obj);
     _buffer_offset_to_source_obj_table->maybe_grow();
@@ -331,6 +339,9 @@ void ArchiveHeapWriter::copy_source_objs_to_buffer(GrowableArrayCHeap<oop, mtCla
 
   log_info(cds)("Size of heap region = %zu bytes, %d objects, %d roots, %d native ptrs",
                 _buffer_used, _source_objs->length() + 1, roots->length(), _num_native_ptrs);
+  log_info(cds)("   strings            = %8zu (%zu bytes)", _num_strings, _string_bytes);
+  log_info(cds)("   packages           = %8zu", _num_packages);
+  log_info(cds)("   protection domains = %8zu", _num_protection_domains);
 }
 
 size_t ArchiveHeapWriter::filler_array_byte_size(int length) {
@@ -419,7 +430,25 @@ void update_buffered_object_field(address buffered_obj, int field_offset, T valu
   *field_addr = value;
 }
 
+void ArchiveHeapWriter::update_stats(oop src_obj) {
+  if (java_lang_String::is_instance(src_obj)) {
+    _num_strings ++;
+    _string_bytes += src_obj->size() * HeapWordSize;
+    _string_bytes += java_lang_String::value(src_obj)->size() * HeapWordSize;
+  } else {
+    Klass* k = src_obj->klass();
+    Symbol* name = k->name();
+    if (name->equals("java/lang/NamedPackage") || name->equals("java/lang/Package")) {
+      _num_packages ++;
+    } else if (name->equals("java/security/ProtectionDomain")) {
+      _num_protection_domains ++;
+    }
+  }
+}
+
 size_t ArchiveHeapWriter::copy_one_source_obj_to_buffer(oop src_obj) {
+  update_stats(src_obj);
+
   assert(!is_too_large_to_archive(src_obj), "already checked");
   size_t byte_size = src_obj->size() * HeapWordSize;
   assert(byte_size > 0, "no zero-size objects");
@@ -746,6 +775,10 @@ void ArchiveHeapWriter::compute_ptrmap(ArchiveHeapInfo* heap_info) {
     guarantee(native_ptr != nullptr, "sanity");
     guarantee(ArchiveBuilder::current()->has_been_buffered((address)native_ptr),
               "Metadata %p should have been archived", native_ptr);
+
+    if (RegeneratedClasses::has_been_regenerated((address)native_ptr)) {
+      native_ptr = (Metadata*)RegeneratedClasses::get_regenerated_object((address)native_ptr);
+    }
 
     address buffered_native_ptr = ArchiveBuilder::current()->get_buffered_addr((address)native_ptr);
     address requested_native_ptr = ArchiveBuilder::current()->to_requested(buffered_native_ptr);

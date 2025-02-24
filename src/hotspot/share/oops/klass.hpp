@@ -591,6 +591,7 @@ public:
   virtual oop protection_domain() const = 0;
 
   oop class_loader() const;
+  Symbol* class_loader_name_and_id() const;
 
   inline oop klass_holder() const;
 

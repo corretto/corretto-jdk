@@ -51,6 +51,10 @@ public class CDS {
     private static final int IS_DUMPING_STATIC_ARCHIVE       = 1 << 1;
     private static final int IS_LOGGING_LAMBDA_FORM_INVOKERS = 1 << 2;
     private static final int IS_USING_ARCHIVE                = 1 << 3;
+    private static final int IS_DUMPING_HEAP                 = 1 << 4;
+    private static final int IS_LOGGING_DYNAMIC_PROXIES      = 1 << 5;
+    private static final int IS_DUMPING_PACKAGES             = 1 << 6;
+    private static final int IS_DUMPING_PROTECTION_DOMAINS   = 1 << 7;
     private static final int configStatus = getCDSConfigStatus();
 
     /**
@@ -79,6 +83,22 @@ public class CDS {
       */
     public static boolean isDumpingStaticArchive() {
         return (configStatus & IS_DUMPING_STATIC_ARCHIVE) != 0;
+    }
+
+    public static boolean isDumpingHeap() {
+        return (configStatus & IS_DUMPING_HEAP) != 0;
+    }
+
+    public static boolean isLoggingDynamicProxies() {
+        return (configStatus & IS_LOGGING_DYNAMIC_PROXIES) != 0;
+    }
+
+    public static boolean isDumpingPackages() {
+        return (configStatus & IS_DUMPING_PACKAGES) != 0;
+    }
+
+    public static boolean isDumpingProtectionDomains() {
+        return (configStatus & IS_DUMPING_PROTECTION_DOMAINS) != 0;
     }
 
     private static native int getCDSConfigStatus();
@@ -125,6 +145,15 @@ public class CDS {
             logLambdaFormInvoker(prefix + " " + cn);
         }
     }
+
+    public static void logDynamicProxy(ClassLoader loader, String proxyName,
+                                       Class<?>[] interfaces, int accessFlags) {
+        Objects.requireNonNull(proxyName);
+        Objects.requireNonNull(interfaces);
+        logDynamicProxy0(loader, proxyName, interfaces, accessFlags);
+    }
+    private static native void logDynamicProxy0(ClassLoader loader, String proxyName,
+                                                Class<?>[] interfaces, int accessFlags);
 
     static final String DIRECT_HOLDER_CLASS_NAME  = "java.lang.invoke.DirectMethodHandle$Holder";
     static final String DELEGATING_HOLDER_CLASS_NAME = "java.lang.invoke.DelegatingMethodHandle$Holder";

@@ -318,8 +318,10 @@ bool LibraryCallKit::inline_vector_nary_operation(int n) {
   const TypeInstPtr* elem_klass   = gvn().type(argument(3))->isa_instptr();
   const TypeInt*     vlen         = gvn().type(argument(4))->isa_int();
 
-  if (opr == nullptr || vector_klass == nullptr || elem_klass == nullptr || vlen == nullptr ||
-      !opr->is_con() || vector_klass->const_oop() == nullptr || elem_klass->const_oop() == nullptr || !vlen->is_con()) {
+  if (opr          == nullptr || !opr->is_con() ||
+      vector_klass == nullptr || vector_klass->const_oop() == nullptr ||
+      elem_klass   == nullptr || elem_klass->const_oop()   == nullptr ||
+      vlen         == nullptr || !vlen->is_con()) {
     log_if_needed("  ** missing constant: opr=%s vclass=%s etype=%s vlen=%s",
                     NodeClassNames[argument(0)->Opcode()],
                     NodeClassNames[argument(1)->Opcode()],
@@ -520,7 +522,11 @@ bool LibraryCallKit::inline_vector_mask_operation() {
   const TypeInt*     vlen       = gvn().type(argument(3))->isa_int();
   Node*              mask       = argument(4);
 
-  if (mask_klass == nullptr || elem_klass == nullptr || mask->is_top() || vlen == nullptr) {
+  if (mask_klass == nullptr || mask_klass->const_oop() == nullptr ||
+      elem_klass == nullptr || elem_klass->const_oop() == nullptr ||
+      vlen       == nullptr || !vlen->is_con() ||
+      oper       == nullptr || !oper->is_con() ||
+      mask->is_top()) {
     return false; // dead code
   }
 
@@ -580,9 +586,11 @@ bool LibraryCallKit::inline_vector_frombits_coerced() {
   // MODE_BITS_COERCED_LONG_TO_MASK for VectorMask.fromLong operation.
   const TypeInt*     mode         = gvn().type(argument(5))->isa_int();
 
-  if (vector_klass == nullptr || elem_klass == nullptr || vlen == nullptr || mode == nullptr ||
-      bits_type == nullptr || vector_klass->const_oop() == nullptr || elem_klass->const_oop() == nullptr ||
-      !vlen->is_con() || !mode->is_con()) {
+  if (vector_klass == nullptr || vector_klass->const_oop() == nullptr ||
+      elem_klass   == nullptr || elem_klass->const_oop()   == nullptr ||
+      vlen         == nullptr || !vlen->is_con() ||
+      bits_type    == nullptr ||
+      mode         == nullptr || !mode->is_con()) {
     log_if_needed("  ** missing constant: vclass=%s etype=%s vlen=%s bitwise=%s",
                     NodeClassNames[argument(0)->Opcode()],
                     NodeClassNames[argument(1)->Opcode()],
@@ -708,8 +716,10 @@ bool LibraryCallKit::inline_vector_mem_operation(bool is_store) {
   const TypeInt*     vlen         = gvn().type(argument(2))->isa_int();
   const TypeInt*     from_ms      = gvn().type(argument(6))->isa_int();
 
-  if (vector_klass == nullptr || elem_klass == nullptr || vlen == nullptr || !from_ms->is_con() ||
-      vector_klass->const_oop() == nullptr || elem_klass->const_oop() == nullptr || !vlen->is_con()) {
+  if (vector_klass == nullptr || vector_klass->const_oop() == nullptr ||
+      elem_klass   == nullptr || elem_klass->const_oop()   == nullptr ||
+      vlen         == nullptr || !vlen->is_con() ||
+      from_ms      == nullptr || !from_ms->is_con()) {
     log_if_needed("  ** missing constant: vclass=%s etype=%s vlen=%s from_ms=%s",
                     NodeClassNames[argument(0)->Opcode()],
                     NodeClassNames[argument(1)->Opcode()],
@@ -916,9 +926,11 @@ bool LibraryCallKit::inline_vector_mem_masked_operation(bool is_store) {
   const TypeInt*     vlen         = gvn().type(argument(3))->isa_int();
   const TypeInt*     from_ms      = gvn().type(argument(7))->isa_int();
 
-  if (vector_klass == nullptr || mask_klass == nullptr || elem_klass == nullptr || vlen == nullptr ||
-      vector_klass->const_oop() == nullptr || mask_klass->const_oop() == nullptr || from_ms == nullptr ||
-      elem_klass->const_oop() == nullptr || !vlen->is_con() || !from_ms->is_con()) {
+  if (vector_klass == nullptr || vector_klass->const_oop() == nullptr ||
+      mask_klass   == nullptr || mask_klass->const_oop()   == nullptr ||
+      elem_klass   == nullptr || elem_klass->const_oop()   == nullptr ||
+      vlen         == nullptr || !vlen->is_con() ||
+      from_ms      == nullptr || !from_ms->is_con()) {
     log_if_needed("  ** missing constant: vclass=%s mclass=%s etype=%s vlen=%s from_ms=%s",
                     NodeClassNames[argument(0)->Opcode()],
                     NodeClassNames[argument(1)->Opcode()],
@@ -1155,8 +1167,11 @@ bool LibraryCallKit::inline_vector_gather_scatter(bool is_scatter) {
   const TypeInt*     vlen             = gvn().type(argument(3))->isa_int();
   const TypeInstPtr* vector_idx_klass = gvn().type(argument(4))->isa_instptr();
 
-  if (vector_klass == nullptr || elem_klass == nullptr || vector_idx_klass == nullptr || vlen == nullptr ||
-      vector_klass->const_oop() == nullptr || elem_klass->const_oop() == nullptr || vector_idx_klass->const_oop() == nullptr || !vlen->is_con()) {
+  if (vector_klass     == nullptr || vector_klass->const_oop()     == nullptr ||
+//      mask_klass       == nullptr || mask_klass->const_oop()       == nullptr ||
+      elem_klass       == nullptr || elem_klass->const_oop()       == nullptr ||
+      vlen             == nullptr || !vlen->is_con() ||
+      vector_idx_klass == nullptr || vector_idx_klass->const_oop() == nullptr) {
     log_if_needed("  ** missing constant: vclass=%s etype=%s vlen=%s viclass=%s",
                     NodeClassNames[argument(0)->Opcode()],
                     NodeClassNames[argument(2)->Opcode()],
@@ -1342,8 +1357,11 @@ bool LibraryCallKit::inline_vector_reduction() {
   const TypeInstPtr* elem_klass   = gvn().type(argument(3))->isa_instptr();
   const TypeInt*     vlen         = gvn().type(argument(4))->isa_int();
 
-  if (opr == nullptr || vector_klass == nullptr || elem_klass == nullptr || vlen == nullptr ||
-      !opr->is_con() || vector_klass->const_oop() == nullptr || elem_klass->const_oop() == nullptr || !vlen->is_con()) {
+  if (opr          == nullptr || !opr->is_con() ||
+      vector_klass == nullptr || vector_klass->const_oop() == nullptr ||
+//      mask_klass   == nullptr || mask_klass->const_oop()   == nullptr ||
+      elem_klass   == nullptr || elem_klass->const_oop()   == nullptr ||
+      vlen         == nullptr || !vlen->is_con()) {
     log_if_needed("  ** missing constant: opr=%s vclass=%s etype=%s vlen=%s",
                     NodeClassNames[argument(0)->Opcode()],
                     NodeClassNames[argument(1)->Opcode()],
@@ -1480,8 +1498,10 @@ bool LibraryCallKit::inline_vector_test() {
   const TypeInstPtr* elem_klass   = gvn().type(argument(2))->isa_instptr();
   const TypeInt*     vlen         = gvn().type(argument(3))->isa_int();
 
-  if (cond == nullptr || vector_klass == nullptr || elem_klass == nullptr || vlen == nullptr ||
-      !cond->is_con() || vector_klass->const_oop() == nullptr || elem_klass->const_oop() == nullptr || !vlen->is_con()) {
+  if (cond         == nullptr || !cond->is_con() ||
+      vector_klass == nullptr || vector_klass->const_oop() == nullptr ||
+      elem_klass   == nullptr || elem_klass->const_oop()   == nullptr ||
+      vlen         == nullptr || !vlen->is_con()) {
     log_if_needed("  ** missing constant: cond=%s vclass=%s etype=%s vlen=%s",
                     NodeClassNames[argument(0)->Opcode()],
                     NodeClassNames[argument(1)->Opcode()],
@@ -2511,7 +2531,7 @@ bool LibraryCallKit::inline_vector_extract() {
   if (vector_klass == nullptr || elem_klass == nullptr || vlen == nullptr || idx == nullptr) {
     return false; // dead code
   }
-  if (vector_klass->const_oop() == nullptr || elem_klass->const_oop() == nullptr || !vlen->is_con()) {
+  if (vector_klass->const_oop() == nullptr || elem_klass->const_oop() == nullptr || !vlen->is_con() || !idx->is_con()) {
     log_if_needed("  ** missing constant: vclass=%s etype=%s vlen=%s",
                     NodeClassNames[argument(0)->Opcode()],
                     NodeClassNames[argument(1)->Opcode()],
@@ -2814,9 +2834,11 @@ bool LibraryCallKit::inline_vector_compress_expand() {
   const TypeInstPtr* elem_klass   = gvn().type(argument(3))->isa_instptr();
   const TypeInt*     vlen         = gvn().type(argument(4))->isa_int();
 
-  if (vector_klass == nullptr || elem_klass == nullptr || mask_klass == nullptr || vlen == nullptr ||
-      vector_klass->const_oop() == nullptr || mask_klass->const_oop() == nullptr ||
-      elem_klass->const_oop() == nullptr || !vlen->is_con() || !opr->is_con()) {
+  if (opr          == nullptr || !opr->is_con() ||
+      vector_klass == nullptr || vector_klass->const_oop() == nullptr ||
+      mask_klass   == nullptr || mask_klass->const_oop()   == nullptr ||
+      elem_klass   == nullptr || elem_klass->const_oop()   == nullptr ||
+      vlen         == nullptr || !vlen->is_con()) {
     log_if_needed("  ** missing constant: opr=%s vclass=%s mclass=%s etype=%s vlen=%s",
                     NodeClassNames[argument(0)->Opcode()],
                     NodeClassNames[argument(1)->Opcode()],
@@ -2895,9 +2917,9 @@ bool LibraryCallKit::inline_index_vector() {
   const TypeInstPtr* elem_klass   = gvn().type(argument(1))->isa_instptr();
   const TypeInt*     vlen         = gvn().type(argument(2))->isa_int();
 
-  if (vector_klass == nullptr || elem_klass == nullptr || vlen == nullptr ||
-      vector_klass->const_oop() == nullptr || !vlen->is_con() ||
-      elem_klass->const_oop() == nullptr) {
+  if (vector_klass == nullptr || vector_klass->const_oop() == nullptr ||
+      elem_klass   == nullptr || elem_klass->const_oop()   == nullptr ||
+      vlen         == nullptr || !vlen->is_con() ) {
     log_if_needed("  ** missing constant: vclass=%s etype=%s vlen=%s",
                     NodeClassNames[argument(0)->Opcode()],
                     NodeClassNames[argument(1)->Opcode()],
@@ -3029,8 +3051,9 @@ bool LibraryCallKit::inline_index_partially_in_upper_range() {
   const TypeInstPtr* elem_klass   = gvn().type(argument(1))->isa_instptr();
   const TypeInt*     vlen         = gvn().type(argument(2))->isa_int();
 
-  if (mask_klass == nullptr || elem_klass == nullptr || vlen == nullptr ||
-      mask_klass->const_oop() == nullptr || elem_klass->const_oop() == nullptr || !vlen->is_con()) {
+  if (mask_klass == nullptr || mask_klass->const_oop() == nullptr ||
+      elem_klass == nullptr || elem_klass->const_oop() == nullptr ||
+      vlen       == nullptr || !vlen->is_con()) {
     log_if_needed("  ** missing constant: mclass=%s etype=%s vlen=%s",
                     NodeClassNames[argument(0)->Opcode()],
                     NodeClassNames[argument(1)->Opcode()],

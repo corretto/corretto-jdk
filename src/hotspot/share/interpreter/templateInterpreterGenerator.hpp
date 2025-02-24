@@ -76,13 +76,19 @@ class TemplateInterpreterGenerator: public AbstractInterpreterGenerator {
 
   // Helpers for generate_and_dispatch
   address generate_trace_code(TosState state)   PRODUCT_RETURN_NULL;
-  void count_bytecode()                         PRODUCT_RETURN;
-  void histogram_bytecode(Template* t)          PRODUCT_RETURN;
+  void count_bytecode();
+  void histogram_bytecode(Template* t);
   void histogram_bytecode_pair(Template* t)     PRODUCT_RETURN;
   void trace_bytecode(Template* t)              PRODUCT_RETURN;
   void stop_interpreter_at()                    PRODUCT_RETURN;
 
   void generate_all();
+
+  // helpers for method entry generation
+  bool is_synchronized_method(AbstractInterpreter::MethodKind kind);
+  bool is_runtime_upcalls_method(AbstractInterpreter::MethodKind kind);
+  bool is_intrinsic_method(AbstractInterpreter::MethodKind kind);
+  bool is_abstract_method(AbstractInterpreter::MethodKind kind);
 
   // entry point generator
   address generate_method_entry(AbstractInterpreter::MethodKind kind, bool native);
@@ -90,8 +96,8 @@ class TemplateInterpreterGenerator: public AbstractInterpreterGenerator {
   // generate intrinsic method entries
   address generate_intrinsic_entry(AbstractInterpreter::MethodKind kind);
 
-  address generate_normal_entry(bool synchronized);
-  address generate_native_entry(bool synchronized);
+  address generate_normal_entry(bool synchronized, bool runtime_upcalls);
+  address generate_native_entry(bool synchronized, bool runtime_upcalls);
   address generate_abstract_entry(void);
   address generate_math_entry(AbstractInterpreter::MethodKind kind);
   address generate_Reference_get_entry();

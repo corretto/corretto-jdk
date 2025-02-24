@@ -28,7 +28,7 @@
 #include "memory/iterator.hpp"
 #include "memory/resourceArea.hpp"
 #include "oops/instanceKlass.hpp"
-#include "oops/klass.hpp"
+#include "oops/klass.inline.hpp"
 #include "oops/method.hpp"
 #include "oops/symbol.hpp"
 #include "utilities/ostream.hpp"
@@ -54,6 +54,7 @@ public:
       _always_print_class_name(always_print_class_name),
       _flags(flags), _st(st), _num(0), _has_printed_methods(false)
   {
+    _flags |= (PRINT_PROFILE);
     if (has_mode(_flags, PRINT_METHOD_HANDLE)) {
       _flags |= (PRINT_METHOD_NAME | PRINT_BYTECODE);
     }
@@ -80,7 +81,8 @@ public:
   }
 
   void print_klass_name(InstanceKlass* ik) {
-    _st->print("[%3d] " INTPTR_FORMAT " class %s ", _num++, p2i(ik), ik->name()->as_C_string());
+    _st->print("[%3d] " INTPTR_FORMAT " class %s mirror: " INTPTR_FORMAT " ", _num++,
+               p2i(ik), ik->name()->as_C_string(), p2i(ik->java_mirror()));
     ik->class_loader_data()->print_value_on(_st);
     _st->cr();
   }

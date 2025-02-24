@@ -45,6 +45,7 @@ class JvmtiThreadState;
 class MetadataClosure;
 class NativeCallWrapper;
 class OopIterateClosure;
+class SCCEntry;
 class ScopeDesc;
 class xmlStream;
 
@@ -175,6 +176,9 @@ class nmethod : public CodeBlob {
 
   uint64_t  _gc_epoch;
 
+  // Profiling counter used to figure out the hottest nmethods to record into CDS
+  volatile uint64_t _method_profiling_count;
+
   Method*   _method;
 
   // To reduce header size union fields which usages do not overlap.
@@ -260,6 +264,10 @@ class nmethod : public CodeBlob {
   CompLevel    _comp_level;            // compilation level (s1)
   CompilerType _compiler_type;         // which compiler made this nmethod (u1)
 
+  SCCEntry* _scc_entry;
+
+  bool _used; // has this nmethod ever been invoked?
+
   // Local state used to keep track of whether unloading is happening or not
   volatile uint8_t _is_unloading_state;
 
@@ -274,7 +282,9 @@ class nmethod : public CodeBlob {
           _has_scoped_access:1,        // used by for shared scope closure (scopedMemoryAccess.cpp)
           _has_flushed_dependencies:1, // Used for maintenance of dependencies (under CodeCache_lock)
           _is_unlinked:1,              // mark during class unloading
-          _load_reported:1;            // used by jvmti to track if an event has been posted for this nmethod
+          _load_reported:1,            // used by jvmti to track if an event has been posted for this nmethod
+          _preloaded:1,
+          _has_clinit_barriers:1;
 
   enum DeoptimizationStatus : u1 {
     not_marked,
@@ -326,6 +336,7 @@ class nmethod : public CodeBlob {
           ImplicitExceptionTable* nul_chk_table,
           AbstractCompiler* compiler,
           CompLevel comp_level
+          , SCCEntry* scc_entry
 #if INCLUDE_JVMCI
           , char* speculations = nullptr,
           int speculations_len = 0,
@@ -484,6 +495,7 @@ public:
                               ImplicitExceptionTable* nul_chk_table,
                               AbstractCompiler* compiler,
                               CompLevel comp_level
+                              , SCCEntry* scc_entry
 #if INCLUDE_JVMCI
                               , char* speculations = nullptr,
                               int speculations_len = 0,
@@ -624,6 +636,9 @@ public:
   bool is_unloading();
   void do_unloading(bool unloading_occurred);
 
+  void inc_method_profiling_count();
+  uint64_t method_profiling_count();
+
   bool make_in_use() {
     return try_transition(in_use);
   }
@@ -631,8 +646,8 @@ public:
   // alive.  It is used when an uncommon trap happens.  Returns true
   // if this thread changed the state of the nmethod or false if
   // another thread performed the transition.
-  bool  make_not_entrant();
-  bool  make_not_used()    { return make_not_entrant(); }
+  bool  make_not_entrant(bool make_not_entrant = true);
+  bool  make_not_used() { return make_not_entrant(false); }
 
   bool  is_marked_for_deoptimization() const { return deoptimization_status() != not_marked; }
   bool  has_been_deoptimized() const { return deoptimization_status() == deoptimize_done; }
@@ -673,6 +688,12 @@ public:
 
   bool  has_wide_vectors() const                  { return _has_wide_vectors; }
   void  set_has_wide_vectors(bool z)              { _has_wide_vectors = z; }
+
+  bool  has_clinit_barriers() const               { return _has_clinit_barriers; }
+  void  set_has_clinit_barriers(bool z)           { _has_clinit_barriers = z; }
+
+  bool  preloaded() const                         { return _preloaded; }
+  void  set_preloaded(bool z)                     { _preloaded = z; }
 
   bool  has_flushed_dependencies() const          { return _has_flushed_dependencies; }
   void  set_has_flushed_dependencies(bool z)      {
@@ -893,6 +914,12 @@ public:
 
   int orig_pc_offset() { return _orig_pc_offset; }
 
+  SCCEntry* scc_entry() const { return _scc_entry; }
+  bool is_scc() const { return scc_entry() != nullptr; }
+
+  bool     used() const { return _used; }
+  void set_used()       { _used = true; }
+
   // Post successful compilation
   void post_compiled_method(CompileTask* task);
 
@@ -918,7 +945,7 @@ public:
 
 #if defined(SUPPORT_DATA_STRUCTS)
   // print output in opt build for disassembler library
-  void print_relocations()                        PRODUCT_RETURN;
+  void print_relocations_on(outputStream* st)     PRODUCT_RETURN;
   void print_pcs_on(outputStream* st);
   void print_scopes() { print_scopes_on(tty); }
   void print_scopes_on(outputStream* st)          PRODUCT_RETURN;

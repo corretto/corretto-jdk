@@ -1,6 +1,6 @@
 
 /*
- * Copyright (c) 2021, 2023, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2021, 2024, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -28,6 +28,7 @@
 
 #include "cds/dumpTimeClassInfo.hpp"
 
+#include "cds/cdsConfig.hpp"
 #include "classfile/systemDictionaryShared.hpp"
 #include "classfile/classLoaderData.inline.hpp"
 #include "oops/instanceKlass.hpp"
@@ -44,7 +45,10 @@ void DumpTimeSharedClassTable::iterate_all_live_classes(Function function) const
   auto wrapper = [&] (InstanceKlass* k, DumpTimeClassInfo& info) {
     assert(SafepointSynchronize::is_at_safepoint(), "invariant");
     assert_lock_strong(DumpTimeTable_lock);
-    if (k->is_loader_alive()) {
+    if (CDSConfig::is_dumping_final_static_archive() && !k->is_loaded()) {
+      assert(k->is_shared_unregistered_class(), "must be");
+      function(k, info);
+    } else if (k->is_loader_alive()) {
       function(k, info);
       assert(k->is_loader_alive(), "must not change");
     } else {
@@ -52,6 +56,20 @@ void DumpTimeSharedClassTable::iterate_all_live_classes(Function function) const
         SystemDictionaryShared::warn_excluded(k, "Class loader not alive");
         SystemDictionaryShared::set_excluded_locked(k);
       }
+    }
+  };
+  DumpTimeSharedClassTableBaseType::iterate_all(wrapper);
+}
+
+template<typename Function>
+void DumpTimeSharedClassTable::iterate_all_classes_in_builtin_loaders(Function function) const {
+  auto wrapper = [&] (InstanceKlass* k, DumpTimeClassInfo& info) {
+    assert_lock_strong(DumpTimeTable_lock);
+    // k->class_loader_data() could be null for unreg classes loaded during CDSConfig::is_dumping_final_static_archive()
+    if (k->class_loader_data() != nullptr && SystemDictionaryShared::is_builtin_loader(k->class_loader_data())) {
+       assert(k->is_loader_alive(), "must be");
+       function(k, info);
+       assert(k->is_loader_alive(), "must be");
     }
   };
   DumpTimeSharedClassTableBaseType::iterate_all(wrapper);

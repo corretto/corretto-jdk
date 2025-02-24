@@ -37,16 +37,19 @@
 #include "runtime/cpuTimeCounters.hpp"
 #include "runtime/handles.inline.hpp"
 #include "runtime/interfaceSupport.inline.hpp"
+#include "runtime/java.hpp"
 #include "runtime/javaThread.inline.hpp"
 #include "runtime/jniHandles.hpp"
 #include "runtime/mutexLocker.hpp"
 #include "runtime/os.hpp"
-#include "runtime/perfData.hpp"
+#include "runtime/perfData.inline.hpp"
 #include "runtime/safepoint.hpp"
 #include "runtime/synchronizer.hpp"
 #include "runtime/timerTrace.hpp"
 #include "runtime/vmThread.hpp"
+#include "runtime/vmOperation.hpp"
 #include "runtime/vmOperations.hpp"
+#include "services/management.hpp"
 #include "utilities/dtrace.hpp"
 #include "utilities/events.hpp"
 #include "utilities/vmError.hpp"
@@ -273,7 +276,7 @@ void VMThread::evaluate_operation(VM_Operation* op) {
   ResourceMark rm;
 
   {
-    PerfTraceTime vm_op_timer(perf_accumulated_vm_operation_time());
+    PerfTraceElapsedTime vm_op_timer(perf_accumulated_vm_operation_time());
     HOTSPOT_VMOPS_BEGIN(
                      (char *) op->name(), strlen(op->name()),
                      op->evaluate_at_safepoint() ? 0 : 1);
@@ -521,6 +524,9 @@ class SkipGCALot : public StackObj {
 void VMThread::execute(VM_Operation* op) {
   Thread* t = Thread::current();
 
+  PerfTraceTimedEvent p(VMThread::get_perf_timer_for(op), VMThread::get_perf_counter_for(op), \
+                        Thread::current()->profile_vm_ops()); \
+
   if (t->is_VM_thread()) {
     op->set_calling_thread(t);
     ((VMThread*)t)->inner_execute(op);
@@ -550,3 +556,87 @@ void VMThread::execute(VM_Operation* op) {
 void VMThread::verify() {
   oops_do(&VerifyOopClosure::verify_oop, nullptr);
 }
+
+#define DECLARE_COUNTER(name) \
+PerfTickCounters* _perf_##name##_timer = nullptr; \
+PerfCounter*      _perf_##name##_count = nullptr;
+
+VM_OPS_DO(DECLARE_COUNTER)
+
+#undef DECLARE_COUNTER
+
+#define SWITCH_TIMER(name) \
+case VM_Operation::VMOp_##name: return _perf_##name##_timer;
+
+PerfTickCounters* VMThread::get_perf_timer_for(VM_Operation *op) {
+  switch(op->type()) {
+    VM_OPS_DO(SWITCH_TIMER)
+    default: ShouldNotReachHere();
+  }
+}
+
+#undef SWITCH_TIMER
+
+#define SWITCH_COUNT(name) \
+case VM_Operation::VMOp_##name: return _perf_##name##_count;
+
+PerfCounter* VMThread::get_perf_counter_for(VM_Operation *op) {
+  switch(op->type()) {
+    VM_OPS_DO(SWITCH_COUNT)
+    default: ShouldNotReachHere();
+  }
+}
+
+#undef SWITCH_COUNT
+
+#define INIT_COUNTER(name) \
+    NEWPERFTICKCOUNTERS(_perf_##name##_timer, SUN_RT, #name "_time"); \
+    NEWPERFEVENTCOUNTER(_perf_##name##_count, SUN_RT, #name "_count"); \
+
+void VMThread::init_counters() {
+  if (ProfileVMOps && UsePerfData) {
+    EXCEPTION_MARK;
+
+    VM_OPS_DO(INIT_COUNTER)
+
+    if (HAS_PENDING_EXCEPTION) {
+      vm_exit_during_initialization("jvm_perf_init failed unexpectedly");
+    }
+  }
+}
+
+#undef INIT_COUNTER
+
+static jlong total_count() {
+  jlong total = 0;
+#define ACC_COUNT(name) total += _perf_##name##_count->get_value();
+  VM_OPS_DO(ACC_COUNT)
+#undef ACC_COUNT
+  return total;
+}
+
+static jlong total_elapsed_time_in_ms() {
+  jlong total_elapsed_ticks = 0;
+#define ACC_COUNT(name) total_elapsed_ticks += _perf_##name##_timer->elapsed_counter_value();
+  VM_OPS_DO(ACC_COUNT)
+#undef ACC_COUNT
+  return Management::ticks_to_ms(total_elapsed_ticks);
+}
+
+#define PRINT_COUNTER(name) {\
+  jlong count = _perf_##name##_count->get_value(); \
+  if (count > 0) { \
+    st->print_cr("  %-40s = " JLONG_FORMAT_W(6) "us (" JLONG_FORMAT_W(5) " events)", #name, _perf_##name##_timer->elapsed_counter_value_us(), count); \
+  }}
+
+void VMThread::print_counters_on(outputStream* st) {
+  if (ProfileVMOps && UsePerfData) {
+    st->print_cr("VMOperation: Total: " JLONG_FORMAT " events (elapsed " JLONG_FORMAT "ms) for thread \"main\":",
+                 total_count(), total_elapsed_time_in_ms());
+    VM_OPS_DO(PRINT_COUNTER)
+  } else {
+    st->print_cr("  VMOperations:  no info (%s is disabled)", (UsePerfData ? "ProfileVMCalls" : "UsePerfData"));
+  }
+}
+
+#undef PRINT_COUNTER

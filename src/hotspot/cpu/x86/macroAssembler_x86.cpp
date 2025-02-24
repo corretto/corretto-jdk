@@ -24,6 +24,7 @@
 
 #include "asm/assembler.hpp"
 #include "asm/assembler.inline.hpp"
+#include "code/SCCache.hpp"
 #include "code/compiledIC.hpp"
 #include "compiler/compiler_globals.hpp"
 #include "compiler/disassembler.hpp"
@@ -770,6 +771,7 @@ void MacroAssembler::stop(const char* msg) {
   andq(rsp, -16); // align stack as required by ABI
   call(RuntimeAddress(CAST_FROM_FN_PTR(address, MacroAssembler::debug64)));
   hlt();
+  SCCache::add_C_string(msg);
 }
 
 void MacroAssembler::warn(const char* msg) {
@@ -10871,6 +10873,20 @@ void MacroAssembler::restore_legacy_gprs() {
   addq(rsp, 16 * wordSize);
 }
 
+void MacroAssembler::load_aotrc_address(Register reg, address a) {
+#if INCLUDE_CDS
+  assert(AOTRuntimeConstants::contains(a), "address out of range for data area");
+  if (SCCache::is_on_for_write()) {
+    // all aotrc field addresses should be registered in the SCC address table
+    lea(reg, ExternalAddress(a));
+  } else {
+    mov64(reg, (uint64_t)a);
+  }
+#else
+  ShouldNotReachHere();
+#endif
+}
+
 void MacroAssembler::setcc(Assembler::Condition comparison, Register dst) {
   if (VM_Version::supports_apx_f()) {
     esetzucc(comparison, dst);
@@ -10879,4 +10895,5 @@ void MacroAssembler::setcc(Assembler::Condition comparison, Register dst) {
     movzbl(dst, dst);
   }
 }
+
 #endif

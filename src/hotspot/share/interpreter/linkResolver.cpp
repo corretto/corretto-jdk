@@ -993,7 +993,8 @@ void LinkResolver::resolve_field_access(fieldDescriptor& fd,
 
 void LinkResolver::resolve_field(fieldDescriptor& fd,
                                  const LinkInfo& link_info,
-                                 Bytecodes::Code byte, bool initialize_class,
+                                 Bytecodes::Code byte,
+                                 bool initialize_class,
                                  TRAPS) {
   assert(byte == Bytecodes::_getstatic || byte == Bytecodes::_putstatic ||
          byte == Bytecodes::_getfield  || byte == Bytecodes::_putfield  ||
@@ -1124,6 +1125,10 @@ void LinkResolver::resolve_static_call(CallInfo& result,
   // setup result
   result.set_static(resolved_klass, methodHandle(THREAD, resolved_method), CHECK);
   JFR_ONLY(Jfr::on_resolution(result, CHECK);)
+}
+
+void LinkResolver::cds_resolve_static_call(CallInfo& result, const LinkInfo& link_info, TRAPS) {
+  resolve_static_call(result, link_info, /*initialize_class*/false, CHECK);
 }
 
 // throws linktime exceptions
@@ -1783,19 +1788,19 @@ bool LinkResolver::resolve_previously_linked_invokehandle(CallInfo& result, cons
 }
 
 void LinkResolver::resolve_invokehandle(CallInfo& result, const constantPoolHandle& pool, int index, TRAPS) {
-
   PerfTraceTimedEvent timer(ClassLoader::perf_resolve_invokehandle_time(),
-                            ClassLoader::perf_resolve_invokehandle_count());
+                            ClassLoader::perf_resolve_invokehandle_count(),
+                            THREAD->class_being_initialized() == nullptr);
 
   LinkInfo link_info(pool, index, Bytecodes::_invokehandle, CHECK);
+  { // Check if the call site has been bound already, and short circuit:
+    bool is_done = resolve_previously_linked_invokehandle(result, link_info, pool, index, CHECK);
+    if (is_done) return;
+  }
   if (log_is_enabled(Info, methodhandles)) {
     ResourceMark rm(THREAD);
     log_info(methodhandles)("resolve_invokehandle %s %s", link_info.name()->as_C_string(),
                             link_info.signature()->as_C_string());
-  }
-  { // Check if the call site has been bound already, and short circuit:
-    bool is_done = resolve_previously_linked_invokehandle(result, link_info, pool, index, CHECK);
-    if (is_done) return;
   }
   resolve_handle_call(result, link_info, CHECK);
 }
@@ -1839,8 +1844,8 @@ void LinkResolver::resolve_handle_call(CallInfo& result,
 
 void LinkResolver::resolve_invokedynamic(CallInfo& result, const constantPoolHandle& pool, int indy_index, TRAPS) {
   PerfTraceTimedEvent timer(ClassLoader::perf_resolve_invokedynamic_time(),
-                            ClassLoader::perf_resolve_invokedynamic_count());
-
+                            ClassLoader::perf_resolve_invokedynamic_count(),
+                            THREAD->class_being_initialized() == nullptr);
   int pool_index = pool->resolved_indy_entry_at(indy_index)->constant_pool_index();
 
   // Resolve the bootstrap specifier (BSM + optional arguments).

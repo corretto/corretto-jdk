@@ -497,6 +497,8 @@ JavaThread::JavaThread(MemTag mem_tag) :
   _jni_monitor_count(0),
   _unlocked_inflated_monitor(nullptr),
 
+  _can_call_java(true),
+
   _preempt_alternate_return(nullptr),
   _preemption_cancelled(false),
   _pending_interrupted_exception(false),
@@ -982,7 +984,7 @@ void JavaThread::exit(bool destroy_vm, ExitType exit_type) {
   // We need to cache the thread name for logging purposes below as once
   // we have called on_thread_detach this thread must not access any oops.
   char* thread_name = nullptr;
-  if (log_is_enabled(Debug, os, thread, timer)) {
+  if (log_is_enabled(Debug, os, thread, timer) || (CountBytecodesPerThread && log_is_enabled(Info, init))) {
     ResourceMark rm(this);
     thread_name = os::strdup(name());
   }
@@ -1008,6 +1010,11 @@ void JavaThread::exit(bool destroy_vm, ExitType exit_type) {
     }
   }
 #endif // INCLUDE_JVMCI
+
+  if (bc_counter_value() > 0) {
+    log_info(init)("Thread '%s': " JLONG_FORMAT " bytecodes executed (during clinit: " JLONG_FORMAT ")",
+                   thread_name, bc_counter_value(), clinit_bc_counter_value());
+  }
 
   // Remove from list of active threads list, and notify VM thread if we are the last non-daemon thread.
   // We call BarrierSet::barrier_set()->on_thread_detach() here so no touching of oops after this point.
