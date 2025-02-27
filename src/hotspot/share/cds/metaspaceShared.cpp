@@ -1058,9 +1058,11 @@ void MetaspaceShared::preload_and_dump_impl(StaticArchiveBuilder& builder, TRAPS
   link_shared_classes(false/*not from jcmd*/, CHECK);
   log_info(cds)("Rewriting and linking classes: done");
 
-  if (CDSConfig::is_dumping_final_static_archive() && CDSConfig::is_leyden_workflow()) {
+  if (CDSConfig::is_dumping_final_static_archive()) {
     assert(RecordTraining == false, "must be");
-    RecordTraining = true;
+    if (CDSConfig::is_dumping_aot_linked_classes()) {
+      RecordTraining = true;
+    }
   }
 
   TrainingData::init_dumptime_table(CHECK); // captures TrainingDataSetLocker
@@ -1110,17 +1112,10 @@ void MetaspaceShared::preload_and_dump_impl(StaticArchiveBuilder& builder, TRAPS
   VMThread::execute(&op);
   FileMapInfo* mapinfo = op.map_info();
   ArchiveHeapInfo* heap_info = op.heap_info();
-  bool status;
-  if (!CDSConfig::is_leyden_workflow()) {
-    status = write_static_archive(&builder, mapinfo, heap_info);
-  } else if (CDSConfig::is_dumping_preimage_static_archive()) {
-    if ((status = write_static_archive(&builder, mapinfo, heap_info))) {
-      fork_and_dump_final_static_archive();
-    }
-  } else {
-    assert(CDSConfig::is_dumping_final_static_archive(), "must be");
+
+  if (CDSConfig::is_dumping_final_static_archive()) {
     RecordTraining = false;
-    if (StoreCachedCode && CachedCodeFile != nullptr) { // FIXME: new workflow -- remove the CachedCodeFile flag
+    if (StoreCachedCode) {
       if (log_is_enabled(Info, cds, jit)) {
         CDSAccess::test_heap_access_api();
       }
@@ -1141,7 +1136,11 @@ void MetaspaceShared::preload_and_dump_impl(StaticArchiveBuilder& builder, TRAPS
       }
       CDSConfig::disable_dumping_cached_code();
     }
-    status = write_static_archive(&builder, mapinfo, heap_info);
+  }
+
+  bool status = write_static_archive(&builder, mapinfo, heap_info);
+  if (status && CDSConfig::is_leyden_workflow() && CDSConfig::is_dumping_preimage_static_archive()) {
+    fork_and_dump_final_static_archive();
   }
 
   if (!status) {
@@ -2025,7 +2024,7 @@ void MetaspaceShared::initialize_shared_spaces() {
     TrainingData::print_archived_training_data_on(tty);
 
     if (LoadCachedCode) {
-      tty->print_cr("\n\nCached Code file: %s", CachedCodeFile);
+      tty->print_cr("\n\nCached Code");
       SCCache::print_on(tty);
     }
 

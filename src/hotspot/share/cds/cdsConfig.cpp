@@ -164,13 +164,6 @@ void CDSConfig::extract_shared_archive_paths(const char* archive_path,
   *top_archive_path = cur_path;
 }
 
-static void set_new_workflow_default_CachedCodeFile() {
-  size_t len = strlen(CacheDataStore) + 6;
-  char* file = AllocateHeap(len, mtArguments);
-  jio_snprintf(file, len, "%s.code", CacheDataStore);
-  FLAG_SET_ERGO(CachedCodeFile, file);
-}
-
 void CDSConfig::init_shared_archive_paths() {
   if (ArchiveClassesAtExit != nullptr) {
     assert(!RecordDynamicDumpInfo, "already checked");
@@ -535,11 +528,6 @@ bool CDSConfig::check_vm_args_consistency(bool patch_mod_javabase, bool mode_fla
     }
 
     if (FLAG_IS_DEFAULT(AOTClassLinking)) {
-      // New workflow - enable AOTClassLinking by default.
-      // TODO: make new workflow work, even when AOTClassLinking is false.
-      //
-      // NOTE: in old workflow, we cannot enable AOTClassLinking by default. That
-      // should be an opt-in option, per JEP nnn.
       FLAG_SET_ERGO(AOTClassLinking, true);
     }
 
@@ -547,9 +535,6 @@ bool CDSConfig::check_vm_args_consistency(bool patch_mod_javabase, bool mode_fla
       vm_exit_during_initialization("CacheDataStore and SharedArchiveFile cannot be both specified");
     }
     if (!AOTClassLinking) {
-      // TODO: in the forked JVM, we should ensure all classes are loaded from the hotspot.cds.preimage.
-      // AOTClassLinking only loads the classes for built-in loaders. We need to load the classes
-      // for custom loaders as well.
       vm_exit_during_initialization("CacheDataStore requires AOTClassLinking");
     }
 
@@ -559,9 +544,6 @@ bool CDSConfig::check_vm_args_consistency(bool patch_mod_javabase, bool mode_fla
         SharedArchiveFile = CacheDataStore;
         FLAG_SET_ERGO_IF_DEFAULT(ReplayTraining, true);
         FLAG_SET_ERGO_IF_DEFAULT(LoadCachedCode, true);
-        if (LoadCachedCode && FLAG_IS_DEFAULT(CachedCodeFile)) {
-          set_new_workflow_default_CachedCodeFile();
-        }
       } else {
         // The preimage dumping phase -- run the app and write the preimage file
         size_t len = strlen(CacheDataStore) + 10;
@@ -598,20 +580,42 @@ bool CDSConfig::check_vm_args_consistency(bool patch_mod_javabase, bool mode_fla
       FLAG_SET_ERGO_IF_DEFAULT(ReplayTraining, true);
       // Settings for AOT
       FLAG_SET_ERGO_IF_DEFAULT(StoreCachedCode, true);
-      if (StoreCachedCode && FLAG_IS_DEFAULT(CachedCodeFile)) {
-        set_new_workflow_default_CachedCodeFile();
+      if (StoreCachedCode) {
         // Cannot dump cached code until metadata and heap are dumped.
         disable_dumping_cached_code();
-      }
-      if (StoreCachedCode) {
-        log_info(cds)("ArchiveAdapters is enabled");
-        FLAG_SET_ERGO_IF_DEFAULT(ArchiveAdapters, true);
       }
       _is_dumping_static_archive = true;
       _is_dumping_final_static_archive = true;
     }
   } else {
-    // Old workflow
+    bool can_dump_profile_and_compiled_code = AOTClassLinking && new_aot_flags_used();
+
+    if (is_dumping_preimage_static_archive() && can_dump_profile_and_compiled_code) {
+      // AOT workflow -- training
+      FLAG_SET_ERGO_IF_DEFAULT(RecordTraining, true);
+      FLAG_SET_ERGO(ReplayTraining, false);
+      FLAG_SET_ERGO(StoreCachedCode, false);
+      FLAG_SET_ERGO(LoadCachedCode, false);
+    } else if (is_dumping_final_static_archive() && can_dump_profile_and_compiled_code) {
+      // AOT workflow -- assembly
+      FLAG_SET_ERGO(RecordTraining, false); // This will be updated inside MetaspaceShared::preload_and_dump()
+      FLAG_SET_ERGO_IF_DEFAULT(ReplayTraining, true);
+      FLAG_SET_ERGO_IF_DEFAULT(StoreCachedCode, true);
+      FLAG_SET_ERGO(LoadCachedCode, false);
+      disable_dumping_cached_code(); // Cannot dump cached code until metadata and heap are dumped.
+    } else if (is_using_archive() && new_aot_flags_used()) {
+      // AOT workflow -- production
+      FLAG_SET_ERGO(RecordTraining, false);
+      FLAG_SET_ERGO_IF_DEFAULT(ReplayTraining, true);
+      FLAG_SET_ERGO(StoreCachedCode, false);
+      FLAG_SET_ERGO_IF_DEFAULT(LoadCachedCode, true);
+    } else {
+      FLAG_SET_ERGO(ReplayTraining, false);
+      FLAG_SET_ERGO(RecordTraining, false);
+      FLAG_SET_ERGO(StoreCachedCode, false);
+      FLAG_SET_ERGO(LoadCachedCode, false);
+    }
+
     if (CDSPreimage != nullptr) {
       vm_exit_during_initialization("CDSPreimage must be specified only when CacheDataStore is specified");
     }
@@ -638,13 +642,24 @@ bool CDSConfig::check_vm_args_consistency(bool patch_mod_javabase, bool mode_fla
     FLAG_SET_ERGO_IF_DEFAULT(ArchiveReflectionData, true);
   } else {
     // All of these *might* depend on AOTClassLinking. Better be safe than sorry.
-    // TODO: more fine-grained handling.
     FLAG_SET_ERGO(AOTInvokeDynamicLinking, false);
     FLAG_SET_ERGO(ArchiveDynamicProxies, false);
     FLAG_SET_ERGO(ArchiveLoaderLookupCache, false);
     FLAG_SET_ERGO(ArchivePackages, false);
     FLAG_SET_ERGO(ArchiveProtectionDomains, false);
     FLAG_SET_ERGO(ArchiveReflectionData, false);
+
+    if (CDSConfig::is_dumping_archive()) {
+      FLAG_SET_ERGO(RecordTraining, false);
+      FLAG_SET_ERGO(ReplayTraining, false);
+      FLAG_SET_ERGO(StoreCachedCode, false);
+      FLAG_SET_ERGO(LoadCachedCode, false);
+    }
+  }
+
+  if (StoreCachedCode) {
+    log_info(cds)("ArchiveAdapters is enabled");
+    FLAG_SET_ERGO_IF_DEFAULT(ArchiveAdapters, true);
   }
 
 #ifdef _WINDOWS
@@ -714,13 +729,16 @@ bool CDSConfig::check_vm_args_consistency(bool patch_mod_javabase, bool mode_fla
   }
 
   if (AOTClassLinking) {
-    if ((is_dumping_preimage_static_archive() && !is_using_optimized_module_handling()) ||
-        (is_dumping_final_static_archive()    && !is_dumping_full_module_graph())) {
+    if (is_dumping_final_static_archive() && !is_dumping_full_module_graph()) {
       if (bad_module_prop_key != nullptr) {
         log_warning(cds)("optimized module handling/full module graph: disabled due to incompatible property: %s=%s",
                          bad_module_prop_key, bad_module_prop_value);
       }
-      vm_exit_during_initialization("CacheDataStore cannot be created because AOTClassLinking is enabled but full module graph is disabled");
+      if (is_leyden_workflow()) {
+        vm_exit_during_initialization("CacheDataStore cannot be created because AOTClassLinking is enabled but full module graph is disabled");
+      } else {
+        vm_exit_during_initialization("AOT cache cannot be created because AOTClassLinking is enabled but full module graph is disabled");
+      }
     }
   }
 
