@@ -1,6 +1,5 @@
 /*
- * Copyright (c) 1999, 2025, Oracle and/or its affiliates. All rights reserved.
- * Copyright (c) 2012, 2024 SAP SE. All rights reserved.
+ * Copyright (c) 2025, Red Hat, Inc. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -20,26 +19,37 @@
  * Please contact Oracle, 500 Oracle Parkway, Redwood Shores, CA 94065 USA
  * or visit www.oracle.com if you need additional information or have any
  * questions.
- *
  */
 
-#include "memory/allocation.hpp"
-#include "runtime/mutex.hpp"
-#include "runtime/osThread.hpp"
+/*
+ * @test
+ * @bug 8347040
+ * @summary C2: assert(!loop->_body.contains(in)) failed
+ * @run main/othervm -XX:-BackgroundCompilation TestAssertWhenOuterStripMinedLoopRemoved
+ */
 
-#include <signal.h>
 
-OSThread::OSThread()
-  : _thread_id(0),
-    _kernel_thread_id(0),
-    _caller_sigmask(),
-    sr(),
-    _siginfo(nullptr),
-    _ucontext(nullptr),
-    _expanding_stack(0),
-    _alt_sig_stack(nullptr) {
-  sigemptyset(&_caller_sigmask);
-}
+import static java.lang.foreign.ValueLayout.JAVA_LONG;
 
-OSThread::~OSThread() {
+import java.lang.foreign.Arena;
+import java.lang.foreign.MemorySegment;
+
+public class TestAssertWhenOuterStripMinedLoopRemoved {
+    static final int COUNT = 100000;
+    static final MemorySegment segment = Arena.global().allocate(JAVA_LONG, COUNT);
+
+    public static void main(String[] args) {
+        for (int i = 0; i < 10000; i++) {
+            test();
+        }
+    }
+
+    static void test() {
+        var i = 0;
+        var j = 0;
+        while (i < 100000) {
+            segment.setAtIndex(JAVA_LONG, i++, 0);
+            segment.setAtIndex(JAVA_LONG, j++, 0);
+        }
+    }
 }
