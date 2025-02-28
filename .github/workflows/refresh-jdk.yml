@@ -5,7 +5,10 @@ on:
   workflow_dispatch:
 env:
   UPSTREAM_REMOTE: https://github.com/openjdk/jdk.git
+  UPSTREAM_LEYDEN: https://github.com/openjdk/leyden.git
   LOCAL_BRANCH: develop
+  LOCAL_LEYDEN: leyden
+  
 jobs:
     refresh-jdk:
         runs-on: ubuntu-latest
@@ -17,16 +20,36 @@ jobs:
               with:
                 fetch-depth: 0
                 ref: ${{ env.LOCAL_BRANCH }}
+                
             - name: "Configure the user"
               run: |
                 git config user.email "no-reply@amazon.com"
                 git config user.name "corretto-github-robot"
+                
             - name: "Merge openjdk/jdk:master to the corretto-jdk:develop"
               run: |
                 git fetch $UPSTREAM_REMOTE master || exit 1
                 git merge -m "Merge upstream-jdk" FETCH_HEAD
+                
             - name: "Update Corretto version"
               shell: bash
               run: bash ./.github/scripts/update-version.sh $UPSTREAM_REMOTE
             - name: "Push to the corretto-jdk"
               run: git push origin $LOCAL_BRANCH
+              
+            - name: "Merge openjdk/leyden:premain to leyden"
+              shell: bash
+              run: |
+                git checkout $LOCAL_LEYDEN
+                git fetch $UPSTREAM_LEYDEN premain || exit 1
+                git merge -m "Merging openjdk/leyden:premain to corretto-jdk:leyden" FETCH_HEAD
+                git push origin $LOCAL_LEYDEN
+
+            - name: "Merge Corretto-jdk develop to leyden"
+              shell: bash
+              run: |
+                git checkout $LOCAL_LEYDEN
+                git restore --source origin/$LOCAL_BRANCH --staged --worktree -- version.txt
+                git commit -m "Automerged version.txt from $LOCAL_BRANCH to $LOCAL_LEYDEN" || true
+                git merge origin/$LOCAL_BRANCH
+                git push origin $LOCAL_LEYDEN
