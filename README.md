@@ -1,3 +1,7 @@
+## Corretto Leyden Prototype
+
+This is a prototype build of Corretto based on upstream `tip` code with Leyden patches from https://github.com/openjdk/leyden. It should contains experiment and unstable code, and it should not be used in a production environment. For more information, see `README-leyden.md`.
+
 ## Corretto JDK
 
 Amazon Corretto is a no-cost, multiplatform,
