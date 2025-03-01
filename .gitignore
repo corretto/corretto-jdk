@@ -25,3 +25,4 @@ commitId.txt
 /.cache
 /.gdbinit
 /.lldbinit
+**/core.[0-9]*
