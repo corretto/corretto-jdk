@@ -52,7 +52,6 @@ bool CDSConfig::_is_using_optimized_module_handling = true;
 bool CDSConfig::_is_dumping_full_module_graph = true;
 bool CDSConfig::_is_using_full_module_graph = true;
 bool CDSConfig::_has_aot_linked_classes = false;
-bool CDSConfig::_has_archived_invokedynamic = false;
 bool CDSConfig::_is_loading_packages = false;
 bool CDSConfig::_is_loading_protection_domains = false;
 bool CDSConfig::_is_security_manager_allowed = false;
@@ -796,7 +795,7 @@ bool CDSConfig::is_dumping_regenerated_lambdaform_invokers() {
     // that point to the lambda form invokers in the base archive. Such pointers will
     // be invalid if lambda form invokers are regenerated in the dynamic archive.
     return false;
-  } else if (CDSConfig::is_dumping_invokedynamic()) {
+  } else if (CDSConfig::is_dumping_method_handles()) {
     // Work around JDK-8310831, as some methods in lambda form holder classes may not get generated.
     return false;
   } else {
@@ -1031,8 +1030,13 @@ bool CDSConfig::is_dumping_reflection_data() {
   return ArchiveReflectionData && is_dumping_invokedynamic();
 }
 
-bool CDSConfig::is_loading_invokedynamic() {
-  return UseSharedSpaces && is_using_full_module_graph() && _has_archived_invokedynamic;
+// When we are dumping aot-linked classes and we are able to write archived heap objects, we automatically
+// enable the archiving of MethodHandles. This will in turn enable the archiving of MethodTypes and hidden
+// classes that are used in the implementation of MethodHandles.
+// Archived MethodHandles are required for higher-level optimizations such as AOT resolution of invokedynamic
+// and dynamic proxies.
+bool CDSConfig::is_dumping_method_handles() {
+  return is_initing_classes_at_dump_time();
 }
 
 #endif // INCLUDE_CDS_JAVA_HEAP

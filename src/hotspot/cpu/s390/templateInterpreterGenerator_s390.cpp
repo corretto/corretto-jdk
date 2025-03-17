@@ -2320,17 +2320,6 @@ void TemplateInterpreterGenerator::set_vtos_entry_points(Template* t,
 
 //-----------------------------------------------------------------------------
 
-// Make feasible for old CPUs.
-void TemplateInterpreterGenerator::count_bytecode() {
-  __ load_absolute_address(Z_R1_scratch, (address) &BytecodeCounter::_counter_value);
-  __ add2mem_32(Address(Z_R1_scratch), 1, Z_R0_scratch);
-}
-
-void TemplateInterpreterGenerator::histogram_bytecode(Template * t) {
-  __ load_absolute_address(Z_R1_scratch, (address)&BytecodeHistogram::_counters[ t->bytecode() ]);
-  __ add2mem_32(Address(Z_R1_scratch), 1, Z_tmp_1);
-}
-
 #ifndef PRODUCT
 address TemplateInterpreterGenerator::generate_trace_code(TosState state) {
   address entry = __ pc();
@@ -2340,7 +2329,7 @@ address TemplateInterpreterGenerator::generate_trace_code(TosState state) {
     // Skip runtime call, if the trace threshold is not yet reached.
     __ load_absolute_address(Z_tmp_1, (address)&BytecodeCounter::_counter_value);
     __ load_absolute_address(Z_tmp_2, (address)&TraceBytecodesAt);
-    __ load_sized_value(Z_tmp_1, Address(Z_tmp_1), 4, false /*signed*/);
+    __ load_sized_value(Z_tmp_1, Address(Z_tmp_1), 8, false /*signed*/);
     __ load_sized_value(Z_tmp_2, Address(Z_tmp_2), 8, false /*signed*/);
     __ compareU64_and_branch(Z_tmp_1, Z_tmp_2, Assembler::bcondLow, counter_below_trace_threshold);
   }
@@ -2366,7 +2355,20 @@ address TemplateInterpreterGenerator::generate_trace_code(TosState state) {
 
   return entry;
 }
+#endif
 
+// Make feasible for old CPUs.
+void TemplateInterpreterGenerator::count_bytecode() {
+  __ load_absolute_address(Z_R1_scratch, (address) &BytecodeCounter::_counter_value);
+  __ add2mem_64(Address(Z_R1_scratch), 1, Z_R0_scratch);
+}
+
+void TemplateInterpreterGenerator::histogram_bytecode(Template * t) {
+  __ load_absolute_address(Z_R1_scratch, (address)&BytecodeHistogram::_counters[ t->bytecode() ]);
+  __ add2mem_32(Address(Z_R1_scratch), 1, Z_tmp_1);
+}
+
+#ifndef PRODUCT
 void TemplateInterpreterGenerator::histogram_bytecode_pair(Template * t) {
   Address  index_addr(Z_tmp_1, (intptr_t) 0);
   Register index = Z_tmp_2;
@@ -2406,7 +2408,7 @@ void TemplateInterpreterGenerator::stop_interpreter_at() {
 
   __ load_absolute_address(Z_tmp_1, (address)&BytecodeCounter::_counter_value);
   __ load_absolute_address(Z_tmp_2, (address)&StopInterpreterAt);
-  __ load_sized_value(Z_tmp_1, Address(Z_tmp_1), 4, false /*signed*/);
+  __ load_sized_value(Z_tmp_1, Address(Z_tmp_1), 8, false /*signed*/);
   __ load_sized_value(Z_tmp_2, Address(Z_tmp_2), 8, false /*signed*/);
   __ compareU64_and_branch(Z_tmp_1, Z_tmp_2, Assembler::bcondLow, L);
   assert(Z_tmp_1->is_nonvolatile(), "must be nonvolatile to preserve Z_tos");
