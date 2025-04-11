@@ -40,17 +40,17 @@
 #include "classfile/vmClasses.hpp"
 #include "classfile/vmSymbols.hpp"
 #include "code/codeCache.hpp"
-#include "code/scopeDesc.hpp"
 #include "code/SCCache.hpp"
+#include "code/scopeDesc.hpp"
 #include "compiler/compilationLog.hpp"
 #include "compiler/compilationPolicy.hpp"
 #include "compiler/compileBroker.hpp"
-#include "compiler/compilerEvent.hpp"
 #include "compiler/compileLog.hpp"
+#include "compiler/compilerEvent.hpp"
 #include "compiler/compileTask.hpp"
 #include "compiler/disassembler.hpp"
-#include "gc/shared/collectedHeap.inline.hpp"
 #include "gc/shared/barrierSetNMethod.hpp"
+#include "gc/shared/collectedHeap.inline.hpp"
 #include "interpreter/bytecodeStream.hpp"
 #include "interpreter/linkResolver.hpp"
 #include "jfr/jfrEvents.hpp"
@@ -1142,7 +1142,7 @@ void ciEnv::register_aot_method(JavaThread* thread,
     CodeCache::gc_on_allocation();
 
     // To prevent compile queue updates.
-    MutexLocker locker(thread, MethodCompileQueue_lock);
+    MutexLocker locker(thread, task()->compile_queue()->lock());
 
     // Prevent InstanceKlass::add_to_hierarchy from running
     // and invalidating our dependencies until we install this method.
