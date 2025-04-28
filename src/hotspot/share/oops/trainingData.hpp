@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2023, 2025, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2025, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -25,6 +25,7 @@
 #ifndef SHARE_OOPS_TRAININGDATA_HPP
 #define SHARE_OOPS_TRAININGDATA_HPP
 
+#include "cds/cdsConfig.hpp"
 #include "classfile/classLoaderData.hpp"
 #include "classfile/compactHashtable.hpp"
 #include "compiler/compilerDefinitions.hpp"
@@ -280,6 +281,7 @@ private:
 
   static bool have_data() { return AOTReplayTraining;  } // Going to read
   static bool need_data() { return AOTRecordTraining;  } // Going to write
+  static bool assembling_data() { return CDSConfig::is_dumping_final_static_archive() && CDSConfig::is_dumping_aot_linked_classes(); }
 
   template<typename Function>
   static void iterate(const Function& fn) { iterate(const_cast<Function&>(fn)); }
@@ -390,8 +392,6 @@ private:
   static void cleanup_training_data();
   static void serialize(SerializeClosure* soc);
   static void print_archived_training_data_on(outputStream* st);
-  static void write_training_data_dictionary(TrainingDataDictionary* dictionary);
-
   static TrainingData* lookup_archived_training_data(const Key* k);
 #endif
 
@@ -717,7 +717,6 @@ class MethodTrainingData : public TrainingData {
   CompileTrainingData* _last_toplevel_compiles[CompLevel_count - 1];
   int _highest_top_level;
   int _level_mask;  // bit-set of all possible levels
-  bool _was_inlined;
   bool _was_toplevel;
   // metadata snapshots of final state:
   MethodCounters* _final_counters;
@@ -732,7 +731,7 @@ class MethodTrainingData : public TrainingData {
     }
     _highest_top_level = CompLevel_none;
     _level_mask = 0;
-    _was_inlined = _was_toplevel = false;
+    _was_toplevel = false;
   }
 
   static int level_mask(int level) {
@@ -749,7 +748,6 @@ class MethodTrainingData : public TrainingData {
   bool has_holder()           const { return _holder != nullptr; }
   Method* holder()            const { return _holder; }
   bool only_inlined()         const { return !_was_toplevel; }
-  bool never_inlined()        const { return !_was_inlined; }
   bool saw_level(CompLevel l) const { return (_level_mask & level_mask(l)) != 0; }
   int highest_level()         const { return highest_level(_level_mask); }
   int highest_top_level()     const { return _highest_top_level; }
@@ -772,9 +770,7 @@ class MethodTrainingData : public TrainingData {
   }
 
   void notice_compilation(int level, bool inlined = false) {
-    if (inlined) {
-      _was_inlined = true;
-    } else {
+    if (!inlined) {
       _was_toplevel = true;
     }
     _level_mask |= level_mask(level);
