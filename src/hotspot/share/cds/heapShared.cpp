@@ -22,14 +22,15 @@
  *
  */
 
+#include "cds/aotCacheAccess.hpp"
 #include "cds/aotArtifactFinder.hpp"
 #include "cds/aotClassInitializer.hpp"
 #include "cds/aotClassLocation.hpp"
+#include "cds/aotReferenceObjSupport.hpp"
 #include "cds/archiveBuilder.hpp"
 #include "cds/archiveHeapLoader.hpp"
 #include "cds/archiveHeapWriter.hpp"
 #include "cds/archiveUtils.hpp"
-#include "cds/cdsAccess.hpp"
 #include "cds/cdsConfig.hpp"
 #include "cds/cdsEnumKlass.hpp"
 #include "cds/cdsHeapVerifier.hpp"
@@ -304,7 +305,7 @@ oop HeapShared::orig_to_scratch_object(oop orig_obj) {
 // to Strings and MH oops.
 //
 // At runtime, these oops are stored in _runtime_permanent_oops (which keeps them alive forever)
-// and are accssed vis CDSAccess::get_archived_object(int).
+// and are accssed vis AOTCacheAccess::get_archived_object(int).
 struct PermanentOopInfo {
   int _index;       // Gets assigned only if HeapShared::get_archived_object_permanent_index() has been called on the object
   int _heap_offset; // Offset of the object from the bottom of the archived heap.
@@ -387,7 +388,7 @@ void CachedCodeDirectoryInternal::dumptime_init_internal() {
     return;
   }
 
-  int* table = (int*)CDSAccess::allocate_from_code_cache(count * sizeof(int));
+  int* table = (int*)AOTCacheAccess::allocate_from_code_cache(count * sizeof(int));
   for (int i = 0; i < count; i++) {
     table[count] = -1;
   }
@@ -407,7 +408,7 @@ void CachedCodeDirectoryInternal::dumptime_init_internal() {
   log_info(cds)("Dumped %d permanent oops", count);
 
   _permanent_oop_count = count;
-  CDSAccess::set_pointer(&_permanent_oop_offsets, table);
+  AOTCacheAccess::set_pointer(&_permanent_oop_offsets, table);
 }
 
 // This is called during the bootstrap of the production run, before any GC can happen.
@@ -1578,34 +1579,37 @@ void HeapShared::clear_archived_roots_of(Klass* k) {
   }
 }
 
-// Push all oops that are referenced by _referencing_obj onto the _stack.
-class HeapShared::ReferentPusher: public BasicOopIterateClosure {
+// Push all oop fields (or oop array elemenets in case of an objArray) in
+// _referencing_obj onto the _stack.
+class HeapShared::OopFieldPusher: public BasicOopIterateClosure {
   PendingOopStack* _stack;
   GrowableArray<oop> _found_oop_fields;
   int _level;
   bool _record_klasses_only;
   KlassSubGraphInfo* _subgraph_info;
   oop _referencing_obj;
+  bool _is_java_lang_ref;
  public:
-  ReferentPusher(PendingOopStack* stack,
-                           int level,
-                           bool record_klasses_only,
-                           KlassSubGraphInfo* subgraph_info,
-                           oop orig) :
+  OopFieldPusher(PendingOopStack* stack,
+                 int level,
+                 bool record_klasses_only,
+                 KlassSubGraphInfo* subgraph_info,
+                 oop orig) :
     _stack(stack),
     _found_oop_fields(),
     _level(level),
     _record_klasses_only(record_klasses_only),
     _subgraph_info(subgraph_info),
     _referencing_obj(orig) {
+    _is_java_lang_ref = AOTReferenceObjSupport::check_if_ref_obj(orig);
   }
-  void do_oop(narrowOop *p) { ReferentPusher::do_oop_work(p); }
-  void do_oop(      oop *p) { ReferentPusher::do_oop_work(p); }
+  void do_oop(narrowOop *p) { OopFieldPusher::do_oop_work(p); }
+  void do_oop(      oop *p) { OopFieldPusher::do_oop_work(p); }
 
-  ~ReferentPusher() {
+  ~OopFieldPusher() {
     while (_found_oop_fields.length() > 0) {
       // This produces the exact same traversal order as the previous version
-      // of ReferentPusher that recurses on the C stack -- a depth-first search,
+      // of OopFieldPusher that recurses on the C stack -- a depth-first search,
       // walking the oop fields in _referencing_obj by ascending field offsets.
       oop obj = _found_oop_fields.pop();
       _stack->push(PendingOop(obj, _referencing_obj, _level + 1));
@@ -1614,14 +1618,18 @@ class HeapShared::ReferentPusher: public BasicOopIterateClosure {
 
  protected:
   template <class T> void do_oop_work(T *p) {
-    oop obj = RawAccess<>::oop_load(p);
+    int field_offset = pointer_delta_as_int((char*)p, cast_from_oop<char*>(_referencing_obj));
+    oop obj = HeapAccess<ON_UNKNOWN_OOP_REF>::oop_load_at(_referencing_obj, field_offset);
     if (!CompressedOops::is_null(obj)) {
-      size_t field_delta = pointer_delta(p, _referencing_obj, sizeof(char));
+      if (_is_java_lang_ref && AOTReferenceObjSupport::skip_field(field_offset)) {
+        // Do not follow these fields. They will be cleared to null.
+        return;
+      }
 
       if (!_record_klasses_only && log_is_enabled(Debug, cds, heap)) {
         ResourceMark rm;
-        log_debug(cds, heap)("(%d) %s[%zu] ==> " PTR_FORMAT " size %zu %s", _level,
-                             _referencing_obj->klass()->external_name(), field_delta,
+        log_debug(cds, heap)("(%d) %s[%d] ==> " PTR_FORMAT " size %zu %s", _level,
+                             _referencing_obj->klass()->external_name(), field_offset,
                              p2i(obj), obj->size() * HeapWordSize, obj->klass()->external_name());
         if (log_is_enabled(Trace, cds, heap)) {
           LogTarget(Trace, cds, heap) log;
@@ -1814,7 +1822,7 @@ bool HeapShared::walk_one_object(PendingOopStack* stack, int level, KlassSubGrap
     // Find all the oops that are referenced by orig_obj, push them onto the stack
     // so we can work on them next.
     ResourceMark rm;
-    ReferentPusher pusher(stack, level, record_klasses_only, subgraph_info, orig_obj);
+    OopFieldPusher pusher(stack, level, record_klasses_only, subgraph_info, orig_obj);
     orig_obj->oop_iterate(&pusher);
   }
 
@@ -1841,7 +1849,7 @@ bool HeapShared::walk_one_object(PendingOopStack* stack, int level, KlassSubGrap
 // - No java.lang.Class instance (java mirror) can be included inside
 //   an archived sub-graph. Mirror can only be the sub-graph entry object.
 //
-// The Java heap object sub-graph archiving process (see ReferentPusher):
+// The Java heap object sub-graph archiving process (see OopFieldPusher):
 //
 // 1) Java object sub-graph archiving starts from a given static field
 // within a Class instance (java mirror). If the static field is a
