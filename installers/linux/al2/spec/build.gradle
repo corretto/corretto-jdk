@@ -74,7 +74,7 @@ task copySourceTar(type: Tar) {
         into '/'
     }
     // Include the man pages tarball if it exists
-    from(file("${buildDir}/distributions/jdk${version.major}-manpages.tar.gz")) {
+    from(file("${buildDir}/distributions/jdk${project.version.major}-manpages.tar.gz")) {
         into '/'
     }
 }
