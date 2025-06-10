@@ -114,6 +114,7 @@ License: ASL 1.1 and ASL 2.0 and BSD and BSD with advertising and GPL+ and GPLv2
 Vendor: Amazon
 Url: https://github.com/corretto/corretto-${java_spec_version}
 Source0: amazon-corretto-source-%{java_version}.%{build_id}.%{release_id}.tar.gz
+Source1: jdk%{java_major_version}-manpages.tar.gz
 
 # jpackage-utils/javapackages-filesystem is required for both build and runtime.
 # For build, it provides the jvmdir macro. For runtime,
@@ -256,6 +257,10 @@ Amazon Corretto's packaging of the OpenJDK ${java_spec_version} debug symbols.
 %prep
 %setup -q -n src -c
 
+# Extract pre-generated man pages
+mkdir -p manpages
+tar -xzf %{SOURCE1} -C manpages
+
 %build
 
 %if "%{dist}" == ".amzn2" || "%{dist}" == ".amzn2int"
@@ -308,6 +313,10 @@ find %{buildroot}%{java_home}/ -name "*.so" -exec chmod 755 \\{\\} \\; ;
 find %{buildroot}%{java_home} -type d -exec chmod 755 \\{\\} \\; ;
 # Set legal to read-only.
 find %{buildroot}%{java_home}/legal -type f -exec chmod 644 \\{\\} \\; ;
+
+# Install pre-generated man pages
+mkdir -p %{buildroot}%{java_home}/man/man1
+cp -p manpages/*.1 %{buildroot}%{java_home}/man/man1/
 
 # Make a *relative* symlink pointing to the cacerts file from ca-certificates.
 rm -f %{buildroot}%{java_home}/lib/security/cacerts
