@@ -89,7 +89,7 @@ class CompileTask : public CHeapObj<mtCompiler> {
     return reason_names[compile_reason];
   }
 
-  static bool reason_is_precompiled(CompileTask::CompileReason compile_reason) {
+  static bool reason_is_precompile(CompileTask::CompileReason compile_reason) {
     return (compile_reason == CompileTask::Reason_Precompile) ||
            (compile_reason == CompileTask::Reason_PrecompileForPreload);
   }
@@ -107,7 +107,7 @@ class CompileTask : public CHeapObj<mtCompiler> {
   CodeSection::csize_t _nm_content_size;
   CodeSection::csize_t _nm_total_size;
   CodeSection::csize_t _nm_insts_size;
-  DirectiveSet*  _directive;
+  DirectiveSet*        _directive;
   AbstractCompiler*    _compiler;
   AOTCodeEntry*        _aot_code_entry;
 #if INCLUDE_JVMCI
@@ -196,8 +196,8 @@ class CompileTask : public CHeapObj<mtCompiler> {
   }
 #endif
 
-  bool is_precompiled() {
-    return reason_is_precompiled(compile_reason());
+  bool is_precompile() {
+    return reason_is_precompile(compile_reason());
   }
 
   CompileQueue* compile_queue() const            { return _compile_queue; }

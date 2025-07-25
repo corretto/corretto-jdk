@@ -57,7 +57,6 @@
 int64_t CompilationPolicy::_start_time = 0;
 int CompilationPolicy::_c1_count = 0;
 int CompilationPolicy::_c2_count = 0;
-int CompilationPolicy::_c3_count = 0;
 int CompilationPolicy::_ac_count = 0;
 double CompilationPolicy::_increase_threshold_at_ratio = 0;
 
@@ -310,7 +309,7 @@ bool CompilationPolicy::force_comp_at_level_simple(const methodHandle& method) {
     if (UseJVMCICompiler) {
       AbstractCompiler* comp = CompileBroker::compiler(CompLevel_full_optimization);
       if (comp != nullptr && comp->is_jvmci() && ((JVMCICompiler*) comp)->force_comp_at_level_simple(method)) {
-        return !AOTCodeCache::is_C3_on();
+        return true;
       }
     }
 #endif
@@ -588,12 +587,8 @@ void CompilationPolicy::initialize() {
       // Assembly phase runs C1 and C2 compilation in separate phases,
       // and can use all the CPU threads it can reach. Adjust the common
       // options before policy starts overwriting them.
-      if (FLAG_IS_DEFAULT(UseDynamicNumberOfCompilerThreads)) {
-        FLAG_SET_ERGO(UseDynamicNumberOfCompilerThreads, false);
-      }
-      if (FLAG_IS_DEFAULT(CICompilerCountPerCPU)) {
-        FLAG_SET_ERGO(CICompilerCountPerCPU, false);
-      }
+      FLAG_SET_ERGO_IF_DEFAULT(UseDynamicNumberOfCompilerThreads, false);
+      FLAG_SET_ERGO_IF_DEFAULT(CICompilerCountPerCPU, false);
       if (FLAG_IS_DEFAULT(CICompilerCount)) {
         count =  MAX2(count, os::active_processor_count());
       }
@@ -607,7 +602,7 @@ void CompilationPolicy::initialize() {
       int loglog_cpu = log2i(MAX2(log_cpu, 1));
       count = MAX2(log_cpu * loglog_cpu * 3 / 2, 2);
     }
-    {
+    if (FLAG_IS_DEFAULT(CICompilerCount)) {
       // Make sure there is enough space in the code cache to hold all the compiler buffers
       size_t c1_size = 0;
 #ifdef COMPILER1
@@ -651,10 +646,6 @@ void CompilationPolicy::initialize() {
         int c1_count = MAX2(count - libjvmci_count, 1);
         set_c2_count(libjvmci_count);
         set_c1_count(c1_count);
-      } else if (AOTCodeCache::is_C3_on()) {
-        set_c1_count(MAX2(count / 3, 1));
-        set_c2_count(MAX2(count - c1_count(), 1));
-        set_c3_count(1);
       } else
 #endif
       {
