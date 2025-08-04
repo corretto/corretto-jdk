@@ -122,9 +122,9 @@ task fixCrossCompileLinking(type: Exec) {
 
 task packageTestImage(type: Tar) {
     dependsOn fixCrossCompileLinking
-    description 'Package test results'
-    archiveName "${project.correttoTestImageArchiveName}.tar.gz"
-    compression Compression.GZIP
+    description = 'Package test results'
+    archiveFileName = "${project.correttoTestImageArchiveName}.tar.gz"
+    compression = Compression.GZIP
     from(testResultingImage) {
         include '**'
     }
@@ -132,10 +132,10 @@ task packageTestImage(type: Tar) {
 }
 
 task packageDebugSymbols(type: Tar) {
-    description 'Package debug results'
+    description = 'Package debug results'
     dependsOn packageTestImage
-    archiveName "${project.correttoDebugSymbolsArchiveName}.tar.gz"
-    compression Compression.GZIP
+    archiveFileName = "${project.correttoDebugSymbolsArchiveName}.tar.gz"
+    compression = Compression.GZIP
     from(jdkResultingImage) {
         include 'bin/*.diz'
         include 'lib/*.diz'
@@ -145,10 +145,10 @@ task packageDebugSymbols(type: Tar) {
 }
 
 task packageBuildResults(type: Tar) {
-    description 'Compresses the JDK image and puts the results in build/distributions.'
+    description = 'Compresses the JDK image and puts the results in build/distributions.'
     dependsOn packageDebugSymbols
-    archiveName "${project.correttoJdkArchiveName}.tar.gz"
-    compression Compression.GZIP
+    archiveFileName = "${project.correttoJdkArchiveName}.tar.gz"
+    compression = Compression.GZIP
     from(buildRoot) {
         include project.rootFiles
         into project.correttoJdkArchiveName
@@ -169,7 +169,7 @@ task packageBuildResults(type: Tar) {
     // See https://github.com/corretto/corretto-11/issues/129
     from("${jdkResultingImage}/legal") {
         include '**'
-        fileMode 0444
+        fileMode = 0444
         into "${project.correttoJdkArchiveName}/legal"
     }
 }

@@ -160,7 +160,7 @@ task packaging(type: Exec) {
 task packageDebugSymbols(type: Tar) {
     dependsOn prepareArtifacts
     description 'Package debug symbols'
-    archiveName "${project.correttoDebugSymbolsArchiveName}.tar.gz"
+    archiveFileName = "${project.correttoDebugSymbolsArchiveName}.tar.gz"
     compression Compression.GZIP
     from("${jdkResultingImage}/${correttoMacDir}") {
         include "Contents/Home/bin/*.diz"
@@ -174,7 +174,7 @@ task packageDebugSymbols(type: Tar) {
 task packageTestResults(type: Tar) {
     dependsOn executeTestBuild
     description 'Package test results'
-    archiveName "${project.correttoTestImageArchiveName}.tar.gz"
+    archiveFileName = "${project.correttoTestImageArchiveName}.tar.gz"
     compression Compression.GZIP
     from(testResultingImage) {
         include '**'
