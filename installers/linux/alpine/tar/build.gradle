@@ -110,9 +110,9 @@ task createTestImage(type: Exec) {
 
 task packageTestImage(type: Tar) {
     dependsOn createTestImage
-    description 'Package test results'
-    archiveName "amazon-corretto-testimage-${project.version.full}-alpine-linux-${arch_alias}.tar.gz"
-    compression Compression.GZIP
+    description = 'Package test results'
+    archiveFileName = "amazon-corretto-testimage-${project.version.full}-alpine-linux-${arch_alias}.tar.gz"
+    compression = Compression.GZIP
     from(testResultingImage) {
         include '**'
     }
@@ -121,9 +121,9 @@ task packageTestImage(type: Tar) {
 
 task packageDebugSymbols(type: Tar) {
     dependsOn packageTestImage
-    description 'Package debug symbols'
-    archiveName "amazon-corretto-debugsymbols-${project.version.full}-alpine-linux-${arch_alias}.tar.gz"
-    compression Compression.GZIP
+    description = 'Package debug symbols'
+    archiveFileName = "amazon-corretto-debugsymbols-${project.version.full}-alpine-linux-${arch_alias}.tar.gz"
+    compression = Compression.GZIP
     from(jdkResultingImage) {
         include 'bin/*.diz'
         include 'lib/*.diz'
@@ -133,11 +133,11 @@ task packageDebugSymbols(type: Tar) {
 }
 
 task packageBuildResults(type: Tar) {
-    description 'Compresses the JDK image and puts the results in build/distributions.'
+    description = 'Compresses the JDK image and puts the results in build/distributions.'
     dependsOn packageDebugSymbols
     dependsOn executeBuild
-    archiveName "amazon-corretto-${project.version.full}-alpine-linux-${arch_alias}.tar.gz"
-    compression Compression.GZIP
+    archiveFileName = "amazon-corretto-${project.version.full}-alpine-linux-${arch_alias}.tar.gz"
+    compression = Compression.GZIP
     from(buildRoot) {
         include project.rootFiles
     }
@@ -156,7 +156,7 @@ task packageBuildResults(type: Tar) {
     // See https://github.com/corretto/corretto-11/issues/129
     from(jdkResultingImage) {
         include 'legal/**'
-        fileMode 0444
+        fileMode = 0444
     }
     into "amazon-corretto-${project.version.full}-alpine-linux-${arch_alias}"
 }

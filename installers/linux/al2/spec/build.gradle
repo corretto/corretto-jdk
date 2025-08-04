@@ -64,8 +64,8 @@ task inflateRpmSpec {
 
 task copySourceTar(type: Tar) {
     dependsOn project.configurations.compile, inflateRpmSpec
-    compression Compression.GZIP
-    archiveName project.configurations.compile.singleFile.name
+    compression = Compression.GZIP
+    archiveFileName = project.configurations.compile.singleFile.name
     from("$buildDir") {
         include "java-${project.version.major}-amazon-corretto.spec"
         into 'rpm'

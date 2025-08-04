@@ -20,7 +20,7 @@
  */
 
 plugins {
-    id 'nebula.ospackage' version 'latest.release'
+    id 'com.netflix.nebula.ospackage' version 'latest.release'
 }
 
 dependencies {
@@ -54,22 +54,22 @@ def jinfoName = ".${jdkInstallationDirName}.jinfo"
 ospackage {
     // Valid version must start with a digit and only contain [A-Za-z0-9.+:~-]
     // See http://manpages.ubuntu.com/manpages/artful/en/man5/deb-version.5.html
-    version project.version.upstream
-    release project.version.revision
+    version = project.version.upstream
+    release = project.version.revision
 
-    url "${packageInfo.url}"
-    vendor "${packageInfo.vendor}"
-    packager "${packageInfo.packager}"
-    license "${packageInfo.license}"
-    buildHost "${packageInfo.buildHost}"
-    maintainer "${packageInfo.maintainer}"
-    packageGroup 'java'
-    priority 'optional'
-    user 'root'
-    permissionGroup 'root'
-    epoch 1
-    arch arch_deb
-    multiArch SAME
+    url = "${packageInfo.url}"
+    vendor = "${packageInfo.vendor}"
+    packager = "${packageInfo.packager}"
+    license = "${packageInfo.license}"
+    buildHost = "${packageInfo.buildHost}"
+    maintainer = "${packageInfo.maintainer}"
+    packageGroup = 'java'
+    priority = 'optional'
+    user = 'root'
+    permissionGroup = 'root'
+    epoch = 1
+    arch = arch_deb
+    multiArch = SAME
 }
 
 /**
@@ -124,13 +124,13 @@ task inflateJinfoTemplate(type: Copy) {
  * distributions folder.
  */
 task generateJdkDeb(type: Deb) {
-    description 'Create the DEB package for Corretto JDK'
+    description = 'Create the DEB package for Corretto JDK'
     dependsOn inflateDebScriptTemplate
     dependsOn inflateJinfoTemplate
 
-    packageName jdkPackageName
-    packageDescription "Amazon Corretto\'s packaging of the OpenJDK ${project.version.major} code."
-    summary "Amazon Corretto ${project.version.major} development environment"
+    packageName = jdkPackageName
+    packageDescription = "Amazon Corretto\'s packaging of the OpenJDK ${project.version.major} code."
+    summary = "Amazon Corretto ${project.version.major} development environment"
 
     postInstall file("$buildRoot/scripts/postin_jdk.sh")
     preUninstall file("$buildRoot/scripts/preun_jdk.sh")
@@ -188,13 +188,13 @@ task generateJdkDeb(type: Deb) {
     // See https://github.com/corretto/corretto-11/issues/129
     from("${jdkBinaryDir}/legal") {
         into "${jdkHome}/legal"
-        fileMode 0444
+        fileMode = 0444
     }
 
     if (!project.excludeReadmeJavaSE) {
         from("${jdkBinaryDir}/README.JAVASE") {
             into jdkHome
-            fileMode 0444
+            fileMode = 0444
         }
     }
 
