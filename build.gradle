@@ -232,7 +232,7 @@ project(':prebuild') {
     def generateToolMain = "build.tools.generatecacerts.GenerateCacerts"
 
     task copyToolSrc(type: Copy) {
-        description 'Copy utility tool source to the project root'
+        description = 'Copy utility tool source to the project root'
         from fileTree("$rootDir/make/jdk/src/classes") {
             include 'build/tools/generatecacerts/*'
         }
@@ -242,7 +242,7 @@ project(':prebuild') {
     task buildTool(type: JavaCompile) {
         dependsOn copyToolSrc
         source = fileTree(dir: preBuildSrc, include: '**/*.java')
-        destinationDir = file(classPath)
+        destinationDirectory = file(classPath)
         classpath = files(classPath)
     }
 
@@ -255,7 +255,7 @@ project(':prebuild') {
 
         // See commit for [JDK-8275252](https://github.com/corretto/corretto-jdk/commit/bd2b41dd7062c50f3aaebec2137d5fdd9546c120)
         jvmArgs = ['-Dkeystore.pkcs12.certProtectionAlgorithm=NONE', '-Dkeystore.pkcs12.macAlgorithm=NONE']
-        main = generateToolMain
+        mainClass = generateToolMain
         args = [jdkCaDir, project.caCerts]
     }
 
@@ -286,9 +286,9 @@ project(':openjdksrc') {
      * Compresses a snapshot of the source code used to perform the build.
      */
     task sourceDistributionTarball(type: Tar) {
-        description 'Assemble source files required for building and distributing Corretto.'
-        compression Compression.GZIP
-        archiveName sourceTar
+        description = 'Assemble source files required for building and distributing Corretto.'
+        compression = Compression.GZIP
+        archiveFileName = sourceTar
         def sourceTarRootFiles = ['LICENSE',
                     'ADDITIONAL_LICENSE_INFO',
                     'README',

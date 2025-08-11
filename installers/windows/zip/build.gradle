@@ -66,7 +66,7 @@ task copyImage(type: Copy) {
 
 task packageTestImage(type: Zip) {
     dependsOn copyImage
-    archiveName "${project.correttoTestImageArchiveName}.zip"
+    archiveFileName = "${project.correttoTestImageArchiveName}.zip"
     from("${copyImage.destinationDir}/test") {
         include '**'
     }
@@ -75,7 +75,7 @@ task packageTestImage(type: Zip) {
 
 task packageDebugSymbols(type: Zip) {
     dependsOn packageTestImage
-    archiveName "${project.correttoDebugSymbolsArchiveName}.zip"
+    archiveFileName = "${project.correttoDebugSymbolsArchiveName}.zip"
 
     from("${copyImage.destinationDir}/jdk") {
         include 'bin/*.diz'
@@ -87,7 +87,7 @@ task packageDebugSymbols(type: Zip) {
 
 task packageBuildResults(type: Zip) {
     dependsOn packageDebugSymbols
-    archiveName  = "unsigned-jdk-image.zip"
+    archiveFileName = "unsigned-jdk-image.zip"
 
     from("${copyImage.destinationDir}/jdk") {
         exclude 'demo'
