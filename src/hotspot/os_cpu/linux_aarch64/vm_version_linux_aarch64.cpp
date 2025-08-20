@@ -71,6 +71,10 @@
 #define HWCAP_SVE (1 << 22)
 #endif
 
+#ifndef HWCAP_SB
+#define HWCAP_SB (1 << 29)
+#endif
+
 #ifndef HWCAP_PACA
 #define HWCAP_PACA (1 << 30)
 #endif
@@ -143,12 +147,17 @@ void VM_Version::get_os_cpu_info() {
       HWCAP_SHA3    |
       HWCAP_SHA512  |
       HWCAP_SVE     |
+      HWCAP_SB      |
       HWCAP_PACA    |
       HWCAP_FPHP    |
       HWCAP_ASIMDHP);
 
-  if (auxv2 & HWCAP2_SVE2) set_feature(CPU_SVE2);
-  if (auxv2 & HWCAP2_SVEBITPERM) set_feature(CPU_SVEBITPERM);
+  if (auxv2 & HWCAP2_SVE2) {
+    set_feature(CPU_SVE2);
+  }
+  if (auxv2 & HWCAP2_SVEBITPERM) {
+    set_feature(CPU_SVEBITPERM);
+  }
 
   uint64_t ctr_el0;
   uint64_t dczid_el0;

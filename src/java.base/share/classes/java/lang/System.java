@@ -1543,13 +1543,13 @@ public final class System {
     /**
      * Returns whether the AOT system is recording training data.
      * @return whether the AOT system is recording training data.
-     * @since 25
+     * @since 26
      */
     public static native boolean AOTIsTraining();
 
     /**
      * Will stop the recording of AOT training data.
-     * @since 25
+     * @since 26
      */
     public static native void AOTEndTraining();
 
@@ -2034,6 +2034,9 @@ public final class System {
             }
             public byte[] getRawExecutableTypeAnnotations(Executable executable) {
                 return Class.getExecutableTypeAnnotationBytes(executable);
+            }
+            public int getClassFileAccessFlags(Class<?> klass) {
+                return klass.getClassFileAccessFlags();
             }
             public <E extends Enum<E>>
             E[] getEnumConstantsShared(Class<E> klass) {

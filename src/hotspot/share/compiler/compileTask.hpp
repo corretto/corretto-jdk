@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1998, 2024, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 1998, 2025, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -143,7 +143,7 @@ class CompileTask : public CHeapObj<mtCompiler> {
                   bool requires_online_compilation, bool is_blocking);
   ~CompileTask();
 
-  static void         wait_for_no_active_tasks();
+  static void wait_for_no_active_tasks();
 
   int          compile_id() const                   { return _compile_id; }
   Method*      method() const                       { return _method; }

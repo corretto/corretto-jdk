@@ -29,9 +29,11 @@
 #include "memory/allocation.hpp"
 #include "nmt/memTag.hpp"
 #include "oops/oopsHierarchy.hpp"
+#include "runtime/stubInfo.hpp"
 #include "runtime/vm_version.hpp"
-#include "utilities/sizes.hpp"
 #include "utilities/exceptions.hpp"
+#include "utilities/sizes.hpp"
+
 /*
  * AOT Code Cache collects code from Code Cache and corresponding metadata
  * during application training run.
@@ -93,15 +95,13 @@ public:
   };
 
 private:
-  Method*       _method;
   Kind   _kind;
-  uint   _id;          // Adapter's id, vmIntrinsic::ID for stub or name's hash for nmethod
+  uint   _id;          // Adapter's id, vmIntrinsic::ID for stub or Method's offset in AOTCache for nmethod
   uint   _offset;      // Offset to entry
   uint   _size;        // Entry size
   uint   _name_offset; // Method's or intrinsic name
   uint   _name_size;
   uint   _num_inlined_bytecodes;
-
   uint   _code_offset; // Start of code in cache
   uint   _code_size;   // Total size of all code sections
 
@@ -121,7 +121,6 @@ public:
                uint code_offset, uint code_size,
                Kind kind, uint id) {
     assert(kind == AOTCodeEntry::Stub, "sanity check");
-    _method       = nullptr;
     _kind         = kind;
     _id           = id;
     _offset       = offset;
@@ -152,7 +151,6 @@ public:
                uint comp_id = 0,
                bool has_clinit_barriers = false,
                bool for_preload = false) {
-    _method       = nullptr;
     _kind         = kind;
     _id           = id;
     _offset       = offset;
@@ -183,9 +181,7 @@ public:
   // Delete is a NOP
   void operator delete( void *ptr ) {}
 
-  Method* method()  const { return _method; }
-  Method** method_addr() { return &_method; }
-  void set_method(Method* method) { _method = method; }
+  Method* method();
 
   Kind kind()         const { return _kind; }
   uint id()           const { return _id; }
@@ -525,7 +521,6 @@ public:
   AOTCodeEntry* find_entry(AOTCodeEntry::Kind kind, uint id, uint comp_level = 0);
   void invalidate_entry(AOTCodeEntry* entry);
 
-  void mark_method_pointer(AOTCodeEntry* entries, int count);
   void store_cpu_features(char*& buffer, uint buffer_size);
 
   bool finish_write();
@@ -557,19 +552,24 @@ public:
   bool write_dbg_strings(DbgStrings& dbg_strings, bool use_string_table);
 #endif // PRODUCT
 
+  // save and restore API for non-enumerable code blobs
   static bool store_code_blob(CodeBlob& blob,
                               AOTCodeEntry::Kind entry_kind,
-                              uint id, const char* name,
-                              int entry_offset_count = 0,
-                              int* entry_offsets = nullptr) NOT_CDS_RETURN_(false);
+                              uint id, const char* name) NOT_CDS_RETURN_(false);
 
   static CodeBlob* load_code_blob(AOTCodeEntry::Kind kind,
-                                  uint id, const char* name,
-                                  int entry_offset_count = 0,
-                                  int* entry_offsets = nullptr) NOT_CDS_RETURN_(nullptr);
+                                  uint id, const char* name) NOT_CDS_RETURN_(nullptr);
 
   static bool load_nmethod(ciEnv* env, ciMethod* target, int entry_bci, AbstractCompiler* compiler, CompLevel comp_level) NOT_CDS_RETURN_(false);
   static AOTCodeEntry* store_nmethod(nmethod* nm, AbstractCompiler* compiler, bool for_preload) NOT_CDS_RETURN_(nullptr);
+
+  // save and restore API for enumerable code blobs
+  static bool store_code_blob(CodeBlob& blob,
+                              AOTCodeEntry::Kind entry_kind,
+                              BlobId id) NOT_CDS_RETURN_(false);
+
+  static CodeBlob* load_code_blob(AOTCodeEntry::Kind kind,
+                                  BlobId id) NOT_CDS_RETURN_(nullptr);
 
   static uint store_entries_cnt() {
     if (is_on_for_dump()) {
@@ -679,7 +679,7 @@ public:
   // convenience method to convert offset in AOTCodeEntry data to its address
   bool compile_nmethod(ciEnv* env, ciMethod* target, AbstractCompiler* compiler);
 
-  CodeBlob* compile_code_blob(const char* name, int entry_offset_count, int* entry_offsets);
+  CodeBlob* compile_code_blob(const char* name);
 
   Klass* read_klass(const methodHandle& comp_method);
   Method* read_method(const methodHandle& comp_method);
