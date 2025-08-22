@@ -22,30 +22,29 @@
  *
  */
 
-#ifndef LINUX_COMPILER_THREAD_TIMEOUT_LINUX_HPP
-#define LINUX_COMPILER_THREAD_TIMEOUT_LINUX_HPP
+#ifndef SHARE_SERVICES_CPUTIMEUSAGE_HPP
+#define SHARE_SERVICES_CPUTIMEUSAGE_HPP
 
-#include "memory/allocation.hpp"
-#include "nmt/memTag.hpp"
-#include "utilities/macros.hpp"
+#include "memory/allStatic.hpp"
+#include "utilities/globalDefinitions.hpp"
 
-#include <csignal>
-#include <ctime>
+namespace CPUTimeUsage {
+  class GC : public AllStatic {
+  public:
+    static jlong total();
+    static jlong gc_threads();
+    static jlong vm_thread();
+    static jlong stringdedup();
+  };
 
-class CompilerThreadTimeoutLinux : public CHeapObj<mtCompiler> {
-#ifdef ASSERT
- public:
-  static const int TIMEOUT_SIGNAL = SIGALRM;
-  void compiler_signal_handler(int signo, siginfo_t* info, void* context);
- private:
-  timer_t          _timer;
-#endif // ASSERT
- public:
-  CompilerThreadTimeoutLinux() DEBUG_ONLY(: _timer(nullptr)) {};
+  class Error : public AllStatic {
+  private:
+    static volatile bool _has_error;
 
-  bool init_timeout();
-  void arm();
-  void disarm();
-};
+  public:
+    static bool has_error();
+    static void mark_error();
+  };
+}
 
-#endif //LINUX_COMPILER_THREAD_TIMEOUT_LINUX_HPP
+#endif // SHARE_SERVICES_CPUTIMEUSAGE_HPP
