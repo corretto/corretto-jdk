@@ -270,12 +270,11 @@ We use a small set of benchmarks to demonstrate the performance of the optimizat
 | Benchmark  | Source |
 | ------------- | ------------- |
 |[helidon-quickstart-se](test/hotspot/jtreg/premain/helidon-quickstart-se) | https://helidon.io/docs/v4/se/guides/quickstart|
+|[javac-bench](test/hotspot/jtreg/premain/javac_bench) | Using Javac to compile 50 source files |
 |[micronaut-first-app](test/hotspot/jtreg/premain/micronaut-first-app) | https://guides.micronaut.io/latest/creating-your-first-micronaut-app-maven-java.html|
 |[quarkus-getting-started](test/hotspot/jtreg/premain/quarkus-getting-started) | https://quarkus.io/guides/getting-started|
 |[spring-boot-getting-started](test/hotspot/jtreg/premain/spring-boot-getting-started) | https://spring.io/guides/gs/spring-boot|
 |[spring-petclinic](test/hotspot/jtreg/premain/spring-petclinic) | https://github.com/spring-projects/spring-petclinic|
-
-*(FIXME: add a benchmark for javac)*
 
 ### Benchmarking Against JDK Main-line
 
@@ -290,7 +289,7 @@ To can compare the performance of Leyden vs the main-line JDK, you need:
 The same steps are used for benchmarking all of the above demos. For example:
 
 ```
-$ cd helidon-quickstart-se
+$ cd test/hotspot/jtreg/premain/helidon-quickstart-se
 $ make PREMAIN_HOME=/repos/leyden/build/linux-x64/images/jdk \
        MAINLINE_HOME=/repos/jdk/build/linux-x64/images/jdk \
        BLDJDK_HOME=/usr/local/jdk21 \
@@ -366,9 +365,10 @@ For example, a number of "premain aot cache: 255" indicates that if the applicat
 1000 ms to start-up with the JDK main-line, it takes only 255 ms to start up when all the
 current set of Leyden optimizations are enabled.
 
-The benchmark results are collected with `make bench` in the following directories:
+The benchmark results are collected with `make bench` in the following directories under [test/hotspot/jtreg/premain](test/hotspot/jtreg/premain):
 
 - `helidon-quickstart-se`
+- `javac-bench`
 - `micronaut-first-app`
 - `quarkus-getting-started`
 - `spring-boot-getting-started`
@@ -380,17 +380,17 @@ The meaning of the four rows in the following the charts:
 | ------------- | ------------- |
 | **mainline default**            |Run benchmark with no optimizations|
 | **mainline custom static cds**  |Run benchmark with a custom static CDS archive|
-| **mainline aot cache**          |Run benchmark with a custom AOT cache (JEP 483)|
-| **premain aot cache**           |Run benchmark with a custom AOT cache, plus all Leyden optimizations such as AOT profiles and AOT-compiled methods|
+| **mainline aot cache**          |Run benchmark with a custom AOT cache (JDK mainline)|
+| **premain aot cache**           |Run benchmark with a custom AOT cache (Leyden Premain Prototype)|
 
 These JDK versions were used in the comparisons:
 
-- JDK main-line: JDK 24, build 24+36-3646
-- Leyden: https://github.com/openjdk/leyden/tree/bbac8f2d845aa6408182ca3ff9ce60b5ca6e0390
+- JDK main-line: JDK 25, build 25+37-LTS-3491
+- Leyden: https://github.com/openjdk/leyden/tree/8df3504f55cabe9ff8a1d239f469b18d00ff802b
 
-For details information about the hardware and raw numbers, see [bench.20250307.txt](test/hotspot/jtreg/premain/bench_data/bench.20250307.txt)
+For details information about the hardware and raw numbers, see [bench.20250912.txt](test/hotspot/jtreg/premain/bench_data/bench.20250912.txt)
 
-### Helidon Quick Start (SE) Demo (3.92x improvement)
+### Helidon Quick Start (SE) Demo (3.52x improvement)
 
 ```mermaid
 ---
@@ -402,10 +402,25 @@ config:
 xychart-beta
     x-axis "variant" ["mainline default", "mainline custom static cds", "mainline aot cache", "premain aot cache"]
     y-axis "Elapsed time (normalized, smaller is better)" 0 --> 1000
-    bar [1000, 516, 347, 255]
+    bar [1000, 484, 398, 351]
 ```
 
-### Micronaut First App Demo (3.12x improvement)
+### JavacBenchApp 50 source files (2.17x improvement)
+
+```mermaid
+---
+config:
+    xyChart:
+        chartOrientation: horizontal
+        height: 300
+---
+xychart-beta
+    x-axis "variant" ["mainline default", "mainline custom static cds", "mainline aot cache", "premain aot cache"]
+    y-axis "Elapsed time (normalized, smaller is better)" 0 --> 1000
+    bar [1000, 779, 567, 460]
+```
+
+### Micronaut First App Demo (2.85x improvement)
 
 ```mermaid
 ---
@@ -420,7 +435,7 @@ xychart-beta
     bar [1000, 475, 366, 321]
 ```
 
-### Quarkus Getting Started Demo (3.52x improvement)
+### Quarkus Getting Started Demo (2.73x improvement)
 
 ```mermaid
 ---
@@ -432,10 +447,10 @@ config:
 xychart-beta
     x-axis "variant" ["mainline default", "mainline custom static cds", "mainline aot cache", "premain aot cache"]
     y-axis "Elapsed time (normalized, smaller is better)" 0 --> 1000
-    bar [1000, 437, 380, 284]
+    bar [1000, 487, 412, 367]
 ```
 
-### Spring-boot Getting Started Demo (3.48x improvement)
+### Spring-boot Getting Started Demo (3.96x improvement)
 
 ```mermaid
 ---
@@ -447,10 +462,10 @@ config:
 xychart-beta
     x-axis "variant" ["mainline default", "mainline custom static cds", "mainline aot cache", "premain aot cache"]
     y-axis "Elapsed time (normalized, smaller is better)" 0 --> 1000
-    bar [1000, 502, 382, 287]
+    bar [1000, 496, 334, 253]
 ```
 
-### Spring PetClinic Demo (2.65x improvement)
+### Spring PetClinic Demo (3.24 improvement)
 
 ```mermaid
 ---
@@ -462,7 +477,7 @@ config:
 xychart-beta
     x-axis "variant" ["mainline default", "mainline custom static cds", "mainline aot cache", "premain aot cache"]
     y-axis "Elapsed time (normalized, smaller is better)" 0 --> 1000
-    bar [1000, 625, 586, 376]
+    bar [1000, 598, 554, 308]
 ```
 
 ## 6. More Documentation
