@@ -559,6 +559,8 @@
   nonstatic_field(nmethod,                     _aot_code_entry,                               AOTCodeEntry*)                         \
   volatile_nonstatic_field(nmethod,            _exception_cache,                              ExceptionCache*)                       \
                                                                                                                                      \
+  nonstatic_field(AOTCodeEntry,                _for_preload,                                  bool)                                  \
+                                                                                                                                     \
   nonstatic_field(Deoptimization::UnrollBlock, _size_of_deoptimized_frame,                    int)                                   \
   nonstatic_field(Deoptimization::UnrollBlock, _caller_adjustment,                            int)                                   \
   nonstatic_field(Deoptimization::UnrollBlock, _number_of_frames,                             int)                                   \
@@ -675,7 +677,6 @@
   volatile_nonstatic_field(ObjectMonitor,      _metadata,                                     uintptr_t)                             \
   unchecked_nonstatic_field(ObjectMonitor,     _object,                                       sizeof(void *)) /* NOTE: no type */    \
   volatile_nonstatic_field(ObjectMonitor,      _owner,                                        int64_t)                               \
-  volatile_nonstatic_field(ObjectMonitor,      _stack_locker,                                 BasicLock*)                            \
   volatile_nonstatic_field(ObjectMonitor,      _next_om,                                      ObjectMonitor*)                        \
   volatile_nonstatic_field(BasicLock,          _metadata,                                     uintptr_t)                             \
   nonstatic_field(ObjectMonitor,               _contentions,                                  int)                                   \
@@ -1642,14 +1643,6 @@
   declare_constant(T_NARROWOOP_size)                                      \
   declare_constant(T_NARROWKLASS_size)                                    \
   declare_constant(T_VOID_size)                                           \
-                                                                          \
-  /**********************************************/                        \
-  /* LockingMode enum (globalDefinitions.hpp) */                          \
-  /**********************************************/                        \
-                                                                          \
-  declare_constant(LM_MONITOR)                                            \
-  declare_constant(LM_LEGACY)                                             \
-  declare_constant(LM_LIGHTWEIGHT)                                        \
                                                                           \
   /*********************************************/                         \
   /* MethodCompilation (globalDefinitions.hpp) */                         \

@@ -2737,7 +2737,6 @@ void InstanceKlass::remove_unshareable_info() {
     // Remember this so we can avoid walking the hierarchy at runtime.
     set_verified_at_dump_time();
   }
-  _misc_flags.set_has_init_deps_processed(false);
 
   _misc_flags.set_has_init_deps_processed(false);
 
@@ -2914,22 +2913,19 @@ void InstanceKlass::restore_unshareable_info(ClassLoaderData* loader_data, Handl
 }
 
 bool InstanceKlass::can_be_verified_at_dumptime() const {
-  if (CDSConfig::preserve_all_dumptime_verification_states(this)) {
-    return true;
-  }
-
   if (AOTMetaspace::in_aot_cache(this)) {
     // This is a class that was dumped into the base archive, so we know
     // it was verified at dump time.
     return true;
   }
 
-  // Check if a class or any of its supertypes has a version older than 50.
-  // CDS will not perform verification of old classes during dump time because
-  // without changing the old verifier, the verification constraint cannot be
-  // retrieved during dump time.
-  // Verification of archived old classes will be performed during run time.
-  if (major_version() < 50 /*JAVA_6_VERSION*/) {
+  if (CDSConfig::is_preserving_verification_constraints()) {
+    return true;
+  }
+
+  if (CDSConfig::is_old_class_for_verifier(this)) {
+    // The old verifier does not save verification constraints, so at run time
+    // SystemDictionaryShared::check_verification_constraints() will not work for this class.
     return false;
   }
   if (super() != nullptr && !super()->can_be_verified_at_dumptime()) {
@@ -4062,9 +4058,12 @@ void InstanceKlass::print_class_load_helper(ClassLoaderData* loader_data,
   }
 
   info_stream.print(" loader:");
+#if INCLUDE_CDS
   if (in_aot_cache()) {
     info_stream.print(" %s", SystemDictionaryShared::loader_type_for_shared_class((Klass*)this));
-  } else if (loader_data == ClassLoaderData::the_null_class_loader_data()) {
+  } else
+#endif
+  if (loader_data == ClassLoaderData::the_null_class_loader_data()) {
     info_stream.print(" boot_loader");
   } else {
     oop class_loader = loader_data->class_loader();
