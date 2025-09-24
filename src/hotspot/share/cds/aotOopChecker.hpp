@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2010, 2025, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2025, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -22,29 +22,19 @@
  *
  */
 
-// Precompiled headers are turned off if the user passes
-// --disable-precompiled-headers to configure.
+#ifndef SHARE_CDS_AOTOOPCHECKER_HPP
+#define SHARE_CDS_AOTOOPCHECKER_HPP
 
-// These header files are selected using the output of Clang
-// '-ftime-trace' as a measure of how much time we spend
-// compiling them.
+#include "memory/allStatic.hpp"
+#include "oops/oopsHierarchy.hpp"
 
-#include "classfile/javaClasses.inline.hpp"
-#include "memory/allocation.hpp"
-#include "memory/iterator.inline.hpp"
-#include "oops/access.inline.hpp"
-#include "oops/instanceStackChunkKlass.inline.hpp"
-#include "oops/objArrayOop.inline.hpp"
-#include "oops/oop.inline.hpp"
-#include "oops/oopHandle.inline.hpp"
-#include "runtime/frame.inline.hpp"
-#include "runtime/javaThread.inline.hpp"
-#include "utilities/globalDefinitions.hpp"
-#if INCLUDE_SHENANDOAHGC
-#include "gc/shenandoah/shenandoahBarrierSet.inline.hpp"
-#include "gc/shenandoah/shenandoahHeap.inline.hpp"
-#endif
-#if INCLUDE_ZGC
-#include "gc/z/zGeneration.inline.hpp"
-#include "gc/z/zHeap.inline.hpp"
-#endif
+class AOTOopChecker : AllStatic {
+  static oop get_oop_field(oop obj, const char* name, const char* sig);
+
+public:
+  // obj is an object that's about to be stored into the AOT cache. Check if it
+  // can be safely cached.
+  static void check(oop obj);
+};
+
+#endif // SHARE_CDS_AOTOOPCHECKER_HPP
