@@ -1,6 +1,5 @@
 /*
- * Copyright (c) 1997, 2025, Oracle and/or its affiliates. All rights reserved.
- * Copyright (c) 2012, 2025 SAP SE. All rights reserved.
+ * Copyright (c) 2025, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -20,8 +19,26 @@
  * Please contact Oracle, 500 Oracle Parkway, Redwood Shores, CA 94065 USA
  * or visit www.oracle.com if you need additional information or have any
  * questions.
- *
  */
 
-// Including inline assembler functions that are shared between multiple PPC64 platforms.
-#include "atomicAccess_ppc.hpp"
+/*
+ * @test
+ * @bug 8354469
+ * @summary ensure password can be read from user's System.in
+ * @library /test/lib
+ * @modules java.base/sun.security.tools.keytool
+ */
+
+import jdk.test.lib.SecurityTools;
+
+import java.io.ByteArrayInputStream;
+import java.nio.charset.StandardCharsets;
+
+public class SetInPassword {
+    public static void main(String[] args) throws Exception {
+        SecurityTools.keytool("-keystore ks -storepass changeit -genkeypair -alias a -dname CN=A -keyalg EC")
+                .shouldHaveExitValue(0);
+        System.setIn(new ByteArrayInputStream("changeit".getBytes(StandardCharsets.UTF_8)));
+        sun.security.tools.keytool.Main.main("-keystore ks -alias a -certreq".split(" "));
+    }
+}
