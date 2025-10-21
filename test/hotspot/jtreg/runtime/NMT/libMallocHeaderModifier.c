@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2019, 2025, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2025, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -21,32 +21,32 @@
  * questions.
  */
 
-#include "gc/shared/gc_globals.hpp"
-#include "gc/z/zCPU.inline.hpp"
-#include "gc/z/zNUMA.inline.hpp"
-#include "runtime/globals_extension.hpp"
+#include "jni.h"
+#include <stdint.h>
+#include <string.h>
 
-void ZNUMA::pd_initialize() {
-  _enabled = false;
-  _count = !FLAG_IS_DEFAULT(ZFakeNUMA)
-      ? ZFakeNUMA
-      : 1;
-}
-
-uint32_t ZNUMA::id() {
-  if (is_faked()) {
-    // ZFakeNUMA testing, ignores _enabled
-    return ZCPU::id() % ZFakeNUMA;
-  }
-
+JNIEXPORT jint JNICALL
+Java_NMTPrintMallocSiteOfCorruptedMemory_modifyHeaderCanary(JNIEnv *env, jclass cls, jlong addr) {
+  *((jint*)(uintptr_t)addr - 1) = 0;
   return 0;
 }
 
-uint32_t ZNUMA::memory_id(uintptr_t addr) {
-  // NUMA support not enabled, assume everything belongs to node zero
+JNIEXPORT jint JNICALL
+Java_NMTPrintMallocSiteOfCorruptedMemory_modifyFooterCanary(JNIEnv *env, jclass cls, jlong addr, jint size) {
+  *((jbyte*)(uintptr_t)addr + size + 1) = 0;
+  return 0;
+}
+JNIEXPORT jint JNICALL
+Java_NMTPrintMallocSiteOfCorruptedMemory_modifyHeaderCanaryAndSiteMarker(JNIEnv *env, jclass cls, jlong addr) {
+  jbyte* p = (jbyte*)(uintptr_t)addr - 16;
+  memset(p, 0xFF , 16);
   return 0;
 }
 
-int ZNUMA::numa_id_to_node(uint32_t numa_id) {
-  ShouldNotCallThis();
+JNIEXPORT jint JNICALL
+Java_NMTPrintMallocSiteOfCorruptedMemory_modifyFooterCanaryAndSiteMarker(JNIEnv *env, jclass cls, jlong addr, jint size) {
+  jbyte* p = (jbyte*)(uintptr_t)addr - 16;
+  memset(p, 0xFF , 16);
+  *((jbyte*)(uintptr_t)addr + size + 1) = 0;
+  return 0;
 }
