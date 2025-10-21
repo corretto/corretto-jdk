@@ -9,6 +9,9 @@ env:
   LOCAL_BRANCH: develop
   LOCAL_LEYDEN: leyden
   
+permissions:
+  contents: write
+
 jobs:
     refresh-jdk:
         runs-on: ubuntu-latest
