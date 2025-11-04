@@ -44,3 +44,11 @@ jobs:
                 git fetch $UPSTREAM_LEYDEN premain || exit 1
                 git merge -m "Merging openjdk/leyden:premain to corretto-jdk:leyden" FETCH_HEAD
                 git push origin $LOCAL_LEYDEN
+
+            - name: "Update leyden version.txt from develop"
+              shell: bash
+              run: |
+                git checkout $LOCAL_LEYDEN
+                git restore --source origin/$LOCAL_BRANCH --staged --worktree -- version.txt
+                git commit -m "Automerged version.txt from $LOCAL_BRANCH to $LOCAL_LEYDEN" || true
+                git push origin $LOCAL_LEYDEN
