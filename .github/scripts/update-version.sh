@@ -7,7 +7,11 @@ UPSTREAM_REMOTE=$1
 # Load the current OpenJDK version
 source make/conf/version-numbers.conf
 
-BUILD_NUMBER=$(git ls-remote --tags ${UPSTREAM_REMOTE} |grep jdk-${DEFAULT_VERSION_FEATURE}+ | grep -vE "(-ga|{})$" | cut -d+ -f 2 |sort -n |tail -1)
+if [[ "${DEFAULT_VERSION_UPDATE}" == "0" ]]; then
+    BUILD_NUMBER=$(git ls-remote --tags ${UPSTREAM_REMOTE} |grep jdk-${DEFAULT_VERSION_FEATURE}+ | grep -vE "(-ga|{})$" | cut -d+ -f 2 |sort -n |tail -1)
+else
+    BUILD_NUMBER=$(git ls-remote --tags ${UPSTREAM_REMOTE} |grep jdk-${DEFAULT_VERSION_FEATURE}.${DEFAULT_VERSION_INTERIM}.${DEFAULT_VERSION_UPDATE} | grep -vE "(-ga|{})$" | cut -d+ -f 2 |sort -n |tail -1)
+fi
 
 # Load the current Corretto version
 CURRENT_VERSION=$(cat version.txt)
