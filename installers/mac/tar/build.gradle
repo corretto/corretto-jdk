@@ -83,8 +83,20 @@ task executeBuild(type: Exec) {
     commandLine 'make', 'images'
 }
 
-task executeTestBuild(type: Exec) {
+task executeAdditionalTargets(type: Exec) {
     dependsOn executeBuild
+    if (project.additionalMakeTargets) {
+        workingDir "$buildRoot"
+        def command = ['make']
+        command += project.additionalMakeTargets
+        commandLine command.flatten()
+    } else {
+        commandLine 'echo', 'No additional targets specified'
+    }
+}
+
+task executeTestBuild(type: Exec) {
+    dependsOn executeAdditionalTargets
     workingDir "$buildRoot"
     commandLine 'make','test-image'
 }

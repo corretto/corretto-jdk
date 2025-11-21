@@ -127,6 +127,8 @@ allprojects {
         asyncProfilerBinariesPath = project.findProperty("asyncProfilerBinariesPath") ?: ""
         asyncProfilerLegal = "${rootDir}/installers/legal/async-profiler.md"
 
+        additionalMakeTargets = (project.findProperty('corretto.additional_make_targets') ?: "").tokenize(',')
+
         // Valid value: null, release, debug, fastdebug, slowdebug
         correttoDebugLevel = "release" // Default: release
         switch(project.findProperty("corretto.debug_level")) {
