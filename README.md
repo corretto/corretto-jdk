@@ -29,7 +29,9 @@ _upstream-jdk_
 Welcome to the JDK!
 ===================
 
-For build instructions, please see either of these files:
+For build instructions please see the
+[online documentation](https://git.openjdk.org/jdk/blob/master/doc/building.md),
+or either of these files:
 
   * doc/building.html   (html version)
   * doc/building.md     (markdown version)
