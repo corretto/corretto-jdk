@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2017, 2025, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2025, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -21,20 +21,20 @@
  * questions.
  */
 
-
 /*
  * @test
- * @key randomness
+ * @bug 8364490
+ * @summary "Hello world" sanity test for SpecTrapLimitExtraEntries
  *
- * @summary converted from VM Testbase nsk/monitoring/GarbageCollectorMXBean/CollectionCounters/CollectionCounters003.
- * VM Testbase keywords: [monitoring]
- *
- * @requires vm.opt.DisableExplicitGC != "true"
- * @library /vmTestbase
- *          /test/lib
- * @run main/othervm -XX:-UseGCOverheadLimit
- *      nsk.monitoring.GarbageCollectorMXBean.CollectionCounters.CollectionCounters001.CollectionCounters001
- *      -testMode=server
- *      -MBeanServer=custom
+ * @run main/othervm -XX:+UnlockExperimentalVMOptions -XX:SpecTrapLimitExtraEntries=0 compiler.arguments.TestSpecTrapLimitExtraEntries
+ * @run main/othervm -XX:+UnlockExperimentalVMOptions -XX:SpecTrapLimitExtraEntries=100 compiler.arguments.TestSpecTrapLimitExtraEntries
  */
 
+package compiler.arguments;
+
+public class TestSpecTrapLimitExtraEntries {
+
+    public static void main(String[] args) {
+        System.out.println("Passed");
+    }
+}

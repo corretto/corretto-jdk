@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2021, 2025, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2025, Microsoft, Inc. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -22,42 +22,34 @@
  * or visit www.oracle.com if you need additional information or have any
  * questions.
  */
-package sun.nio.ch;
+package com.sun.management.internal;
 
-import java.io.InputStream;
-import java.io.OutputStream;
-import java.nio.channels.ReadableByteChannel;
-import java.nio.channels.WritableByteChannel;
+import javax.management.ObjectName;
+import jdk.management.HotSpotAOTCacheMXBean;
+import sun.management.Util;
+import sun.management.VMManagement;
 
 /**
- * Factory methods for input/output streams based on channels.
+ * Implementation class for the AOT Cache subsystem.
+ *
+ * ManagementFactory.getRuntimeMXBean() returns an instance
+ * of this class.
  */
-public class Streams {
-    // The maximum number of bytes to read/write per syscall to avoid needing
-    // a huge buffer from the temporary buffer cache
-    static final int MAX_BUFFER_SIZE = 128 * 1024;
+public class HotSpotAOTCacheImpl implements HotSpotAOTCacheMXBean {
 
-    private Streams() { }
-
+    private final VMManagement jvm;
     /**
-     * Return an input stream that reads bytes from the given channel.
+     * Constructor of HotSpotAOTCacheImpl class.
      */
-    public static InputStream of(ReadableByteChannel ch) {
-        if (ch instanceof SocketChannelImpl sc) {
-            return new SocketInputStream(sc);
-        } else {
-            return new ChannelInputStream(ch);
-        }
+    HotSpotAOTCacheImpl(VMManagement vm) {
+        this.jvm = vm;
     }
 
-    /**
-     * Return an output stream that writes bytes to the given channel.
-     */
-    public static OutputStream of(WritableByteChannel ch) {
-        if (ch instanceof SocketChannelImpl sc) {
-            return new SocketOutputStream(sc);
-        } else {
-            return new ChannelOutputStream(ch);
-        }
+    public boolean endRecording() {
+        return jvm.endAOTRecording();
+    }
+
+    public ObjectName getObjectName() {
+        return Util.newObjectName("jdk.management:type=HotSpotAOTCache");
     }
 }
