@@ -74,12 +74,16 @@ ospackage {
 
 /**
  * Uncompress and copy the universal Corretto artifact
- * tar for DEB packaging.
+ * tar for DEB packaging via external tar to correctly handle symlinks.
  */
-task extractUniversalTar(type: Copy) {
+task extractUniversalTar(type: Exec) {
     dependsOn project.configurations.compile
-    from tarTree(project.configurations.compile.singleFile)
-    into buildRoot
+
+    inputs.file project.configurations.compile.singleFile
+    outputs.dir jdkBinaryDir
+
+    workingDir buildRoot
+    commandLine 'tar', 'xvf', project.configurations.compile.singleFile
 }
 
 /**

@@ -157,7 +157,6 @@ task prepareArtifacts {
                 include "Contents/Home/conf/**"
                 include "Contents/Home/include/**"
                 include "Contents/Home/jmods/**"
-                include "Contents/Home/legal/**"
                 include "Contents/Home/lib/**"
                 include "Contents/Home/man/man1/**"
                 include "Contents/Home/release"
@@ -171,6 +170,12 @@ task prepareArtifacts {
             }
             into "${buildDir}/${correttoMacDir}"
         }
+
+        // cp preserves symlinks
+        exec {
+            commandLine 'cp', '-R', "${jdkResultingImage}/${correttoMacDir}/Contents/Home/legal", "${buildDir}/${correttoMacDir}/Contents/Home/"
+        }
+
         // Set the directory as bundle
         exec {
             commandLine "SetFile", "-a", "B", "${buildDir}/${correttoMacDir}"

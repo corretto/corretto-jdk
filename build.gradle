@@ -98,7 +98,7 @@ allprojects {
 
         // If this is a certified release build, exclude the README.JAVASE file
         excludeReadmeJavaSE = Boolean.parseBoolean(project.findProperty("corretto.excludeReadmeJavaSE"))
-        rootFiles = ['ADDITIONAL_LICENSE_INFO', 'ASSEMBLY_EXCEPTION', 'LICENSE', 'README.md', 'commitId.txt', 'version.txt']
+        rootFiles = ['README.md', 'commitId.txt', 'version.txt']
         if (!excludeReadmeJavaSE) {
             rootFiles += 'README.JAVASE'
         }
@@ -321,5 +321,20 @@ project(':openjdksrc') {
 
     artifacts {
         archives sourceDistributionTarball
+    }
+}
+
+def runCmdAndLog(Project project, List<String> args) {
+    def output = new ByteArrayOutputStream()
+    def result = project.exec {
+        commandLine args
+        standardOutput = output
+        errorOutput = output
+        ignoreExitValue = true
+    }
+
+    project.logger.info("OUTPUT:\n${output}")
+    if (result.exitValue != 0) {
+        throw new GradleException("Command '${args.join("' '")}' failed with exit code ${result.exitValue}")
     }
 }

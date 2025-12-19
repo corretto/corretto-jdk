@@ -153,36 +153,43 @@ task packageDebugSymbols(type: Tar) {
     }
 }
 
-task packageBuildResults(type: Tar) {
-    description = 'Compresses the JDK image and puts the results in build/distributions.'
+task packageBuildResults {
+    description 'Compresses the JDK image and puts the results in build/distributions.'
     dependsOn packageDebugSymbols
     dependsOn executeBuild
     dependsOn bundleThirdPartyBinaries
-    archiveFileName = "amazon-corretto-${project.version.full}-alpine-linux-${arch_alias}.tar.gz"
-    compression = Compression.GZIP
-    from(buildRoot) {
-        include project.rootFiles
-    }
-    from(jdkResultingImage) {
-        include 'bin/**'
-        include 'conf/**'
-        include 'include/**'
-        include 'jmods/**'
-        include 'lib/**'
-        include 'man/man1/**'
-        include 'release'
-        exclude '**/*.diz'
-    }
 
-    // Copy legal directory specifically to set permission correctly.
-    // See https://github.com/corretto/corretto-11/issues/129
-    from(jdkResultingImage) {
-        include 'legal/**'
-        fileMode = 0444
+    def jdkArchiveName = "amazon-corretto-${project.version.full}-alpine-linux-${arch_alias}"
+    def outputTarFile = "${distributionDir}/${jdkArchiveName}.tar"
+    def prefix = jdkArchiveName
+
+    inputs.files(project.rootFiles)
+    inputs.dir(jdkResultingImage)
+    outputs.file("${outputTarFile}.gz")
+
+    doLast {
+        // --xform option adds prefix to each file name, but not to symlink targets (S modifier)
+        def script = """
+            set -e -x
+
+            output=`realpath "$outputTarFile"`
+            rm -f "\$output.gz"
+            pushd "$buildRoot"
+            tar cvf "\$output" --xform 's|^|$prefix/|S' "${project.rootFiles.join('" "')}"
+            popd
+            pushd "$jdkResultingImage"
+            tar rvf "\$output" --xform 's|^|$prefix/|S' --exclude '*.diz' bin conf include jmods lib man/man1 release
+            find legal -type f | xargs -n100 chmod 444
+            find legal -type d | xargs -n100 chmod 755
+            tar rvf "\$output" --xform 's|^|$prefix/|S' legal
+            popd
+            gzip -9 "\$output"
+        """
+
+        runCmdAndLog(project, ['bash', '-c', script])
     }
-    into "amazon-corretto-${project.version.full}-alpine-linux-${arch_alias}"
 }
 
 artifacts {
-    archives packageBuildResults
+    archives file: packageBuildResults.outputs.files.singleFile, builtBy: packageBuildResults
 }
