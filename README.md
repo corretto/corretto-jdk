@@ -23,6 +23,9 @@ _develop_
 _upstream-jdk_
 : The branch is similar to master at [openjdk/jdk](https://github.com/openjdk/jdk). This branch merges into develop.
 
+### Download Links
+Release builds can be found by version on the github [release page](https://github.com/corretto/corretto-jdk/releases). Nightly builds can be found on our [download page](https://downloads.corretto.aws/#/downloads?build=nightly&version=tip).
+
 ### OpenJDK Readme
 ```
 
