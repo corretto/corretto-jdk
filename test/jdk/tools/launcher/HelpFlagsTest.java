@@ -64,6 +64,9 @@ public class HelpFlagsTest extends TestHelper {
         "jweblauncher",
         "jcontrol",
         "ssvagent"
+        // asprof don't test
+        "asprof",
+        "jfrconv"
     };
 
     // Lists which tools support which flags.
