@@ -56,15 +56,16 @@ task configureBuild(type: Exec) {
 
 task executeBuild(type: Exec) {
     dependsOn configureBuild
-    workingDir buildRoot
-    commandLine 'make', 'images'
     outputs.dir jdkResultingImage
+    workingDir buildRoot
+    commandLine 'bash', '-c', "make images ${project.correttoMakeOptions}"
 }
 
 task createTestImage(type: Exec) {
     dependsOn executeBuild
+    outputs.dir testResultingImage
     workingDir "$buildRoot"
-    commandLine 'make','test-image'
+    commandLine 'bash', '-c', "make test-image ${project.correttoMakeOptions}"
 }
 
 task packageTestImage(type: Zip) {

@@ -79,8 +79,9 @@ task configureBuild(type: Exec) {
 
 task executeBuild(type: Exec) {
     dependsOn configureBuild
+    outputs.dir jdkResultingImage
     workingDir "$buildRoot"
-    commandLine 'make', 'images'
+    commandLine 'bash', '-c', "make images ${project.correttoMakeOptions}"
 }
 
 task executeAdditionalTargets(type: Exec) {
@@ -89,7 +90,11 @@ task executeAdditionalTargets(type: Exec) {
         workingDir "$buildRoot"
         def command = ['make']
         command += project.additionalMakeTargets
-        commandLine command.flatten()
+	if (project.correttoMakeOptions.isEmpty()) {
+	    commandLine command.flatten()
+	} else {
+	    commandLine 'bash', '-c', "${command.flatten()} ${project.correttoMakeOptions}"
+	}
     } else {
         commandLine 'echo', 'No additional targets specified'
     }
@@ -97,8 +102,9 @@ task executeAdditionalTargets(type: Exec) {
 
 task executeTestBuild(type: Exec) {
     dependsOn executeAdditionalTargets
+    outputs.dir testResultingImage
     workingDir "$buildRoot"
-    commandLine 'make','test-image'
+    commandLine 'bash', '-c', "make test-image ${project.correttoMakeOptions}"
 }
 
 task prepareArtifacts {
