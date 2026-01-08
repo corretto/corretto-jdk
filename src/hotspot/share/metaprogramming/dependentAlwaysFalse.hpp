@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2001, 2024, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2025, 2026, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -19,24 +19,18 @@
  * Please contact Oracle, 500 Oracle Parkway, Redwood Shores, CA 94065 USA
  * or visit www.oracle.com if you need additional information or have any
  * questions.
- */
-
-/*
- * @test
- * @bug 4303068
- * @summary be allowed to specify the security properties file
- *      as a -D system property
  *
- * @run main/othervm -Djava.security.properties=${test.src}/SecurityPropFile.file -Djava.security.debug=properties SecurityPropFile
  */
 
-public class SecurityPropFile {
-    public static void main(String[] args) {
-        System.out.println(java.security.Security.getProperty
-                                ("policy.provider"));
-        System.out.println(java.security.Security.getProperty
-                                ("policy.url.1"));
-        System.out.println(java.security.Security.getProperty
-                                ("policy.url.2"));
-    }
-}
+#ifndef SHARE_METAPROGRAMMING_DEPENDENTALWAYSFALSE_HPP
+#define SHARE_METAPROGRAMMING_DEPENDENTALWAYSFALSE_HPP
+
+// This provides a workaround for static_assert(false) in discarded or
+// otherwise uninstantiated places.  Instead use
+//   static_assert(DependentAlwaysFalse<T>, "...")
+// See http://wg21.link/p2593r1. Some, but not all, compiler versions we're
+// using have implemented that change as a DR:
+// https://cplusplus.github.io/CWG/issues/2518.html
+template<typename T> inline constexpr bool DependentAlwaysFalse = false;
+
+#endif // SHARE_METAPROGRAMMING_DEPENDENTALWAYSFALSE_HPP
