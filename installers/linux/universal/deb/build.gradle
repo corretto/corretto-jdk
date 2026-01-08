@@ -198,7 +198,7 @@ task generateJdkDeb(type: Deb) {
     if (!project.excludeReadmeJavaSE) {
         from("${jdkBinaryDir}/README.JAVASE") {
             into jdkHome
-            fileMode = 0444
+            fileMode = 0644
         }
     }
 

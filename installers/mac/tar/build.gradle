@@ -172,8 +172,9 @@ task prepareArtifacts {
         }
 
         // cp preserves symlinks
+        def cpOptions = project.keepSymlinks ? '-R' : '-RL'
         exec {
-            commandLine 'cp', '-R', "${jdkResultingImage}/${correttoMacDir}/Contents/Home/legal", "${buildDir}/${correttoMacDir}/Contents/Home/"
+            commandLine 'cp', cpOptions, "${jdkResultingImage}/${correttoMacDir}/Contents/Home/legal", "${buildDir}/${correttoMacDir}/Contents/Home/"
         }
 
         // Set the directory as bundle

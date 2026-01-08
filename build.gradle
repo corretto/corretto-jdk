@@ -129,6 +129,8 @@ allprojects {
 
         additionalMakeTargets = (project.findProperty('corretto.additional_make_targets') ?: "").tokenize(',')
 
+        keepSymlinks = Boolean.parseBoolean(project.findProperty("corretto.keepSymlinks"))
+
         // Valid value: null, release, debug, fastdebug, slowdebug
         correttoDebugLevel = "release" // Default: release
         switch(project.findProperty("corretto.debug_level")) {
@@ -333,8 +335,10 @@ def runCmdAndLog(Project project, List<String> args) {
         ignoreExitValue = true
     }
 
-    project.logger.info("OUTPUT:\n${output}")
     if (result.exitValue != 0) {
-        throw new GradleException("Command '${args.join("' '")}' failed with exit code ${result.exitValue}")
+        project.logger.error("ERROR: command failed with exit code ${result.exitValue}:\n${args.join(" ")}\nOUTPUT:\n${output}")
+        throw new GradleException("Command '${args.join("' '")}' failed with exit code=${result.exitValue}")
+    } else {
+        project.logger.info("Command output:\n${output}")
     }
 }
