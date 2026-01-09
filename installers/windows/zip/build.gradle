@@ -26,6 +26,7 @@ dependencies {
 
 def imageDir = "$buildRoot/build/${project.jdkImageName}/images"
 def jdkResultingImage = "${imageDir}/jdk"
+def debugSymbolsResultingImage = "${imageDir}/symbols"
 def testResultingImage = "${imageDir}/test"
 
 // deps
@@ -81,7 +82,7 @@ task packageDebugSymbols(type: Zip) {
     dependsOn packageTestImage
     archiveFileName = "${project.correttoDebugSymbolsArchiveName}.zip"
 
-    from(jdkResultingImage) {
+    from(debugSymbolsResultingImage) {
         include 'bin/*.diz'
         include 'lib/*.diz'
         include 'lib/server/*.diz'
