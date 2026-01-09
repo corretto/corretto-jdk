@@ -33,6 +33,7 @@ configurations {
 // consts
 def imageDir= "$buildRoot/build/${project.jdkImageName}/images"
 def jdkResultingImage = "${imageDir}/jdk-bundle"
+def debugSymbolsResultingImage = "${imageDir}/symbols"
 def testResultingImage = "${imageDir}/test"
 def correttoMacDir = "amazon-corretto-${project.version.major}.jdk"
 
@@ -197,10 +198,10 @@ task packageDebugSymbols(type: Tar) {
     description 'Package debug symbols'
     archiveFileName = "${project.correttoDebugSymbolsArchiveName}.tar.gz"
     compression Compression.GZIP
-    from("${jdkResultingImage}/${correttoMacDir}") {
-        include "Contents/Home/bin/*.diz"
-        include "Contents/Home/lib/*.diz"
-        include "Contents/Home/lib/server/*.diz"
+    from("${debugSymbolsResultingImage}") {
+        include "bin/*.diz"
+        include "lib/*.diz"
+        include "lib/server/*.diz"
     }
     into "${buildDir}/${correttoMacDir}"
     into project.correttoDebugSymbolsArchiveName
