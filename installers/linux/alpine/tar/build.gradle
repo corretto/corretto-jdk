@@ -40,6 +40,7 @@ ext {
     }
 }
 def jdkResultingImage = "$buildRoot/build/linux-${arch}-server-${correttoDebugLevel}/images/jdk"
+def debugSymbolsResultingImage = "$buildRoot/build/linux-${arch}-server-${correttoDebugLevel}/images/symbols"
 def testResultingImage = "$buildRoot/build/linux-${arch}-server-${correttoDebugLevel}/images/test"
 
 // deps
@@ -146,7 +147,7 @@ task packageDebugSymbols(type: Tar) {
     description = 'Package debug symbols'
     archiveFileName = "amazon-corretto-debugsymbols-${project.version.full}-alpine-linux-${arch_alias}.tar.gz"
     compression = Compression.GZIP
-    from(jdkResultingImage) {
+    from(debugSymbolsResultingImage) {
         include 'bin/*.diz'
         include 'lib/*.diz'
         include 'lib/server/*.diz'
