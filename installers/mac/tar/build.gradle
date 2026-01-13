@@ -33,6 +33,7 @@ configurations {
 // consts
 def imageDir= "$buildRoot/build/${project.jdkImageName}/images"
 def jdkResultingImage = "${imageDir}/jdk-bundle"
+def debugSymbolsResultingImage = "${imageDir}/symbols"
 def testResultingImage = "${imageDir}/test"
 def correttoMacDir = "amazon-corretto-${project.version.major}.jdk"
 
@@ -79,8 +80,9 @@ task configureBuild(type: Exec) {
 
 task executeBuild(type: Exec) {
     dependsOn configureBuild
+    outputs.dir jdkResultingImage
     workingDir "$buildRoot"
-    commandLine 'make', 'images'
+    commandLine 'bash', '-c', "make images ${project.correttoMakeOptions}"
 }
 
 task executeAdditionalTargets(type: Exec) {
@@ -89,7 +91,11 @@ task executeAdditionalTargets(type: Exec) {
         workingDir "$buildRoot"
         def command = ['make']
         command += project.additionalMakeTargets
-        commandLine command.flatten()
+	if (project.correttoMakeOptions.isEmpty()) {
+	    commandLine command.flatten()
+	} else {
+	    commandLine 'bash', '-c', "${command.flatten()} ${project.correttoMakeOptions}"
+	}
     } else {
         commandLine 'echo', 'No additional targets specified'
     }
@@ -97,8 +103,9 @@ task executeAdditionalTargets(type: Exec) {
 
 task executeTestBuild(type: Exec) {
     dependsOn executeAdditionalTargets
+    outputs.dir testResultingImage
     workingDir "$buildRoot"
-    commandLine 'make','test-image'
+    commandLine 'bash', '-c', "make test-image ${project.correttoMakeOptions}"
 }
 
 task prepareArtifacts {
@@ -197,10 +204,10 @@ task packageDebugSymbols(type: Tar) {
     description 'Package debug symbols'
     archiveFileName = "${project.correttoDebugSymbolsArchiveName}.tar.gz"
     compression Compression.GZIP
-    from("${jdkResultingImage}/${correttoMacDir}") {
-        include "Contents/Home/bin/*.diz"
-        include "Contents/Home/lib/*.diz"
-        include "Contents/Home/lib/server/*.diz"
+    from("${debugSymbolsResultingImage}") {
+        include "bin/*.diz"
+        include "lib/*.diz"
+        include "lib/server/*.diz"
     }
     into "${buildDir}/${correttoMacDir}"
     into project.correttoDebugSymbolsArchiveName

@@ -30,6 +30,7 @@ if (project.correttoArch == 'x86') {
 
 def imageDir = "$buildRoot/build/${project.jdkImageName}/images"
 def jdkResultingImage = "${imageDir}/jdk"
+def debugSymbolsResultingImage = "${imageDir}/symbols"
 def testResultingImage = "${imageDir}/test"
 
 // deps
@@ -87,15 +88,16 @@ task configureBuild(type: Exec) {
 
 task executeBuild(type: Exec) {
     dependsOn configureBuild
-    workingDir "$buildRoot"
-    commandLine 'make', 'images'
     outputs.dir jdkResultingImage
+    workingDir "$buildRoot"
+    commandLine 'bash', '-c', "make images ${project.correttoMakeOptions}"
 }
 
 task createTestImage(type: Exec) {
     dependsOn executeBuild
+    outputs.dir testResultingImage
     workingDir "$buildRoot"
-    commandLine 'make','test-image'
+    commandLine 'bash', '-c', "make test-image ${project.correttoMakeOptions}"
 }
 
 task bundleThirdPartyBinaries {
@@ -157,7 +159,7 @@ task packageDebugSymbols(type: Tar) {
     dependsOn packageTestImage
     archiveFileName = "${project.correttoDebugSymbolsArchiveName}.tar.gz"
     compression = Compression.GZIP
-    from(jdkResultingImage) {
+    from(debugSymbolsResultingImage) {
         include 'bin/*.diz'
         include 'lib/*.diz'
         include 'lib/server/*.diz'

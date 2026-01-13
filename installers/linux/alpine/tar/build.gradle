@@ -40,6 +40,7 @@ ext {
     }
 }
 def jdkResultingImage = "$buildRoot/build/linux-${arch}-server-${correttoDebugLevel}/images/jdk"
+def debugSymbolsResultingImage = "$buildRoot/build/linux-${arch}-server-${correttoDebugLevel}/images/symbols"
 def testResultingImage = "$buildRoot/build/linux-${arch}-server-${correttoDebugLevel}/images/test"
 
 // deps
@@ -97,15 +98,16 @@ task configureBuild(type: Exec) {
 
 task executeBuild(type: Exec) {
     dependsOn configureBuild
-    workingDir "$buildRoot"
-    commandLine 'make', 'images'
     outputs.dir jdkResultingImage
+    workingDir "$buildRoot"
+    commandLine 'bash', '-c', "make images ${project.correttoMakeOptions}"
 }
 
 task createTestImage(type: Exec) {
     dependsOn executeBuild
+    outputs.dir testResultingImage
     workingDir "$buildRoot"
-    commandLine 'make','test-image'
+    commandLine 'bash', '-c', "make test-image ${project.correttoMakeOptions}"
 }
 
 task bundleThirdPartyBinaries {
@@ -145,7 +147,7 @@ task packageDebugSymbols(type: Tar) {
     description = 'Package debug symbols'
     archiveFileName = "amazon-corretto-debugsymbols-${project.version.full}-alpine-linux-${arch_alias}.tar.gz"
     compression = Compression.GZIP
-    from(jdkResultingImage) {
+    from(debugSymbolsResultingImage) {
         include 'bin/*.diz'
         include 'lib/*.diz'
         include 'lib/server/*.diz'
