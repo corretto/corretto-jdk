@@ -129,6 +129,7 @@ BuildRequires: make
 BuildRequires: alsa-lib-devel
 BuildRequires: binutils
 BuildRequires: which
+BuildRequires: bsdtar
 BuildRequires: cups-devel
 BuildRequires: fontconfig-devel
 BuildRequires: freetype-devel

@@ -98,7 +98,7 @@ allprojects {
 
         // If this is a certified release build, exclude the README.JAVASE file
         excludeReadmeJavaSE = Boolean.parseBoolean(project.findProperty("corretto.excludeReadmeJavaSE"))
-        rootFiles = ['ADDITIONAL_LICENSE_INFO', 'ASSEMBLY_EXCEPTION', 'LICENSE', 'README.md', 'commitId.txt', 'version.txt']
+        rootFiles = ['README.md', 'commitId.txt', 'version.txt']
         if (!excludeReadmeJavaSE) {
             rootFiles += 'README.JAVASE'
         }
@@ -128,6 +128,8 @@ allprojects {
         asyncProfilerLegal = "${rootDir}/installers/legal/async-profiler.md"
 
         additionalMakeTargets = (project.findProperty('corretto.additional_make_targets') ?: "").tokenize(',')
+
+        keepSymlinks = Boolean.parseBoolean(project.findProperty("corretto.keepSymlinks"))
 
         // Valid value: null, release, debug, fastdebug, slowdebug
         correttoDebugLevel = "release" // Default: release
@@ -323,5 +325,22 @@ project(':openjdksrc') {
 
     artifacts {
         archives sourceDistributionTarball
+    }
+}
+
+def runCmdAndLog(Project project, List<String> args) {
+    def output = new ByteArrayOutputStream()
+    def result = project.exec {
+        commandLine args
+        standardOutput = output
+        errorOutput = output
+        ignoreExitValue = true
+    }
+
+    if (result.exitValue != 0) {
+        project.logger.error("ERROR: command failed with exit code ${result.exitValue}:\n${args.join(" ")}\nOUTPUT:\n${output}")
+        throw new GradleException("Command '${args.join("' '")}' failed with exit code=${result.exitValue}")
+    } else {
+        project.logger.info("Command output:\n${output}")
     }
 }
