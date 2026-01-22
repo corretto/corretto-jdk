@@ -96,11 +96,17 @@ allprojects {
                 "--with-vendor-version-string=Corretto-${project.version.full}"
         ]
 
+        rootFiles = ['README.md', 'commitId.txt', 'version.txt']
+
         // If this is a certified release build, exclude the README.JAVASE file
         excludeReadmeJavaSE = Boolean.parseBoolean(project.findProperty("corretto.excludeReadmeJavaSE"))
-        rootFiles = ['README.md', 'commitId.txt', 'version.txt']
         if (!excludeReadmeJavaSE) {
             rootFiles += 'README.JAVASE'
+        }
+        // Optionally exclude copies of legal files from root directory for size-optimized builds
+        excludeRootLegalFiles = Boolean.parseBoolean(project.findProperty("corretto.excludeRootLegalFiles"))
+        if (!excludeRootLegalFiles) {
+            rootFiles.addAll(['ADDITIONAL_LICENSE_INFO', 'ASSEMBLY_EXCEPTION', 'LICENSE'])
         }
 
         // If the version opt is empty, then the JDK will set to  'adhoc.<username>.<base dir name>'
