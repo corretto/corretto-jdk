@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2017, 2025, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2026, Google LLC and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -19,23 +19,13 @@
  * Please contact Oracle, 500 Oracle Parkway, Redwood Shores, CA 94065 USA
  * or visit www.oracle.com if you need additional information or have any
  * questions.
- *
  */
 
-#include "gc/g1/g1CollectedHeap.hpp"
-#include "gc/g1/g1FullCollector.hpp"
-#include "gc/g1/g1FullGCMarker.inline.hpp"
-#include "gc/g1/g1FullGCOopClosures.inline.hpp"
-#include "logging/logStream.hpp"
-#include "memory/iterator.inline.hpp"
-#include "oops/access.inline.hpp"
-#include "oops/compressedOops.inline.hpp"
-#include "oops/oop.inline.hpp"
+// key: compiler.note.lambda.deserialization.stat
+// options: --debug=dumpLambdaDeserializationStats
 
-G1IsAliveClosure::G1IsAliveClosure(G1FullCollector* collector) :
-  G1IsAliveClosure(collector, collector->mark_bitmap()) { }
+import java.io.Serializable;
 
-void G1MarkStackClosure::do_void() { _marker->process_marking_stacks(); }
-
-void G1FullKeepAliveClosure::do_oop(oop* p) { do_oop_work(p); }
-void G1FullKeepAliveClosure::do_oop(narrowOop* p) { do_oop_work(p); }
+class LambdaDeserializationStat {
+    Runnable r = (Runnable & Serializable) () -> {};
+}
