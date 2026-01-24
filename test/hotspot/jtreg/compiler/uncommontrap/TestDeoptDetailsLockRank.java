@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2017, 2025, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2026, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -21,9 +21,19 @@
  * questions.
  */
 
-/*
+ /**
  * @test
- * @build m1/* m2/* Unnamed
- * @run junit/othervm m1/p1.Main
- * @summary Basic test case for module access checks and Lookup.in.
+ * @bug 8374862
+ * @summary Regression test for -XX:+Verbose -XX:+WizardMode -XX:+PrintDeoptimizationDetails crash
+ * @requires vm.debug
+ * @run main/othervm -XX:+Verbose -XX:+WizardMode -XX:+PrintDeoptimizationDetails compiler.uncommontrap.TestDeoptDetailsLockRank
  */
+
+package compiler.uncommontrap;
+
+public class TestDeoptDetailsLockRank {
+
+    public static void main(String[] args) {
+        System.out.println("passed");
+    }
+}
