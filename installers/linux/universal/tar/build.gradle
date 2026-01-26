@@ -196,7 +196,7 @@ task packageBuildResults {
             bsdtar -cvf "\$output" -s '|^|$prefix/|S' $tarSymlinkOption --uid 0 --uname '' --gid 0 --gname '' "${rootFilesNoLegal.join('" "')}"
             popd
             pushd "$jdkResultingImage"
-            bsdtar -rvf "\$output" -s '|^|$prefix/|S' --exclude '*.diz' $tarSymlinkOption --uid 0 --uname '' --gid 0 --gname '' bin conf include jmods lib man/man1
+            bsdtar -rvf "\$output" -s '|^|$prefix/|S' $tarSymlinkOption --uid 0 --uname '' --gid 0 --gname '' --exclude '*.diz' bin conf include lib man/man1 \$(for i in jmods; do [[ -d \$i ]] && echo "\$i" || true; done)
             find legal -type f | xargs -n100 chmod 444
             find legal -type d | xargs -n100 chmod 755
             bsdtar -rvf "\$output" -s '|^|$prefix/|S' $tarSymlinkOption --uid 0 --uname '' --gid 0 --gname '' legal
