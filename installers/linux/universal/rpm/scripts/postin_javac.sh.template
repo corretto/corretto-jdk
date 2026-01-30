@@ -18,7 +18,6 @@ if [ $1 -eq 1 ] ; then
                  --slave /usr/bin/jinfo jinfo ${RPM_INSTALL_PREFIX}/bin/jinfo \
                  --slave /usr/bin/jmap jmap ${RPM_INSTALL_PREFIX}/bin/jmap \
                  --slave /usr/bin/jps jps ${RPM_INSTALL_PREFIX}/bin/jps \
-                 --slave /usr/bin/jrunscript jrunscript ${RPM_INSTALL_PREFIX}/bin/jrunscript \
                  --slave /usr/bin/jshell jshell ${RPM_INSTALL_PREFIX}/bin/jshell \
                  --slave /usr/bin/jstack jstack ${RPM_INSTALL_PREFIX}/bin/jstack \
                  --slave /usr/bin/jstat jstat ${RPM_INSTALL_PREFIX}/bin/jstat \
@@ -37,7 +36,6 @@ if [ $1 -eq 1 ] ; then
                  --slave /usr/share/man/man1/jinfo.1 jinfo.1 ${RPM_INSTALL_PREFIX}/man/man1/jinfo.1 \
                  --slave /usr/share/man/man1/jmap.1 jmap.1 ${RPM_INSTALL_PREFIX}/man/man1/jmap.1 \
                  --slave /usr/share/man/man1/jps.1 jps.1 ${RPM_INSTALL_PREFIX}/man/man1/jps.1 \
-                 --slave /usr/share/man/man1/jrunscript.1 jrunscript.1 ${RPM_INSTALL_PREFIX}/man/man1/jrunscript.1 \
                  --slave /usr/share/man/man1/jstack.1 jstack.1 ${RPM_INSTALL_PREFIX}/man/man1/jstack.1 \
                  --slave /usr/share/man/man1/jstat.1 jstat.1 ${RPM_INSTALL_PREFIX}/man/man1/jstat.1 \
                  --slave /usr/share/man/man1/jstatd.1 jstatd.1 ${RPM_INSTALL_PREFIX}/man/man1/jstatd.1 \
