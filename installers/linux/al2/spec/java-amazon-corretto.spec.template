@@ -369,7 +369,6 @@ if [ \$1 -eq 1 ] ; then
                --slave %{_bindir}/jmod jmod %{java_home}/bin/jmod \\
                --slave %{_bindir}/jpackage jpackage %{java_home}/bin/jpackage \\
                --slave %{_bindir}/jps jps %{java_home}/bin/jps \\
-               --slave %{_bindir}/jrunscript jrunscript %{java_home}/bin/jrunscript \\
                --slave %{_bindir}/jshell jshell %{java_home}/bin/jshell \\
                --slave %{_bindir}/jstack jstack %{java_home}/bin/jstack \\
                --slave %{_bindir}/jstat jstat %{java_home}/bin/jstat \\
@@ -389,7 +388,6 @@ if [ \$1 -eq 1 ] ; then
                --slave %{_mandir}/man1/jjs.1 jjs.1 %{java_home}/man/man1/jjs.1 \\
                --slave %{_mandir}/man1/jmap.1 jmap.1 %{java_home}/man/man1/jmap.1 \\
                --slave %{_mandir}/man1/jps.1 jps.1 %{java_home}/man/man1/jps.1 \\
-               --slave %{_mandir}/man1/jrunscript.1 jrunscript.1 %{java_home}/man/man1/jrunscript.1 \\
                --slave %{_mandir}/man1/jstack.1 jstack.1 %{java_home}/man/man1/jstack.1 \\
                --slave %{_mandir}/man1/jstat.1 jstat.1 %{java_home}/man/man1/jstat.1 \\
                --slave %{_mandir}/man1/jstatd.1 jstatd.1 %{java_home}/man/man1/jstatd.1 \\
@@ -476,7 +474,6 @@ fi
 %{java_home}/bin/jnativescan
 %{java_home}/bin/jpackage
 %{java_home}/bin/jps
-%{java_home}/bin/jrunscript
 %{java_home}/bin/jshell
 %{java_home}/bin/jstack
 %{java_home}/bin/jstat
@@ -503,7 +500,6 @@ fi
 %{java_home}/man/man1/jnativescan.1
 %{java_home}/man/man1/jpackage.1
 %{java_home}/man/man1/jps.1
-%{java_home}/man/man1/jrunscript.1
 %{java_home}/man/man1/jshell.1
 %{java_home}/man/man1/jstack.1
 %{java_home}/man/man1/jstat.1
