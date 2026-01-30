@@ -518,9 +518,9 @@ fi
 %license %{java_imgdir}/docs/legal
 
 %files debugsymbols
-%{java_home}/bin/*.diz
-%{java_home}/lib/*.diz
-%{java_home}/lib/server/*.diz
+%{java_imgdir}/symbols/bin/*.diz
+%{java_imgdir}/symbols/lib/*.diz
+%{java_imgdir}/symbols/lib/server/*.diz
 
 %changelog
 * Mon Aug 5 2024 Daniel Hu <costmuch@amazon.com>
