@@ -165,11 +165,7 @@ task packageBuildResults {
     def outputTarFile = "${distributionDir}/${jdkArchiveName}.tar"
     def prefix = jdkArchiveName
 
-    // Omit legal files in the root of the package
-    def javaBaseLegalFiles = file("$jdkResultingImage/legal/java.base").listFiles().findAll { it.isFile() }.collect { it.name };
-    def rootFilesNoLegal = project.rootFiles.findAll { !(it in javaBaseLegalFiles) }
-
-    inputs.files(rootFilesNoLegal)
+    inputs.files(rootFiles)
     inputs.dir(jdkResultingImage)
     outputs.file("${outputTarFile}.gz")
 
@@ -183,7 +179,7 @@ task packageBuildResults {
             output=`realpath "$outputTarFile"`
             rm -f "\$output.gz"
             pushd "$buildRoot"
-            bsdtar -cvf "\$output" -s '|^|$prefix/|S' $tarSymlinkOption --uid 0 --uname '' --gid 0 --gname '' "${rootFilesNoLegal.join('" "')}"
+            bsdtar -cvf "\$output" -s '|^|$prefix/|S' $tarSymlinkOption --uid 0 --uname '' --gid 0 --gname '' "${rootFiles.join('" "')}"
             popd
             pushd "$jdkResultingImage"
             bsdtar -rvf "\$output" -s '|^|$prefix/|S' $tarSymlinkOption --uid 0 --uname '' --gid 0 --gname '' --exclude '*.diz' bin conf include lib man/man1 release \$(for i in jmods; do [[ -d \$i ]] && echo "\$i" || true; done)
