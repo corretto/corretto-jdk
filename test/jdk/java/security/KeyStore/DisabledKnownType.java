@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014, 2021, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2026, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -21,28 +21,33 @@
  * questions.
  */
 
-/*
- * @test Uint64Test
- * @bug 8038756
- * @library /test/lib
- * @modules java.base/jdk.internal.misc
- * @modules java.management/sun.management
- * @build jdk.test.whitebox.WhiteBox
- * @run driver jdk.test.lib.helpers.ClassFileInstaller jdk.test.whitebox.WhiteBox
- * @run main/othervm/timeout=600 -Xbootclasspath/a:. -XX:+UnlockDiagnosticVMOptions -XX:+WhiteBoxAPI Uint64Test
- * @summary testing of WB::set/getUint64VMFlag()
- * @author igor.ignatyev@oracle.com
+/**
+ * @test
+ * @bug 8373690
+ * @summary verify that the exception message indicates the keystore type
+ *         when the type is disabled instead of being unrecognized
+ * @run main/othervm -Djdk.crypto.disabledAlgorithms=KeyStore.PKCS12 DisabledKnownType
  */
 
-public class Uint64Test {
-    private static final String FLAG_NAME = "StringDeduplicationHashSeed";
-    private static final Long[] TESTS = {0L, 100L, (long) Integer.MAX_VALUE,
-            -1L, Long.MAX_VALUE, Long.MIN_VALUE};
+import java.security.KeyStore;
+import java.security.KeyStoreException;
 
+public class DisabledKnownType {
     public static void main(String[] args) throws Exception {
-        VmFlagTest.runTest(FLAG_NAME, TESTS,
-            VmFlagTest.WHITE_BOX::setUint64VMFlag,
-            VmFlagTest.WHITE_BOX::getUint64VMFlag);
+        String cacertsPath = System.getProperty("java.home") +
+                "/lib/security/cacerts";
+        try {
+            KeyStore ks = KeyStore.getInstance(new java.io.File(cacertsPath),
+                    "changeit".toCharArray());
+            throw new RuntimeException("Expected KeyStoreException not thrown");
+        } catch (KeyStoreException kse) {
+            if (kse.getMessage().contains("PKCS12")) {
+                System.out.println("Passed: expected ex thrown: " + kse);
+            } else {
+                // pass it up
+                throw kse;
+            }
+        }
     }
 }
 
