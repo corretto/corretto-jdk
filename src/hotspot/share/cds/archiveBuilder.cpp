@@ -23,6 +23,7 @@
  */
 
 #include "cds/aotArtifactFinder.hpp"
+#include "cds/aotCacheAccess.hpp"
 #include "cds/aotClassLinker.hpp"
 #include "cds/aotCompressedPointers.hpp"
 #include "cds/aotLogging.hpp"
@@ -324,8 +325,10 @@ void ArchiveBuilder::sort_klasses() {
 }
 
 address ArchiveBuilder::reserve_buffer() {
-  // AOTCodeCache::max_aot_code_size() accounts for aot code region.
-  size_t buffer_size = LP64_ONLY(CompressedClassSpaceSize) NOT_LP64(256 * M) + AOTCodeCache::max_aot_code_size();
+  // On 64-bit: reserve address space for archives up to the max encoded offset limit.
+  // On 32-bit: use 256MB + AOT code size due to limited virtual address space.
+  size_t buffer_size = LP64_ONLY(AOTCompressedPointers::MaxMetadataOffsetBytes)
+                       NOT_LP64(256 * M + AOTCodeCache::max_aot_code_size());
   ReservedSpace rs = MemoryReserver::reserve(buffer_size,
                                              AOTMetaspace::core_region_alignment(),
                                              os::vm_page_size(),
@@ -827,6 +830,7 @@ void ArchiveBuilder::make_klasses_shareable() {
     const char* generated = "";
     const char* aotlinked_msg = "";
     const char* inited_msg = "";
+    const char* early_init_msg = "";
     Klass* k = get_buffered_addr(klasses()->at(i));
     bool inited = false;
     k->remove_java_mirror();
@@ -935,6 +939,9 @@ void ArchiveBuilder::make_klasses_shareable() {
         } else {
           inited_msg = " inited";
         }
+        if (AOTCacheAccess::is_early_aot_inited_class(ik)) {
+          early_init_msg = " early";
+        }
       }
 
       AOTMetaspace::rewrite_bytecodes_and_calculate_fingerprints(Thread::current(), ik);
@@ -943,9 +950,9 @@ void ArchiveBuilder::make_klasses_shareable() {
 
     if (aot_log_is_enabled(Debug, aot, class)) {
       ResourceMark rm;
-      aot_log_debug(aot, class)("klasses[%5d] = " PTR_FORMAT " %-5s %s%s%s%s%s%s%s%s", i,
+      aot_log_debug(aot, class)("klasses[%5d] = " PTR_FORMAT " %-5s %s%s%s%s%s%s%s%s%s", i,
                             p2i(to_requested(k)), type, k->external_name(),
-                            kind, hidden, old, unlinked, generated, aotlinked_msg, inited_msg);
+                            kind, hidden, old, unlinked, generated, aotlinked_msg, early_init_msg, inited_msg);
     }
   }
 
