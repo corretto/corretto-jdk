@@ -18,6 +18,7 @@ NashornProfile.txt
 .gradletasknamecache
 /pre-build/
 /src/utils/LogCompilation/target/
+/src/utils/LogCompilation/logc.jar
 /.project/
 /.settings/
 commitId.txt
