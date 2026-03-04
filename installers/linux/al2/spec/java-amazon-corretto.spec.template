@@ -315,6 +315,7 @@ rm -rf %{buildroot}%{java_home}/demo
 
 # Install debugsymbols
 cp -a %{java_imgdir}/symbols/* %{buildroot}%{java_home}
+find %{buildroot}%{java_home} -name "*.debuginfo" -delete
 
 # Properly set permissions for executables and libs to enable auto-provides scanning
 find %{buildroot}%{java_home}/ -name "*.so" -exec chmod 755 \\{\\} \\; ;
