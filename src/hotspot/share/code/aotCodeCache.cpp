@@ -638,6 +638,12 @@ void AOTCodeCache::Config::record(uint cpu_features_offset) {
   _objectAlignment       = ObjectAlignmentInBytes;
   _gcCardSize            = GCCardSizeInBytes;
   _gc                    = (uint)Universe::heap()->kind();
+  _maxVectorSize         = MaxVectorSize;
+  _arrayOperationPartialInlineSize = ArrayOperationPartialInlineSize;
+  _allocatePrefetchLines           = AllocatePrefetchLines;
+  _allocateInstancePrefetchLines   = AllocateInstancePrefetchLines;
+  _allocatePrefetchDistance        = AllocatePrefetchDistance;
+  _allocatePrefetchStepSize        = AllocatePrefetchStepSize;
   _cpu_features_offset   = cpu_features_offset;
 }
 
@@ -719,11 +725,11 @@ bool AOTCodeCache::Config::verify(AOTCodeCache* cache) const {
   }
 
   if (((_flags & enableContendedPadding) != 0) != EnableContended) {
-    log_debug(aot, codecache, init)("AOT Code Cache disabled: it was created with EnableContended = %s vs current %s", (EnableContended ? "false" : "true"), (EnableContended ? "true" : "false"));
+    log_debug(aot, codecache, init)("AOT Code Cache disabled: it was created with EnableContended = %s vs current %s", (enableContendedPadding ? "false" : "true"), (EnableContended ? "true" : "false"));
     return false;
   }
   if (((_flags & restrictContendedPadding) != 0) != RestrictContended) {
-    log_debug(aot, codecache, init)("AOT Code Cache disabled: it was created with RestrictContended = %s vs current %s", (RestrictContended ? "false" : "true"), (RestrictContended ? "true" : "false"));
+    log_debug(aot, codecache, init)("AOT Code Cache disabled: it was created with RestrictContended = %s vs current %s", (restrictContendedPadding ? "false" : "true"), (RestrictContended ? "true" : "false"));
     return false;
   }
   if (_contendedPaddingWidth != (uint)ContendedPaddingWidth) {
@@ -732,12 +738,12 @@ bool AOTCodeCache::Config::verify(AOTCodeCache* cache) const {
   }
 
   if (((_flags & preserveFramePointer) != 0) != PreserveFramePointer) {
-    log_debug(aot, codecache, init)("AOT Code Cache disabled: it was created with PreserveFramePointer = %s vs current %s", (PreserveFramePointer ? "false" : "true"), (PreserveFramePointer ? "true" : "false"));
+    log_debug(aot, codecache, init)("AOT Code Cache disabled: it was created with PreserveFramePointer = %s vs current %s", (preserveFramePointer ? "false" : "true"), (PreserveFramePointer ? "true" : "false"));
     return false;
   }
 
   if (((_flags & compressedClassPointers) != 0) != UseCompressedClassPointers) {
-    log_debug(aot, codecache, init)("AOT Code Cache disabled: it was created with UseCompressedClassPointers = %s vs current %s", (UseCompressedClassPointers ? "false" : "true"), (UseCompressedClassPointers ? "true" : "false"));
+    log_debug(aot, codecache, init)("AOT Code Cache disabled: it was created with UseCompressedClassPointers = %s vs current %s", (compressedClassPointers ? "false" : "true"), (UseCompressedClassPointers ? "true" : "false"));
     return false;
   }
   if (_compressedKlassShift != (uint)CompressedKlassPointers::shift()) {
@@ -750,7 +756,7 @@ bool AOTCodeCache::Config::verify(AOTCodeCache* cache) const {
   }
 
   if (((_flags & compressedOops) != 0) != UseCompressedOops) {
-    log_debug(aot, codecache, init)("AOT Code Cache disabled: it was created with UseCompressedOops = %s vs current %s", (UseCompressedOops ? "false" : "true"), (UseCompressedOops ? "true" : "false"));
+    log_debug(aot, codecache, init)("AOT Code Cache disabled: it was created with UseCompressedOops = %s vs current %s", (compressedOops ? "false" : "true"), (UseCompressedOops ? "true" : "false"));
     return false;
   }
   if (_compressedOopShift != (uint)CompressedOops::shift()) {
@@ -762,18 +768,51 @@ bool AOTCodeCache::Config::verify(AOTCodeCache* cache) const {
     return false;
   }
 
+  // Some of the following checked flags depend on CPU features. Check CPU first.
+  if (!verify_cpu_features(cache)) {
+    return false;
+  }
+
+  // TLAB related flags
+  if (((_flags & useTLAB) != 0) != UseTLAB) {
+    log_debug(aot, codecache, init)("AOT Code Cache disabled: it was created with UseTLAB = %s vs current %s", (useTLAB ? "false" : "true"), (UseTLAB ? "true" : "false"));
+    return false;
+  }
+  if (_allocatePrefetchLines != (uint)AllocatePrefetchLines) {
+    log_debug(aot, codecache, init)("AOT Code Cache disabled: it was created with AllocatePrefetchLines = %d vs current %d", _allocatePrefetchLines, AllocatePrefetchLines);
+    return false;
+  }
+  if (_allocateInstancePrefetchLines != (uint)AllocateInstancePrefetchLines) {
+    log_debug(aot, codecache, init)("AOT Code Cache disabled: it was created with AllocateInstancePrefetchLines = %d vs current %d", _allocateInstancePrefetchLines, AllocateInstancePrefetchLines);
+    return false;
+  }
+  if (_allocatePrefetchDistance != (uint)AllocatePrefetchDistance) {
+    log_debug(aot, codecache, init)("AOT Code Cache disabled: it was created with AllocatePrefetchDistance = %d vs current %d", _allocatePrefetchDistance, AllocatePrefetchDistance);
+    return false;
+  }
+  if (_allocatePrefetchStepSize != (uint)AllocatePrefetchStepSize) {
+    log_debug(aot, codecache, init)("AOT Code Cache disabled: it was created with AllocatePrefetchStepSize = %d vs current %d", _allocatePrefetchStepSize, AllocatePrefetchStepSize);
+    return false;
+  }
+
+  // Vectorization and intrinsics related flags
+  if (_maxVectorSize != (uint)MaxVectorSize) {
+    log_debug(aot, codecache, init)("AOT Code Cache disabled: it was created with MaxVectorSize = %d vs current %d", _maxVectorSize, (uint)MaxVectorSize);
+    return false;
+  }
+  if (_arrayOperationPartialInlineSize != (uint)ArrayOperationPartialInlineSize) {
+    log_debug(aot, codecache, init)("AOT Code Cache disabled: it was created with ArrayOperationPartialInlineSize = %d vs current %d", _arrayOperationPartialInlineSize, (uint)ArrayOperationPartialInlineSize);
+    return false;
+  }
+
   // Next affects only AOT nmethod
   if (((_flags & systemClassAssertions) != 0) != JavaAssertions::systemClassDefault()) {
-    log_debug(aot, codecache, init)("AOT Code Cache disabled: it was created with JavaAssertions::systemClassDefault() = %s vs current %s", (JavaAssertions::systemClassDefault() ? "disabled" : "enabled"), (JavaAssertions::systemClassDefault() ? "enabled" : "disabled"));
+    log_debug(aot, codecache, init)("AOT Code Cache disabled: it was created with JavaAssertions::systemClassDefault() = %s vs current %s", (systemClassAssertions ? "disabled" : "enabled"), (JavaAssertions::systemClassDefault() ? "enabled" : "disabled"));
      FLAG_SET_ERGO(AOTCodeCaching, false);
   }
   if (((_flags & userClassAssertions) != 0) != JavaAssertions::userClassDefault()) {
-    log_debug(aot, codecache, init)("AOT Code Cache disabled: it was created with JavaAssertions::userClassDefault() = %s vs current %s", (JavaAssertions::userClassDefault() ? "disabled" : "enabled"), (JavaAssertions::userClassDefault() ? "enabled" : "disabled"));
+    log_debug(aot, codecache, init)("AOT Code Cache disabled: it was created with JavaAssertions::userClassDefault() = %s vs current %s", (userClassAssertions ? "disabled" : "enabled"), (JavaAssertions::userClassDefault() ? "enabled" : "disabled"));
     FLAG_SET_ERGO(AOTCodeCaching, false);
-  }
-
-  if (!verify_cpu_features(cache)) {
-    return false;
   }
   return true;
 }
@@ -974,7 +1013,7 @@ AOTCodeEntry* AOTCodeCache::find_code_entry(const methodHandle& method, uint com
     }
 
     DirectiveSet* directives = DirectivesStack::getMatchingDirective(method, nullptr);
-    if (directives->IgnorePrecompiledOption) {
+    if (directives->IgnorePrecompiledOption || directives->ExcludeOption) {
       LogStreamHandle(Info, aot, codecache, compilation) log;
       if (log.is_enabled()) {
         log.print("Ignore AOT code entry on level %d for ", comp_level);
@@ -1123,10 +1162,13 @@ void AOTCodeCache::invalidate_entry(AOTCodeEntry* entry) {
     // We can still use normal AOT code if preload code is
     // invalidated - normal AOT code has less restrictions.
     Method* method = entry->method();
-    AOTCodeEntry* preload_entry = method->aot_code_entry();
-    if (preload_entry != nullptr) {
-      assert(preload_entry->for_preload(), "expecting only such entries here");
-      invalidate_entry(preload_entry);
+    MethodCounters* mc = entry->method()->method_counters();
+    if (mc != nullptr && mc->aot_preload_code_entry() != nullptr) {
+      AOTCodeEntry* preload_entry = mc->aot_preload_code_entry();
+      if (preload_entry != nullptr) {
+        assert(preload_entry->for_preload(), "expecting only such entries here");
+        invalidate_entry(preload_entry);
+      }
     }
   }
 }
@@ -1930,7 +1972,7 @@ bool skip_preload(methodHandle mh) {
     return true;
   }
   DirectiveSet* directives = DirectivesStack::getMatchingDirective(mh, nullptr);
-  if (directives->DontPreloadOption) {
+  if (directives->DontPreloadOption || directives->ExcludeOption) {
     LogStreamHandle(Info, aot, codecache, init) log;
     if (log.is_enabled()) {
       log.print("Exclude preloading code for ");
@@ -1945,6 +1987,12 @@ void AOTCodeCache::preload_code(JavaThread* thread) {
   if (!is_using_code()) {
     return;
   }
+  AbstractCompiler* comp = CompileBroker::compiler(CompLevel_full_optimization);
+  if (comp == nullptr) {
+    log_debug(aot, codecache, init)("AOT preload code skipped: C2 compiler disabled");
+    return;
+  }
+
   if ((DisableAOTCode & (1 << 3)) != 0) {
     return; // no preloaded code (level 5);
   }
@@ -1977,28 +2025,12 @@ void AOTCodeCache::preload_aot_code(TRAPS) {
       }
       assert(mh->method_holder()->is_loaded(), "");
       if (!mh->method_holder()->is_linked()) {
-        assert(!HAS_PENDING_EXCEPTION, "");
-        mh->method_holder()->link_class(THREAD);
-        if (HAS_PENDING_EXCEPTION) {
-          LogStreamHandle(Info, aot, codecache) log;
-          if (log.is_enabled()) {
-            ResourceMark rm;
-            log.print("Linkage failed for %s: ", mh->method_holder()->external_name());
-            THREAD->pending_exception()->print_value_on(&log);
-            if (log_is_enabled(Debug, aot, codecache)) {
-              THREAD->pending_exception()->print_on(&log);
-            }
-          }
-          CLEAR_PENDING_EXCEPTION;
-        }
+        ResourceMark rm;
+        log_debug(aot, codecache, init)("Preload AOT code for %s skipped: method holder is not linked",
+                                        mh->name_and_sig_as_C_string());
+        continue; // skip
       }
-      if (mh->aot_code_entry() != nullptr) {
-        // Second C2 compilation of the same method could happen for
-        // different reasons without marking first entry as not entrant.
-        continue; // Keep old entry to avoid issues
-      }
-      mh->set_aot_code_entry(entry);
-      CompileBroker::compile_method(mh, InvocationEntryBci, CompLevel_full_optimization, 0, false, CompileTask::Reason_Preload, CHECK);
+      CompileBroker::preload_aot_method(mh, entry, CHECK);
     }
   }
 }
