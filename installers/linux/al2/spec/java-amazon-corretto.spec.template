@@ -162,6 +162,12 @@ Requires: libXrandr
 Requires: libXtst
 Requires: giflib
 Requires: libpng
+Requires: fontconfig
+Requires: freetype
+Requires: dejavu-sans-fonts
+Requires: dejavu-serif-fonts
+Requires: dejavu-sans-mono-fonts
+Requires: alsa-lib
 # Require headless package.
 Requires: %{name}-headless%{?_isa} = %{epoch}:%{version}-%{release}
 
