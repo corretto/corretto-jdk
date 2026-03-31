@@ -1,6 +1,5 @@
 /*
- * Copyright (c) 2000, 2026, Oracle and/or its affiliates. All rights reserved.
- * Copyright (c) 2012, 2026 SAP SE. All rights reserved.
+ * Copyright (c) 2026, Google LLC. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -20,26 +19,12 @@
  * Please contact Oracle, 500 Oracle Parkway, Redwood Shores, CA 94065 USA
  * or visit www.oracle.com if you need additional information or have any
  * questions.
- *
  */
 
-#ifndef CPU_PPC_REGISTERMAP_PPC_HPP
-#define CPU_PPC_REGISTERMAP_PPC_HPP
+package p;
 
-// machine-dependent implementation for register maps
-  friend class frame;
+import java.lang.annotation.ElementType;
+import java.lang.annotation.Target;
 
- private:
-  // This is the hook for finding a register in an "well-known" location,
-  // such as a register block of a predetermined format.
-  // Since there is none, we just return null.
-  address pd_location(VMReg reg) const { return nullptr; }
-
-  address pd_location(VMReg base_reg, int slot_idx) const;
-
-  // no PD state to clear or copy:
-  void pd_clear() {}
-  void pd_initialize() {}
-  void pd_initialize_from(const RegisterMap* map) {}
-
-#endif // CPU_PPC_REGISTERMAP_PPC_HPP
+@Target(ElementType.TYPE_USE)
+public @interface A {}
