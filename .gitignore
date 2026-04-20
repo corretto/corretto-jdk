@@ -27,8 +27,6 @@ commitId.txt
 /.gdbinit
 /.lldbinit
 **/core.[0-9]*
-*.rej
-*.orig
 test/benchmarks/**/target
 /src/hotspot/CMakeLists.txt
 /src/hotspot/compile_commands.json
