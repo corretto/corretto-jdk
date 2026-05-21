@@ -31,6 +31,14 @@ on:
       platform:
         required: true
         type: string
+      runs-on:
+        required: false
+        type: string
+        default: 'ubuntu-24.04'
+      bootjdk-platform:
+        required: false
+        type: string
+        default: 'linux-x64'
       extra-conf-options:
         required: false
         type: string
@@ -78,7 +86,7 @@ permissions:
 jobs:
   build-linux:
     name: build
-    runs-on: ubuntu-24.04
+    runs-on: ${{ inputs.runs-on }}
 
     strategy:
       fail-fast: false
@@ -93,7 +101,7 @@ jobs:
         id: bootjdk
         uses: ./.github/actions/get-bootjdk
         with:
-          platform: linux-x64
+          platform: ${{ inputs.bootjdk-platform }}
 
       - name: 'Get JTReg'
         id: jtreg
