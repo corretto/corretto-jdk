@@ -1,4 +1,4 @@
-#  Copyright (c) 2013, 2026, Oracle and/or its affiliates. All rights reserved.
+#  Copyright (c) 2013, 2024, Oracle and/or its affiliates. All rights reserved.
 #  DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
 #
 #  This code is free software; you can redistribute it and/or modify it
@@ -33,14 +33,12 @@ jaxp_all = \
 # No jaxp tests are tier 1.
 tier1 = 
 
-# All jaxp tests are tier 2, except those in higher tiers.
+# All jaxp tests are tier 2.
 tier2 = \
-    :jaxp_all \
-    -javax/xml/jaxp/unittest/common/EntityReplacementLimitTest.java
+    :jaxp_all
 
-# Slow tests.
-tier3 = \
-    javax/xml/jaxp/unittest/common/EntityReplacementLimitTest.java
+# No tier 3 tests.
+tier3 = 
 
 # No tier 4 tests.
 tier4 =

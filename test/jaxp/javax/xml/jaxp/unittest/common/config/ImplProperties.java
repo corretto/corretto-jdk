@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2024, 2026, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2024, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -102,8 +102,8 @@ public class ImplProperties {
         "0", "1000000", "3000000", "10000", "5000", "0", "1000", "10", "100", "10000"},
 
         // default values in JDK 24
-        {"false", "false", "continue", "allow", "2500", "50000000",
-        "50000000", "15000", "50000000", "200", "5000", "100", "1000", "10", "100", "10000"},
+        {"false", "false", "continue", "allow", "2500", "100000",
+        "100000", "15000", "100000", "200", "5000", "100", "1000", "10", "100", "10000"},
 
         // default values in jaxp-strict.properties.template, since JDK 23
         {"false", "false", "strict", "allow", "2500", "100000",
