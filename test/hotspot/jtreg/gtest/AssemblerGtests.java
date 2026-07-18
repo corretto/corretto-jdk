@@ -1,6 +1,7 @@
-
 /*
  * Copyright (c) 2026, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2026, IBM Corp. All rights reserved.
+ *
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -20,45 +21,31 @@
  * Please contact Oracle, 500 Oracle Parkway, Redwood Shores, CA 94065 USA
  * or visit www.oracle.com if you need additional information or have any
  * questions.
+ *
  */
 
-/**
- * @test
- * @bug 8383815
- * @summary C2: assert(false) failed: malformed IfNode with 1 outputs
- * @run main/othervm -XX:CompileCommand=compileonly,${test.main.class}*::* -XX:-TieredCompilation -Xbatch -XX:PerMethodTrapLimit=0 ${test.main.class}
- * @run main ${test.main.class}
+/*
+ * This runs the MacroAssembler gtests related to Klass de- and encoding
+ * (for now, only on aarch64) with and without COH.
  */
 
-package compiler.integerArithmetic;
+/* @test id=coh
+ * @summary Run Assembler-related gtests
+ * @library /test/lib
+ * @modules java.base/jdk.internal.misc
+ *          java.xml
+ * @requires vm.flagless
+ * @requires os.arch=="aarch64"
+ * @run main/native GTestWrapper --gtest_filter=AssemblerAArch64::decode_encode_klass* -XX:+UseCompactObjectHeaders
+ */
 
-public class TestDivByZeroInLiveCFGPath {
-    static long lFld;
-    static int iArr[] = new int[400];
-
-    public static void main(String[] strArr) {
-        for (int i = 0; i < 10; i++) {
-            test();
-        }
-    }
-
-    static void test() {
-        int x;
-        for (int i = 9; i < 100; ++i) {
-            int j = 100;
-            while (--j > 0) {
-                iArr[1] = (int) lFld;
-            }
-            try {
-                iArr[1] = (5 / j);
-                x = (i / iArr[8]);
-            } catch (ArithmeticException a_e) {
-            }
-        }
-
-        for (int i = 18; i < 50; i++) {
-            iArr[2] += lFld;
-        }
-    }
-}
+/* @test id=noncoh
+ * @summary Run Assembler-related gtests
+ * @library /test/lib
+ * @modules java.base/jdk.internal.misc
+ *          java.xml
+ * @requires vm.flagless
+ * @requires os.arch=="aarch64"
+ * @run main/native GTestWrapper --gtest_filter=AssemblerAArch64::decode_encode_klass* -XX:-UseCompactObjectHeaders
+ */
 
