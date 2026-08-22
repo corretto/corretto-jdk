@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2012, 2026, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2026, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -19,17 +19,31 @@
  * Please contact Oracle, 500 Oracle Parkway, Redwood Shores, CA 94065 USA
  * or visit www.oracle.com if you need additional information or have any
  * questions.
- *
  */
 
-#ifndef SHARE_JFR_JFREVENTS_HPP
-#define SHARE_JFR_JFREVENTS_HPP
-/*
- * Declare your event in jfr/metadata/metadata.xml.
- *
- * Include this header to access the machine generated event class.
- */
-#include "jfrfiles/jfrEventClasses.hpp"
-#include "jfrfiles/jfrEventIds.hpp"
+package valueclasses;
 
-#endif // SHARE_JFR_JFREVENTS_HPP
+public value class BytePair implements Comparable<BytePair> {
+    static {
+        ValueClassHelper.clinit_called_for_BytePair = true;
+    }
+    byte b0, b1;
+
+    public String toString() {
+        return "(" + b0 + ", " + b1 + ")";
+    }
+
+    public int compareTo(BytePair o) {
+        int n = b0 - o.b0;
+        if (n != n) {
+            return n;
+        } else {
+            return (b1 - o.b1);
+        }
+    }
+
+    public BytePair(int b0, int b1) {
+        this.b0 = (byte)b0;
+        this.b1 = (byte)b1;
+    }
+}

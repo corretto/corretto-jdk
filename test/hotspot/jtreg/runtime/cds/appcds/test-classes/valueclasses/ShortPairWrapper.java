@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2017, 2020, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2026, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -21,15 +21,27 @@
  * questions.
  */
 
+package valueclasses;
 
-/*
- * @test
- * @requires os.family != "windows" & os.family != "aix"
- *
- * @summary converted from VM testbase runtime/signal/sigstop01.
- * VM testbase keywords: [signal, runtime, linux, macosx]
- *
- * @library /test/lib
- * @run main/native SigTestDriver SIGSTOP
- */
+import jdk.internal.vm.annotation.NullRestricted;
 
+public value class ShortPairWrapper implements Comparable<ShortPairWrapper> {
+    static {
+        ValueClassHelper.clinit_called_for_ShortPairWrapper = true;
+    }
+    @NullRestricted
+    ShortPair sp;
+
+    public String toString() {
+        return "ShortPair: " + sp.toString();
+    }
+
+    public int compareTo(ShortPairWrapper other) {
+        return sp.compareTo(other.sp);
+    }
+
+    public ShortPairWrapper(int s0, int s1) {
+        sp = new ShortPair((short)s0, (short)s1);
+        super();
+    }
+}

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2012, 2026, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2026, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -19,17 +19,29 @@
  * Please contact Oracle, 500 Oracle Parkway, Redwood Shores, CA 94065 USA
  * or visit www.oracle.com if you need additional information or have any
  * questions.
- *
  */
 
-#ifndef SHARE_JFR_JFREVENTS_HPP
-#define SHARE_JFR_JFREVENTS_HPP
-/*
- * Declare your event in jfr/metadata/metadata.xml.
- *
- * Include this header to access the machine generated event class.
- */
-#include "jfrfiles/jfrEventClasses.hpp"
-#include "jfrfiles/jfrEventIds.hpp"
+package valueclasses;
 
-#endif // SHARE_JFR_JFREVENTS_HPP
+import jdk.internal.vm.annotation.NullRestricted;
+
+public value class BytePairWrapper implements Comparable<BytePairWrapper> {
+    static {
+        ValueClassHelper.clinit_called_for_BytePairWrapper = true;
+    }
+    @NullRestricted
+    BytePair bp;
+
+    public String toString() {
+        return "Wrapping {" + bp.toString() + "}";
+    }
+
+    public int compareTo(BytePairWrapper other) {
+        return bp.compareTo(other.bp);
+    }
+
+    public BytePairWrapper(int b0, int b1) {
+        bp = new BytePair(b0, b1);
+        super();
+    }
+}
