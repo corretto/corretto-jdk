@@ -29,8 +29,8 @@ def tarName = "java-${version.major}-amazon-corretto"
 def tarVersion = "${version.major}.${version.minor}.${version.security}+${version.build}"
 
 def javaVersion = "${version.major}.${version.minor}.${version.security}"
+def patchId = "${version.patch}"
 def buildId = "${version.build}"
-def releaseId = "${version.revision}"
 /**
  * Apply version numbers to the RPM spec file template and copy
  * to the build root.
@@ -47,8 +47,8 @@ task inflateRpmSpec {
                     java_major_version   : version.major,
                     java_security_version   : version.security,
                     java_version        : javaVersion,
+                    patch_id            : patchId,
                     build_id            : buildId,
-                    release_id          : releaseId,
                     version_opt         : versionOpt,
                     version_date        : project.findProperty("corretto.versionDate") ?: "%{nil}",
                     debug_level         : correttoDebugLevel,
