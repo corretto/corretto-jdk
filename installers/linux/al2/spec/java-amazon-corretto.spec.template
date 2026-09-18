@@ -311,7 +311,7 @@ bash ./configure \\
         --with-extra-ldflags="%{?build_ldflags}" \\
 %endif
 %ifarch aarch64
-        --enable-aarch64-sve
+        --enable-aarch64-sve \\
 %endif
 %if 0%{?additional_configure_options:1}
         %{additional_configure_options} \\
