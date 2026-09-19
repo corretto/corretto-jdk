@@ -296,25 +296,22 @@ tar -xzf %{SOURCE1} -C manpages
 %global extra_dist_cxxflags %(echo '%{?build_cxxflags}' | sed -E 's/-flto([a-zA-Z0-9=_,-]*)?//g; s/-ffat-lto-objects//g; s/-fexceptions//g')
 %endif
 
+%ifarch aarch64
+%global outline_atomics -moutline-atomics
+%endif
+
 bash ./configure \\
+%if "%{?outline_atomics:1}%{?GIFLIB_DEFINE:1}%{?extra_dist_cflags:1}" != ""
+        --with-extra-cflags="%{?outline_atomics} %{?GIFLIB_DEFINE} %{?extra_dist_cflags}" \\
+%endif
+%if "%{?outline_atomics:1}%{?extra_dist_cxxflags:1}" != ""
+        --with-extra-cxxflags="%{?outline_atomics} %{?extra_dist_cxxflags}" \\
+%endif
 %if "%{dist}" == ".amzn2027"
-%ifarch aarch64
-        --with-extra-cflags="-moutline-atomics%{?GIFLIB_DEFINE: %{GIFLIB_DEFINE}} %{extra_dist_cflags}" \\
-        --with-extra-cxxflags="-moutline-atomics %{extra_dist_cxxflags}" \\
-%else
-        --with-extra-cflags="%{?GIFLIB_DEFINE:%{GIFLIB_DEFINE}} %{extra_dist_cflags}" \\
-        --with-extra-cxxflags="%{extra_dist_cxxflags}" \\
-%endif
         --with-extra-ldflags="%{?build_ldflags}" \\
-%else
+%endif
 %ifarch aarch64
-        --with-extra-cflags="-moutline-atomics%{?GIFLIB_DEFINE: %{GIFLIB_DEFINE}}" \\
-        --with-extra-cxxflags="-moutline-atomics" \\
-%else
-%if "%{?GIFLIB_DEFINE:1}" == "1"
-        --with-extra-cflags="%{GIFLIB_DEFINE}" \\
-%endif
-%endif
+        --enable-aarch64-sve \\
 %endif
 %if 0%{?additional_configure_options:1}
         %{additional_configure_options} \\
