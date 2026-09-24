@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2023, 2026, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2026, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -19,21 +19,43 @@
  * Please contact Oracle, 500 Oracle Parkway, Redwood Shores, CA 94065 USA
  * or visit www.oracle.com if you need additional information or have any
  * questions.
- *
  */
 
-#ifndef SHARE_GC_G1_G1COLLECTIONSETCANDIDATES_INLINE_HPP
-#define SHARE_GC_G1_G1COLLECTIONSETCANDIDATES_INLINE_HPP
+/*
+ * @test
+ * @bug 8392796
+ * @summary Compile::disconnect_useless_nodes can enqueue useless nodes for IGVN;
+ *          we need to clean them up.
+ * @requires vm.compiler2.enabled
+ * @run main/othervm -Xbatch
+ *                   -XX:CompileCommand=compileonly,${test.main.class}::test
+ *                   ${test.main.class}
+ * @run main ${test.main.class}
+ */
 
-#include "gc/g1/g1CollectionSetCandidates.hpp"
+package compiler.igvn;
 
-#include "gc/g1/g1CardSetGroup.inline.hpp"
+public class TestTransitiveUselessNodeEnqueuing {
+    static int iFld;
+    static char cFld;
 
-template<typename Func>
-void G1CollectionSetCandidates::iterate_regions(Func&& f) const {
-  _from_marking_groups.iterate(f);
+    public static void main(String[] args) {
+        for (int i = 0; i < 1000; i++) {
+            test();
+        }
+    }
 
-  _retained_groups.iterate(f);
+    static void test() {
+        for (int i = 0; i < 156; i++) {
+            iFld <<= cFld;
+        }
+        Foo foo = new Foo();
+        iFld++;
+        iFld >>>= 0L;
+        synchronized (foo) {
+        }
+    }
+
+    static class Foo {
+    }
 }
-
-#endif /* SHARE_GC_G1_G1COLLECTIONSETCANDIDATES_INLINE_HPP */

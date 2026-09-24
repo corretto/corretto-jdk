@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2023, 2026, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2026, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -19,21 +19,34 @@
  * Please contact Oracle, 500 Oracle Parkway, Redwood Shores, CA 94065 USA
  * or visit www.oracle.com if you need additional information or have any
  * questions.
- *
  */
 
-#ifndef SHARE_GC_G1_G1COLLECTIONSETCANDIDATES_INLINE_HPP
-#define SHARE_GC_G1_G1COLLECTIONSETCANDIDATES_INLINE_HPP
 
-#include "gc/g1/g1CollectionSetCandidates.hpp"
+package runtime.valhalla.inlinetypes;
 
-#include "gc/g1/g1CardSetGroup.inline.hpp"
+import java.lang.invoke.MethodHandles;
+import java.lang.invoke.VarHandle;
 
-template<typename Func>
-void G1CollectionSetCandidates::iterate_regions(Func&& f) const {
-  _from_marking_groups.iterate(f);
+/*
+ * @test VarHandleCASOfEmptyClass
+ * @summary VarHandle compareAndSet can handle empty value classes
+ * @bug 8391651
+ * @enablePreview
+ * @compile VarHandleCASOfEmptyClass.java
+ * @run main runtime.valhalla.inlinetypes.VarHandleCASOfEmptyClass
+ */
 
-  _retained_groups.iterate(f);
+public class VarHandleCASOfEmptyClass {
+    static value class Empty { }
+
+    static class Holder {
+        Empty value;
+    }
+
+    public static void main(String[] args) throws ReflectiveOperationException {
+        VarHandle handle = MethodHandles.lookup().findVarHandle(Holder.class, "value", Empty.class);
+        if (!handle.compareAndSet(new Holder(), null, new Empty())) {
+            throw new RuntimeException("compareAndSet failed");
+        }
+    }
 }
-
-#endif /* SHARE_GC_G1_G1COLLECTIONSETCANDIDATES_INLINE_HPP */

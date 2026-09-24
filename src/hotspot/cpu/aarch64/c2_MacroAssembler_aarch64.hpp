@@ -90,6 +90,10 @@
   void fast_lock(Register object, Register box, Register t1, Register t2, Register t3);
   void fast_unlock(Register object, Register box, Register t1, Register t2, Register t3);
 
+  void string_equals_sve(Register a1, Register a2, Register result, Register cnt1,
+                           FloatRegister ztmp1, FloatRegister ztmp2,
+                           PRegister pgtmp, PRegister ptmp);
+
   void string_compare(Register str1, Register str2,
                       Register cnt1, Register cnt2, Register result,
                       Register tmp1, Register tmp2, FloatRegister vtmp1,
@@ -144,7 +148,7 @@
   void sve_compare(PRegister pd, BasicType bt, PRegister pg,
                    FloatRegister zn, FloatRegister zm, Condition cond);
 
-  void sve_vmask_lasttrue(Register dst, BasicType bt, PRegister src, PRegister ptmp);
+  void sve_vmask_lasttrue(Register dst, BasicType bt, PRegister src, FloatRegister vtmp);
 
   // Vector cast
   void neon_vector_extend(FloatRegister dst, BasicType dst_bt, unsigned dst_vlen_in_bytes,
