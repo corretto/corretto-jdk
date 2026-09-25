@@ -49,7 +49,7 @@ def jdkPackageName = "java-${project.version.major}-amazon-corretto-devel"
 
 ospackage {
     version = project.version.upstream
-    release = project.version.revision
+    release = project.version.build
 
     url = "${packageInfo.url}"
     vendor = "${packageInfo.vendor}"
@@ -108,7 +108,7 @@ task generateJdkRpm(type: Rpm) {
     summary = "Amazon Corretto ${project.version.major} development environment"
     packageGroup = 'Development/Tools'
     // Remove after https://github.com/nebula-plugins/gradle-ospackage-plugin/issues/401 is merged and released
-    sourcePackage = "${jdkPackageName}-${project.version.major}.${project.version.minor}.${project.version.security}.${project.version.build}-${project.version.revision}.src.rpm"
+    sourcePackage = "${jdkPackageName}-${project.version.major}.${project.version.minor}.${project.version.security}.${project.version.patch}-${project.version.build}.src.rpm"
 
     prefix(jdkHome)
     postInstall file("$buildRoot/scripts/postin_java.sh")

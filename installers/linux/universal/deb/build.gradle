@@ -55,7 +55,7 @@ ospackage {
     // Valid version must start with a digit and only contain [A-Za-z0-9.+:~-]
     // See http://manpages.ubuntu.com/manpages/artful/en/man5/deb-version.5.html
     version = project.version.upstream
-    release = project.version.revision
+    release = project.version.build
 
     url = "${packageInfo.url}"
     vendor = "${packageInfo.vendor}"
