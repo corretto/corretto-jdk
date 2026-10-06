@@ -98,8 +98,8 @@ Name: java-${java_spec_version}-amazon-corretto%{?experimental_feature:-%{experi
 # Matches the 'full version' from Java's release notes:
 # https://www.oracle.com/technetwork/java/javase/11-0-2-relnotes-5188746.html
 # Eg: 11.0.2+7
-Version: %{java_version}+%{build_id}
-Release: %{release_id}%{?dist}%{?release_ext:.%{release_ext}}
+Version: %{java_version}.%{patch_id}.%{build_id}
+Release: 1%{?dist}%{?release_ext:.%{release_ext}}
 
 Epoch: 1
 Group: Development/Languages
