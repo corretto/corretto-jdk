@@ -1,0 +1,65 @@
+# Marks and then closes issues and pull requests that have had no activity for
+# an extended period. See https://github.com/actions/stale for all options.
+#
+# The schedule only runs on the default branch (develop) and, thanks to the
+# repository_owner guard below, is a no-op on forks. It can also be run on
+# demand from the Actions tab (workflow_dispatch).
+
+name: "Close Stale Issues and PRs"
+
+on:
+  schedule:
+    # Daily at 01:30 UTC. Off-peak so it does not compete with build workflows.
+    - cron: '30 1 * * *'
+  workflow_dispatch:
+
+permissions:
+  issues: write
+  pull-requests: write
+
+jobs:
+  stale:
+    name: "Close stale issues and PRs"
+    runs-on: ubuntu-latest
+    # Never act on forks (e.g. personal clones). Only the real Corretto fleet.
+    if: github.repository_owner == 'corretto'
+    steps:
+      - uses: actions/stale@5bef64f19d7facfb25b37b414482c7164d639639 # v9.1.0
+        with:
+          # --- Issues ---
+          # 30 days idle -> mark stale, +30 days -> close.
+          days-before-issue-stale: 30
+          days-before-issue-close: 30
+          stale-issue-label: 'stale'
+          exempt-issue-labels: 'keep'
+          stale-issue-message: >
+            This issue has had no activity for 30 days and has been marked as stale.
+            If it is still relevant, add a comment or remove the `stale` label.
+            Otherwise it will be closed in 30 days.
+          close-issue-message: >
+            This issue was closed because it has been stale for 30 days with no
+            activity. Comment to reopen if it is still relevant.
+
+          # --- Pull requests ---
+          days-before-pr-stale: 30
+          days-before-pr-close: 30
+          stale-pr-label: 'stale'
+          exempt-pr-labels: 'keep'
+          stale-pr-message: >
+            This pull request has had no activity for 30 days and has been marked as
+            stale. If it is still relevant, add a comment or remove the `stale`
+            label. Otherwise it will be closed in 30 days.
+          close-pr-message: >
+            This pull request was closed because it has been stale for 30 days with
+            no activity. Reopen it if you intend to continue the work.
+
+          # --- Behavior ---
+          # Clear the stale label as soon as someone engages again.
+          remove-stale-when-updated: true
+          # Process oldest items first so the long tail drains predictably.
+          ascending: true
+          # Each marked/closed/commented item costs one operation. The default of
+          # 30 is low for a large first sweep; 60 processes more per daily run
+          # while staying well clear of API rate limits. The backlog still drains
+          # over several daily runs rather than all at once.
+          operations-per-run: 60
