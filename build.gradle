@@ -157,11 +157,19 @@ allprojects {
                 throw new RuntimeException("Invalid corretto.debug_level")
         }
 
-        // customized flags. Identify the index of double dashes as the start of a flag
+        // customized flags. A flag starts at a "--" that begins a new argument, i.e. one
+        // that is at the start of the string or preceded by whitespace. We must NOT split
+        // on a "--" that appears *inside* a flag's value (e.g. --with-extra-asflags=-Wa,--gdwarf-4),
+        // otherwise the value gets torn into broken fragments.
         String extraConfig = project.findProperty("corretto.extra_config")
-        def lastIndex = -1
         if (extraConfig != null) {
+            def lastIndex = -1
+            // A flag boundary is "--" at index 0, or "--" whose preceding char is whitespace.
+            def isFlagStart = { int idx -> idx == 0 || Character.isWhitespace(extraConfig.charAt(idx - 1) as char) }
             for (int index = extraConfig.indexOf("--"); index >= 0; index = extraConfig.indexOf("--", index + 1)) {
+                if (!isFlagStart(index)) {
+                    continue
+                }
                 if (lastIndex != -1) {
                     correttoCommonFlags += extraConfig.substring(lastIndex, index).trim()
                 }
