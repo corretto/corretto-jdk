@@ -1,5 +1,6 @@
 /*
- * Copyright (c) 2019, 2025, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2026, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2026 IBM Corporation. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -19,21 +20,20 @@
  * Please contact Oracle, 500 Oracle Parkway, Redwood Shores, CA 94065 USA
  * or visit www.oracle.com if you need additional information or have any
  * questions.
- *
  */
 
-#ifndef SHARE_GC_SHARED_BARRIERSETRUNTIME_HPP
-#define SHARE_GC_SHARED_BARRIERSETRUNTIME_HPP
+#ifndef CPU_S390_GC_Z_ZADDRESS_S390_INLINE_HPP
+#define CPU_S390_GC_Z_ZADDRESS_S390_INLINE_HPP
 
-#include "memory/allocation.hpp"
-#include "oops/valueKlass.hpp"
 #include "utilities/globalDefinitions.hpp"
 
-class BarrierSetRuntime: public AllStatic {
-public:
-  // Template interpreter...
-  static void value_copy(address src, address dst, ValueFieldInfo* vfi);
-  static void value_copy_is_dest_uninitialized(address src, address dst, ValueFieldInfo* vfi);
-};
+inline uintptr_t ZPointer::remap_bits(uintptr_t colored) {
+  return colored & ZPointerRemappedMask;
+}
 
-#endif // SHARE_GC_SHARED_BARRIERSETRUNTIME_HPP
+inline constexpr int ZPointer::load_shift_lookup(uintptr_t value) {
+  return ZPointerLoadShift;
+}
+
+#endif // CPU_S390_GC_Z_ZADDRESS_S390_INLINE_HPP
+
