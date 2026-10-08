@@ -30,8 +30,8 @@ if [[ "${CURRENT_PREFIX}" == "${NEW_PREFIX}" ]]; then
         exit 1
     fi
     if (( BUILD_NUMBER < CURRENT_BUILD_NUMBER )); then
-        echo "Error: new build number (${BUILD_NUMBER}) is lower than the existing build number (${CURRENT_BUILD_NUMBER}) for version ${NEW_PREFIX}. Refusing to update." >&2
-        exit 1
+        echo "New build number (${BUILD_NUMBER}) is lower than the existing build number (${CURRENT_BUILD_NUMBER}) for version ${NEW_PREFIX}. Nothing to update."
+        exit 0
     fi
 fi
 
