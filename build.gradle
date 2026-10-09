@@ -37,6 +37,23 @@ allprojects {
     version = {
         def full = file('version.txt').text.trim()
         def tokens = full.tokenize(".")
+        if (tokens.size() != 5 || !tokens.every { it ==~ /\d+/ }) {
+            throw new GradleException("version.txt must be FEATURE.INTERIM.UPDATE.PATCH.BUILD, found '${full}'")
+        }
+        // configure reads FEATURE, INTERIM, UPDATE and PATCH from version-numbers.conf and only
+        // BUILD from version.txt, so the two files must agree or package metadata will not match the JDK.
+        def versionNumbers = rootProject.file('make/conf/version-numbers.conf').text
+        def upstream = ['FEATURE', 'INTERIM', 'UPDATE', 'PATCH'].collect { field ->
+            def matcher = versionNumbers =~ /(?m)^\s*DEFAULT_VERSION_${field}\s*=\s*(\d+)/
+            if (!matcher.find()) {
+                throw new GradleException("DEFAULT_VERSION_${field} not found in make/conf/version-numbers.conf")
+            }
+            matcher.group(1)
+        }
+        if (tokens[0..3]*.toInteger() != upstream*.toInteger()) {
+            throw new GradleException("version.txt (${full}) does not match make/conf/version-numbers.conf " +
+                    "(${upstream.join('.')}). Run .github/scripts/update-version.sh or correct version.txt.")
+        }
         [full    : full,
          major   : tokens[0],
          minor   : tokens[1],

@@ -67,6 +67,10 @@
 # Higher numbers win for the alternatives program.
 %global alternatives_priority %( printf '%02d%02d%02d%02d' %{java_major_version} %{java_security_version} %{patch_id} %{build_id} )
 
+# Version for the short versioned provides (java, jre, java-devel, ...):
+# FEATURE.INTERIM.UPDATE, plus .PATCH when PATCH is nonzero. JEP 322 omits a zero PATCH.
+%global java_provides_version %{java_version}%( [ %{patch_id} -eq 0 ] || echo .%{patch_id} )
+
 # Instruct rpmbuild to copy jars rather than de-compress and re-compress.
 %global __jar_repack 0
 
@@ -162,10 +166,10 @@ Requires: alsa-lib
 # Require headless package.
 Requires: %{name}-headless%{?_isa} = %{epoch}:%{version}-%{release}
 
-Provides: java = %{epoch}:%{java_version}
-Provides: java-${java_spec_version} = %{epoch}:%{java_version}
+Provides: java = %{epoch}:%{java_provides_version}
+Provides: java-${java_spec_version} = %{epoch}:%{java_provides_version}
 Provides: java-${java_spec_version} = %{epoch}:%{version}-%{release}
-Provides: jre = %{java_version}
+Provides: jre = %{java_provides_version}
 Provides: jre-${java_spec_version} = %{epoch}:%{version}-%{release}
 Provides: jre-${java_spec_version}-amazon-corretto = %{epoch}:%{version}-%{release}
 
@@ -192,9 +196,9 @@ Requires: ca-certificates
 Requires(post): chkconfig
 Requires(postun): chkconfig
 
-Provides: java-headless = %{epoch}:%{java_version}
+Provides: java-headless = %{epoch}:%{java_provides_version}
 Provides: java-${java_spec_version}-headless = %{epoch}:%{version}-%{release}
-Provides: jre-headless = %{epoch}:%{java_version}
+Provides: jre-headless = %{epoch}:%{java_provides_version}
 Provides: jre-${java_spec_version}-headless = %{epoch}:%{version}-%{release}
 Provides: jre-${java_spec_version}-amazon-corretto-headless = %{epoch}:%{version}-%{release}
 
@@ -219,8 +223,8 @@ Group: Development
 AutoProv: 1
 AutoReq: 0
 
-Provides: java-devel = %{epoch}:%{java_version}
-Provides: java-${java_spec_version}-devel = %{epoch}:%{java_version}
+Provides: java-devel = %{epoch}:%{java_provides_version}
+Provides: java-${java_spec_version}-devel = %{epoch}:%{java_provides_version}
 Provides: java-${java_spec_version}-devel = %{epoch}:%{version}-%{release}
 Requires: %{name}-headless%{?1}%{?_isa} = %{epoch}:%{version}-%{release}
 
@@ -231,7 +235,7 @@ Amazon Corretto's packaging of the OpenJDK ${java_spec_version} development tool
 Summary: Amazon Corretto ${java_spec_version} jmods
 Group: Development
 
-Provides: java-${java_spec_version}-jmods = %{epoch}:%{java_version}
+Provides: java-${java_spec_version}-jmods = %{epoch}:%{java_provides_version}
 Provides: java-${java_spec_version}-jmods = %{epoch}:%{version}-%{release}
 # Require devel package.
 Requires: %{name}-devel%{?1}%{?_isa} = %{epoch}:%{version}-%{release}
