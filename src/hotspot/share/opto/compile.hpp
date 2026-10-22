@@ -60,6 +60,7 @@ class CallStaticJavaNode;
 class CloneMap;
 class CompilationFailureInfo;
 class ConnectionGraph;
+class DeadPathNode;
 class IdealGraphPrinter;
 class InlineTree;
 class Matcher;
@@ -361,7 +362,6 @@ class Compile : public Phase {
   bool                  _has_stringbuilder;     // True StringBuffers or StringBuilders are allocated
   bool                  _has_boxed_value;       // True if a boxed object is allocated
   bool                  _has_reserved_stack_access; // True if the method or an inlined method is annotated with ReservedStackAccess
-  bool                  _has_circular_value_type; // True if method loads a value type with a circular, non-flat field
   bool                  _needs_nm_slot;         // True if an extra stack slot is needed to hold the null marker at scalarized returns
   uint                  _max_vector_size;       // Maximum size of generated vectors
   bool                  _clear_upper_avx;       // Clear upper bits of ymm registers using vzeroupper
@@ -383,7 +383,6 @@ class Compile : public Phase {
   uint                  _igv_idx;               // Counter for IGV node identifiers
   uint                  _igv_phase_iter[PHASE_NUM_TYPES]; // Counters for IGV phase iterations
   bool                  _trace_opto_output;
-  bool                  _parsed_irreducible_loop; // True if ciTypeFlow detected irreducible loops during parsing
 #endif
   bool                  _has_irreducible_loop;  // Found irreducible loops
   bool                  _has_monitors;          // Metadata transfered to nmethod to enable Continuations lock-detection fastpath
@@ -454,7 +453,7 @@ public:
 private:
   RootNode*             _root;                  // Unique root of compilation, or null after bail-out.
   Node*                 _top;                   // Unique top node.  (Reset by various phases.)
-
+  DeadPathNode*         _dead_path;             // Unique DeadPath node
   Node*                 _immutable_memory;      // Initial memory state
 
   Node*                 _recent_alloc_obj;
@@ -665,8 +664,6 @@ public:
   void          set_has_boxed_value(bool z)     { _has_boxed_value = z; }
   bool              has_reserved_stack_access() const { return _has_reserved_stack_access; }
   void          set_has_reserved_stack_access(bool z) { _has_reserved_stack_access = z; }
-  bool              has_circular_value_type() const { return _has_circular_value_type; }
-  void          set_has_circular_value_type(bool z) { _has_circular_value_type = z; }
   uint              max_vector_size() const     { return _max_vector_size; }
   void          set_max_vector_size(uint s)     { _max_vector_size = s; }
   bool              clear_upper_avx() const     { return _clear_upper_avx; }
@@ -731,8 +728,6 @@ public:
   void          print_phase(const char* phase_name);
   void          print_ideal_ir(const char* compile_phase_name) const;
   bool          should_print_ideal() const      { return _directive->PrintIdealOption; }
-  bool              parsed_irreducible_loop() const { return _parsed_irreducible_loop; }
-  void          set_parsed_irreducible_loop(bool z) { _parsed_irreducible_loop = z; }
   int _in_dump_cnt;  // Required for dumping ir nodes.
 #endif
   bool              has_irreducible_loop() const { return _has_irreducible_loop; }
@@ -977,6 +972,12 @@ public:
   Arena*       old_arena()                 { return (&_node_arena_one == _node_arena) ? &_node_arena_two : &_node_arena_one; }
   RootNode*    root() const                { return _root; }
   void         set_root(RootNode* r)       { _root = r; }
+  DeadPathNode* dead_path() const          { return _dead_path; }
+
+  void set_dead_path(DeadPathNode* dead_path) {
+    assert(_dead_path == nullptr, "can only set once");
+    _dead_path = dead_path;
+  }
   StartNode*   start() const;              // (Derived from root.)
   void         verify_start(StartNode* s) const NOT_DEBUG_RETURN;
   Node*        immutable_memory();

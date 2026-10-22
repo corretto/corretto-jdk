@@ -320,6 +320,8 @@ void Compile::identify_useful_nodes(Unique_Node_List &useful) {
   // If 'top' is cached, declare it useful to preserve cached node
   if (cached_top_node())  { useful.push(cached_top_node()); }
 
+  if (dead_path()) { useful.push(dead_path()); }
+
   // Push all useful nodes onto the list, breadthfirst
   for( uint next = 0; next < useful.size(); ++next ) {
     assert( next < unique(), "Unique useful nodes < total nodes");
@@ -396,7 +398,7 @@ void Compile::remove_useless_node(Node* dead) {
   // it reachable by adding use edges. So, we will NOT count Con nodes
   // as dead to be conservative about the dead node count at any
   // given time.
-  if (!dead->is_Con()) {
+  if (!dead->is_Con() && dead != dead_path()) {
     record_dead_node(dead->_idx);
   }
   if (dead->is_macro()) {
@@ -695,7 +697,6 @@ Compile::Compile(ciEnv* ci_env, ciMethod* target, int osr_bci,
       _strength_reduction(false),
       _do_cleanup(false),
       _has_reserved_stack_access(target->has_reserved_stack_access()),
-      _has_circular_value_type(false),
 #ifndef PRODUCT
       _igv_idx(0),
       _trace_opto_output(directive->TraceOptoOutputOption),
@@ -729,6 +730,7 @@ Compile::Compile(ciEnv* ci_env, ciMethod* target, int osr_bci,
       _node_arena_one(mtCompiler, Arena::Tag::tag_node),
       _node_arena_two(mtCompiler, Arena::Tag::tag_node),
       _node_arena(&_node_arena_one),
+      _dead_path(nullptr),
       _mach_constant_base_node(nullptr),
       _Compile_types(mtCompiler, Arena::Tag::tag_type),
       _initial_gvn(nullptr),
@@ -774,10 +776,6 @@ Compile::Compile(ciEnv* ci_env, ciMethod* target, int osr_bci,
   set_print_assembly(false); // must initialize.
 #endif
 
-#ifndef PRODUCT
-  set_parsed_irreducible_loop(false);
-#endif
-
   if (directive->ReplayInlineOption) {
     _replay_inline_data = ciReplay::load_inline_data(method(), entry_bci(), ci_env->comp_level());
   }
@@ -797,6 +795,7 @@ Compile::Compile(ciEnv* ci_env, ciMethod* target, int osr_bci,
   }
 
   Init(/*do_aliasing=*/ true);
+  set_dead_path(new DeadPathNode());
 
   print_compile_messages();
 
@@ -1011,7 +1010,6 @@ Compile::Compile(ciEnv* ci_env,
       _inlining_progress(false),
       _inlining_incrementally(false),
       _has_reserved_stack_access(false),
-      _has_circular_value_type(false),
 #ifndef PRODUCT
       _igv_idx(0),
       _trace_opto_output(directive->TraceOptoOutputOption),
@@ -1036,6 +1034,7 @@ Compile::Compile(ciEnv* ci_env,
       _node_arena_one(mtCompiler, Arena::Tag::tag_node),
       _node_arena_two(mtCompiler, Arena::Tag::tag_node),
       _node_arena(&_node_arena_one),
+      _dead_path(nullptr),
       _mach_constant_base_node(nullptr),
       _Compile_types(mtCompiler, Arena::Tag::tag_type),
       _initial_gvn(nullptr),
@@ -1074,7 +1073,6 @@ Compile::Compile(ciEnv* ci_env,
 
 #ifndef PRODUCT
   set_print_assembly(PrintFrameConverterAssembly);
-  set_parsed_irreducible_loop(false);
 #else
   set_print_assembly(false); // Must initialize.
 #endif
@@ -1294,7 +1292,7 @@ uint Compile::count_live_nodes_by_graph_walk() {
 void Compile::print_missing_nodes() {
 
   // Return if CompileLog is null and PrintIdealNodeCount is false.
-  if ((_log == nullptr) && (! PrintIdealNodeCount)) {
+  if ((_log == nullptr) && !directive()->PrintIdealNodeCountOption) {
     return;
   }
 
@@ -1325,7 +1323,7 @@ void Compile::print_missing_nodes() {
           if (_log != nullptr) {
             _log->elem("mismatched_node_info node_idx='%d' type='both live and dead'", i);
           }
-          if (PrintIdealNodeCount) {
+          if (directive()->PrintIdealNodeCountOption) {
             // Print the log message to tty
               tty->print_cr("mismatched_node idx='%d' both live and dead'", i);
               useful.at(i)->dump();
@@ -1336,7 +1334,7 @@ void Compile::print_missing_nodes() {
         if (_log != nullptr) {
           _log->elem("mismatched_node_info node_idx='%d' type='neither live nor dead'", i);
         }
-        if (PrintIdealNodeCount) {
+        if (directive()->PrintIdealNodeCountOption) {
           // Print the log message to tty
           tty->print_cr("mismatched_node idx='%d' type='neither live nor dead'", i);
         }
@@ -3470,6 +3468,9 @@ void Compile::Optimize() {
    }
  }
 
+  // Unique DeadPath node should not be used anymore
+  _dead_path = nullptr;
+
  print_method(PHASE_OPTIMIZE_FINISHED, 2);
  DEBUG_ONLY(set_phase_optimize_finished();)
 }
@@ -4785,6 +4786,21 @@ void Compile::final_graph_reshaping_main_switch(Node* n, Final_Reshape_Counts& f
     break;
   }
 #endif
+  case Op_DeadPath: {
+    // The CFG inputs are dead paths. Replace the DeadPath with a Region and insert a Halt node.
+    assert(n->req() > 1, "why not removed if no input other than itself?");
+    RegionNode* r = new RegionNode(n->req());
+    for (uint i = 1; i < n->req(); ++i) {
+      r->set_req(i, n->in(i));
+    }
+    n->disconnect_inputs(this);
+    Node* frame = start()->proj_out(TypeFunc::FramePtr);
+    stringStream ss;
+    ss.print("dead path discovered by data nodes during igvn");
+    Node* halt = new HaltNode(r, frame, ss.as_string(comp_arena()));
+    root()->set_req(root()->find_edge(n), halt);
+    break;
+  }
   default:
     assert(!n->is_Call(), "");
     assert(!n->is_Mem(), "");
@@ -5358,7 +5374,7 @@ Compile::TracePhase::~TracePhase() {
     return; // timing code, not stressing bailouts.
   }
 #ifdef ASSERT
-  if (PrintIdealNodeCount) {
+  if (_compile->directive()->PrintIdealNodeCountOption) {
     tty->print_cr("phase name='%s' nodes='%d' live='%d' live_graph_walk='%d'",
                   phase_name(), _compile->unique(), _compile->live_nodes(), _compile->count_live_nodes_by_graph_walk());
   }
