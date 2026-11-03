@@ -75,6 +75,9 @@ remaining=$(( total - merged - 1 ))
 # --name-only prints the result tree ID on the first line, then one line per
 # conflicted path.
 conflicted_files=$(git merge-tree --write-tree --name-only --no-messages HEAD "${conflict_commit}" | tail -n +2 || true)
+resolve_branch="merge-upstream-${conflict_commit:0:12}"
+# GITHUB_SERVER_URL and GITHUB_REPOSITORY are set by GitHub Actions.
+compare_url="${GITHUB_SERVER_URL:-https://github.com}/${GITHUB_REPOSITORY:-<owner>/<repo>}/compare/${LOCAL_BRANCH}...${resolve_branch}?expand=1"
 
 {
   echo "conflict=true"
@@ -97,22 +100,27 @@ Conflicted files:
 ${conflicted_files}
 \`\`\`
 
-To resolve, merge only that commit:
+To resolve, merge only that commit on a new branch:
 
 \`\`\`sh
-git checkout ${LOCAL_BRANCH}
-git pull --ff-only origin ${LOCAL_BRANCH}
+git fetch origin ${LOCAL_BRANCH}
+git checkout -b ${resolve_branch} origin/${LOCAL_BRANCH}
 git fetch ${UPSTREAM_REMOTE} ${UPSTREAM_BRANCH}
 git merge -m "${MERGE_MESSAGE}" ${conflict_commit}
 # Fix the conflicts, then:
 git add <files>
 git commit --no-edit
-git push origin ${LOCAL_BRANCH}
+git push origin ${resolve_branch}
 \`\`\`
+
+Then [open a pull request](${compare_url}) into \`${LOCAL_BRANCH}\` for review.
+Merge it with **Create a merge commit**. Squash or rebase would drop the
+upstream commit from the history of \`${LOCAL_BRANCH}\`, so later runs would
+treat it as unmerged.
 EOF
 )
 if (( remaining > 0 )); then
-  report+=$'\n\n'"Then re-run this workflow to merge the remaining ${remaining} upstream commits."
+  report+=$'\n\n'"After the pull request is merged, re-run this workflow to merge the remaining ${remaining} upstream commits."
 fi
 
 echo "${report}"
