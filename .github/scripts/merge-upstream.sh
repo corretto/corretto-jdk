@@ -12,10 +12,10 @@
 # <upstream-remote> is a URL or the name of a configured remote.
 #
 # --keep-ours <path> keeps the current branch's copy of <path> in every merge,
-# whether the merge changed it, conflicted on it, or left it alone. A conflict
-# in a kept path does not count as a conflict. The option can be repeated.
-# With it, every merge creates a merge commit, because a fast-forward cannot
-# keep a path.
+# so upstream changes to it are dropped and never conflict. The option can be
+# repeated.
+#
+# Every merge creates a merge commit, even where a fast-forward is possible.
 #
 # Writes these step outputs to $GITHUB_OUTPUT:
 #   conflict         true if a conflicting upstream commit was left unmerged
@@ -37,71 +37,58 @@ GITHUB_OUTPUT=${GITHUB_OUTPUT:-/dev/null}
 GITHUB_STEP_SUMMARY=${GITHUB_STEP_SUMMARY:-/dev/null}
 
 LOCAL_BRANCH=$(git branch --show-current)
+TMP_DIR=$(mktemp -d)
+trap 'rm -rf "${TMP_DIR}"' EXIT
 
 git fetch "${UPSTREAM_REMOTE}" "${UPSTREAM_BRANCH}"
 UPSTREAM_HEAD=$(git rev-parse FETCH_HEAD)
 
-# Succeeds if $1 is a kept path.
-is_kept() {
-  local kept
-  for kept in "${KEEP_PATHS[@]}"; do
-    if [[ $1 == "${kept}" ]]; then
-      return 0
-    fi
-  done
-  return 1
-}
+if git merge-base --is-ancestor "${UPSTREAM_HEAD}" HEAD; then
+  echo "${LOCAL_BRANCH} already contains ${UPSTREAM_BRANCH} (${UPSTREAM_HEAD})"
+  echo "conflict=false" >> "${GITHUB_OUTPUT}"
+  exit 0
+fi
 
-# Succeeds if merging $1 into HEAD has no conflicts outside the kept paths.
-# Sets the conflicts array to the paths that do conflict. Does not touch the
-# index or work tree.
+# Prints the commit to merge in place of upstream commit $1. Without kept
+# paths, that is $1. With them, it is a temporary child of $1 that has the
+# HEAD copies of the kept paths, so the merge keeps those copies and cannot
+# conflict on them. Runs in a subshell to confine GIT_INDEX_FILE.
+theirs() (
+  if (( ${#KEEP_PATHS[@]} == 0 )); then
+    echo "$1"
+    exit
+  fi
+  export GIT_INDEX_FILE=${TMP_DIR}/index
+  git read-tree "$1" &&
+    git update-index --force-remove -- "${KEEP_PATHS[@]}" &&
+    git ls-tree -rz HEAD -- "${KEEP_PATHS[@]}" | git update-index -z --index-info &&
+    git commit-tree -p "$1" -m "$1 with kept paths from ${LOCAL_BRANCH}" "$(git write-tree)"
+)
+
+# Succeeds if merging $1 into HEAD has no conflicts, and sets merge_result to
+# the merged tree. Does not touch the index or work tree.
 merges_cleanly() {
-  local status=0 output path
-  conflicts=()
-  output=$(git merge-tree --write-tree --name-only --no-messages HEAD "$1") || status=$?
+  local commit status=0
+  commit=$(theirs "$1") || { echo "::error::Could not prepare $1 for merging"; exit 1; }
+  merge_result=$(git merge-tree --write-tree --no-messages HEAD "${commit}") || status=$?
   case ${status} in
     0) return 0 ;;
-    1) ;;
+    1) return 1 ;;
     *) echo "::error::git merge-tree failed with status ${status} for $1"; exit "${status}" ;;
   esac
-  # The first line is the result tree ID, then one line per conflicted path.
-  while IFS= read -r path; do
-    if [[ -n ${path} ]] && ! is_kept "${path}"; then
-      conflicts+=("${path}")
-    fi
-  done < <(tail -n +2 <<< "${output}")
-  (( ${#conflicts[@]} == 0 ))
 }
 
-# Merges $1 into HEAD. Call it only after merges_cleanly "$1" succeeds.
-merge_commit() {
-  if (( ${#KEEP_PATHS[@]} == 0 )); then
-    git merge -m "${MERGE_MESSAGE}" "$1"
-    return
-  fi
-  # A conflict in a kept path stops the merge with a nonzero status, so check
-  # for a merge in progress instead of trusting the status.
-  local status=0 unmerged
-  git merge --no-ff --no-commit "$1" || status=$?
-  if ! git rev-parse -q --verify MERGE_HEAD > /dev/null; then
-    # Nothing to commit: either $1 is already merged or git merge failed.
-    if (( status == 0 )); then
-      return 0
-    fi
-    echo "::error::git merge failed with status ${status} for $1"
-    exit "${status}"
-  fi
-  git restore --source=HEAD --staged --worktree -- "${KEEP_PATHS[@]}"
-  unmerged=$(git diff --name-only --diff-filter=U)
-  if [[ -n ${unmerged} ]]; then
-    echo "::error::Unexpected merge conflicts with $1:"$'\n'"${unmerged}"
-    exit 1
-  fi
-  git commit -m "${MERGE_MESSAGE}"
+# Commits merge_result as the merge of $1 into HEAD. Call it right after
+# merges_cleanly "$1" succeeds.
+commit_merge() {
+  local commit
+  commit=$(git commit-tree -p HEAD -p "$1" -m "${MERGE_MESSAGE}" "${merge_result}")
+  git merge --ff-only --quiet "${commit}"
+  echo "Merged $1 into ${LOCAL_BRANCH} as ${commit}"
 }
 
 if merges_cleanly "${UPSTREAM_HEAD}"; then
-  merge_commit "${UPSTREAM_HEAD}"
+  commit_merge "${UPSTREAM_HEAD}"
   echo "conflict=false" >> "${GITHUB_OUTPUT}"
   exit 0
 fi
@@ -111,47 +98,43 @@ fi
 mapfile -t commits < <(git rev-list --first-parent --reverse "HEAD..${UPSTREAM_HEAD}")
 total=${#commits[@]}
 
-# Scan back from the newest commit for the newest one that merges cleanly. A
-# binary search would be faster but can stop at an earlier conflict that a
-# later commit cancels. The last commit is UPSTREAM_HEAD, which conflicts, so
-# the scan starts one before it. good=-1 stands for HEAD itself: no upstream
-# commit merges cleanly.
-good=$(( total - 2 ))
-while (( good >= 0 )) && ! merges_cleanly "${commits[good]}"; do
-  good=$(( good - 1 ))
+# Find the longest prefix of commits that merges cleanly by scanning back from
+# the newest commit. A binary search would be faster but can stop at an earlier
+# conflict that a later commit cancels. The whole list conflicts, so the scan
+# starts one commit shorter. commits[merged] is the commit right after the
+# prefix, which conflicts.
+merged=$(( total - 1 ))
+while (( merged > 0 )) && ! merges_cleanly "${commits[merged - 1]}"; do
+  merged=$(( merged - 1 ))
 done
-bad=$(( good + 1 ))
-
-merged=$(( good + 1 ))
 if (( merged > 0 )); then
-  echo "Merging ${merged} of ${total} upstream commits, up to ${commits[good]}"
-  merge_commit "${commits[good]}"
+  echo "Merging ${merged} of ${total} upstream commits"
+  commit_merge "${commits[merged - 1]}"
 fi
 
-conflict_commit=${commits[bad]}
+conflict_commit=${commits[merged]}
 conflict_subject=$(git log -1 --format=%s "${conflict_commit}")
+remaining=$(( total - merged - 1 ))
 # Link to the commit on the upstream host, resolving a remote name to its URL.
 upstream_url=$(git remote get-url "${UPSTREAM_REMOTE}" 2> /dev/null || echo "${UPSTREAM_REMOTE}")
 conflict_url="${upstream_url%.git}/commit/${conflict_commit}"
-remaining=$(( total - merged - 1 ))
-merges_cleanly "${conflict_commit}" || true
-conflicted_files=$(printf '%s\n' "${conflicts[@]}")
+# Some conflicts, such as a directory rename split, have no conflicted file,
+# so report the CONFLICT messages. They name the commit from theirs, so swap
+# in the upstream commit.
+theirs_commit=$(theirs "${conflict_commit}")
+conflicts=$(git merge-tree --write-tree HEAD "${theirs_commit}" | grep '^CONFLICT' || true)
+conflicts=${conflicts//${theirs_commit}/${conflict_commit}}
 resolve_branch="merge-upstream-${conflict_commit:0:12}"
 # GITHUB_SERVER_URL and GITHUB_REPOSITORY are set by GitHub Actions.
 compare_url="${GITHUB_SERVER_URL:-https://github.com}/${GITHUB_REPOSITORY:-<owner>/<repo>}/compare/${LOCAL_BRANCH}...${resolve_branch}?expand=1"
 
-kept_note=""
 keep_step=""
 if (( ${#KEEP_PATHS[@]} > 0 )); then
   printf -v kept_args ' %q' "${KEEP_PATHS[@]}"
-  kept_note=$'\n\n'"Not listed:${kept_args}, where the \`${LOCAL_BRANCH}\` copy is always kept."
   keep_step="# Keep the ${LOCAL_BRANCH} copy of${kept_args}:"$'\n'"git restore --source=HEAD --staged --worktree --${kept_args}"$'\n'
 fi
 
-{
-  echo "conflict=true"
-  echo "conflict_commit=${conflict_commit}"
-} >> "${GITHUB_OUTPUT}"
+printf 'conflict=true\nconflict_commit=%s\n' "${conflict_commit}" >> "${GITHUB_OUTPUT}"
 
 echo "::error title=Merge conflict with ${UPSTREAM_BRANCH}::Upstream commit ${conflict_commit} (${conflict_subject}) conflicts with ${LOCAL_BRANCH}. See the job summary for how to resolve it."
 
@@ -163,11 +146,9 @@ The next commit conflicts and has to be merged by hand:
 
 [\`${conflict_commit:0:12}\`](${conflict_url}) ${conflict_subject}
 
-Conflicted files:
-
 \`\`\`
-${conflicted_files}
-\`\`\`${kept_note}
+${conflicts}
+\`\`\`
 
 To resolve, merge only that commit on a new branch:
 
@@ -175,7 +156,7 @@ To resolve, merge only that commit on a new branch:
 git fetch origin ${LOCAL_BRANCH}
 git checkout -b ${resolve_branch} origin/${LOCAL_BRANCH}
 git fetch ${UPSTREAM_REMOTE} ${UPSTREAM_BRANCH}
-git merge -m "${MERGE_MESSAGE}" ${conflict_commit}
+git merge -m ${MERGE_MESSAGE@Q} ${conflict_commit}
 ${keep_step}# Fix the conflicts, then:
 git add <files>
 git commit --no-edit
@@ -192,5 +173,4 @@ if (( remaining > 0 )); then
   report+=$'\n\n'"After the pull request is merged, re-run this workflow to merge the remaining ${remaining} upstream commits."
 fi
 
-echo "${report}"
-echo "${report}" >> "${GITHUB_STEP_SUMMARY}"
+tee -a "${GITHUB_STEP_SUMMARY}" <<< "${report}"
