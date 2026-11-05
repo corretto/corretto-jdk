@@ -171,6 +171,25 @@ EOF
 )
 if (( remaining > 0 )); then
   report+=$'\n\n'"After the pull request is merged, re-run this workflow to merge the remaining ${remaining} upstream commits."
+  # FETCH_HEAD, because fetching from a URL does not create a branch ref.
+  report+=$(cat <<EOF
+
+
+To merge all ${UPSTREAM_BRANCH} commits at once instead, merge the upstream head
+on the same branch and open the pull request the same way:
+
+\`\`\`sh
+git fetch origin ${LOCAL_BRANCH}
+git checkout -b ${resolve_branch} origin/${LOCAL_BRANCH}
+git fetch ${UPSTREAM_REMOTE} ${UPSTREAM_BRANCH}
+git merge -m ${MERGE_MESSAGE@Q} FETCH_HEAD
+${keep_step}# Fix the conflicts, then:
+git add <files>
+git commit --no-edit
+git push origin ${resolve_branch}
+\`\`\`
+EOF
+)
 fi
 
 tee -a "${GITHUB_STEP_SUMMARY}" <<< "${report}"
