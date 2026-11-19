@@ -22,7 +22,7 @@
 import org.redline_rpm.payload.Directive
 
 plugins {
-    id 'com.netflix.nebula.ospackage' version 'latest.release'
+    id 'com.netflix.nebula.ospackage' version '14.+'
 }
 
 dependencies {
