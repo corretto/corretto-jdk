@@ -143,7 +143,8 @@ task generateJdkDeb(type: Deb) {
     requires('zlib1g')
     // jdk
     provides('java-compiler')
-    provides('java-sdk')
+    provides('java-sdk', project.version.major)
+    provides('java-sdk-headless', project.version.major)
     provides('java5-sdk')
     provides('java6-sdk')
     provides('java7-sdk')
@@ -154,7 +155,7 @@ task generateJdkDeb(type: Deb) {
       provides("java${it}-sdk")
     }
     // TODO: Move this to the jre when splitting the fat deb
-    provides('java-runtime')
+    provides('java-runtime', project.version.major)
     provides('java5-runtime')
     provides('java6-runtime')
     provides('java7-runtime')
@@ -164,7 +165,7 @@ task generateJdkDeb(type: Deb) {
       provides("java${it}-runtime")
     }
     // TODO: Move this to the headless jre when splitting the fat deb
-    provides('java-runtime-headless')
+    provides('java-runtime-headless', project.version.major)
     provides('java5-runtime-headless')
     provides('java6-runtime-headless')
     provides('java7-runtime-headless')
