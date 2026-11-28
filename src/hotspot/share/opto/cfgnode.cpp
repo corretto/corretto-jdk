@@ -2141,8 +2141,15 @@ bool PhiNode::is_unsafe_data_reference(Node *in) const {
 }
 
 // A Phi may only have other Phis as its transitive outputs, it is dead then. We may not be able to
-// remove it normally because a Phi can be a transitive output of itself.
-bool PhiNode::is_dead_phi() {
+// remove it normally because a Phi can be a transitive output of itself. This method only looks
+// for a dead memory Phi because dead data Phis may be created much more frequently, participate in
+// much more complex cycles. These reasons may lead to the compiler spending too much time
+// traversing those data Phis without making any progress.
+bool PhiNode::is_dead_memory_phi() {
+  if (!is_memory_phi()) {
+    return false;
+  }
+
   // Early return before we create the worklist
   for (DUIterator_Fast imax, i = fast_outs(imax); i < imax; i++) {
     if (!fast_out(i)->is_Phi()) {
@@ -3047,7 +3054,7 @@ private:
     uint before_casts = 0;
     uint before_encode_decode = 0;
     for (uint i = 0; i < _nodes_from_phi.size(); ++i) {
-      Node *n = _nodes_from_phi.at(i);
+      Node* n = _nodes_from_phi.at(i);
       if (n->is_Phi()) {
         before_phis++;
       } else if (n->is_ConstraintCast()) {
@@ -3084,6 +3091,19 @@ private:
       Node* n = after.at(i);
       if (!n->is_ValueType()) {
         after.remove(i);
+      }
+    }
+    for (uint i = 0; i < _nodes_from_phi.size(); ++i) {
+      Node* n = _nodes_from_phi.at(i);
+      if (n->is_ValueType() && !after.member(n)) {
+        ValueTypeNode* value_type = n->as_ValueType();
+        for (uint j = 0; j < value_type->field_count(); ++j) {
+          Node* field = value_type->field_value(j);
+          const Type* field_type = _phase->type(field);
+          if (field_type->is_instptr() && !field_type->is_valueklassptr() && field_type->as_instptr()->can_be_value_type()) {
+            after.push(field);
+          }
+        }
       }
     }
     uint after_phis = 0;
